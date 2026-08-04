@@ -1,0 +1,40 @@
+[package]
+name = "pgtoken"
+version = "0.1.0"
+edition = "2021"
+description = "Token-native storage for PostgreSQL: store text as BPE token IDs."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = ["pg14"]
+pg13 = ["pgrx/pg13", "pgrx-tests/pg13"]
+pg14 = ["pgrx/pg14", "pgrx-tests/pg14"]
+pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
+pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
+pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
+pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
+pg_test = []
+
+[dependencies]
+pgrx = "=0.19.2"
+# All codec and tokenizer logic lives in the pgrx-free core crate, so it can be tested
+# without a running Postgres and reused as the client-side decoder.
+pgtoken-core = { path = "../core" }
+# Coding tables are mmap'd read-only so their pages are shared across backends via the OS
+# page cache rather than duplicated per connection.
+memmap2 = "0.9"
+
+[dev-dependencies]
+pgrx-tests = "=0.19.2"
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"
+opt-level = 3
+lto = "fat"
+codegen-units = 1

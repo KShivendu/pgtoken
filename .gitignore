@@ -1,0 +1,9 @@
+target/
+__pycache__/
+*.pyc
+.venv/
+
+# Benchmark outputs and the cross-language fixture: regenerable, and results depend on the
+# machine they were measured on.
+benchmarks/fixture/
+benchmarks/*_results.json

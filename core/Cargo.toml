@@ -1,0 +1,22 @@
+[package]
+name = "pgtoken-core"
+version = "0.1.0"
+edition = "2021"
+description = "Token-native storage codecs: BPE token IDs as the stored form of text."
+license = "Apache-2.0"
+
+# Deliberately free of any pgrx dependency. The Postgres extension in ../ext is a thin
+# wrapper over this crate, and the same crate is what an agent client links against to
+# decode blobs it reads out of the database. Keeping the codecs pgrx-free is what makes
+# both possible, and lets the codecs be tested without a running Postgres.
+
+[dependencies]
+tiktoken-rs = "0.12"
+stream-vbyte = "0.4"
+constriction = "0.4"
+memmap2 = "0.9"
+sha2 = "0.10"
+
+[dev-dependencies]
+# Only for reading the cross-language validation fixture in tests/fixture.rs.
+serde_json = "1"

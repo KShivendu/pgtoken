@@ -1,0 +1,19 @@
+[project]
+name = "pgtoken-benchmarks"
+version = "0.1.0"
+description = "Benchmarks for the pgtoken PostgreSQL extension."
+requires-python = ">=3.10"
+
+# Only the benchmarks need Python; the extension itself is pure Rust. The held-out corpora
+# and the reference codec implementations come from the separate token-storage repo, located
+# via TOKEN_STORAGE_REPO -- see benchmarks/pgcommon.py.
+dependencies = [
+    "numpy",
+    "psycopg[binary]",
+    "tiktoken",
+    "constriction",
+    "pyfastpfor",
+    # tnbench.py imports zstandard at module scope, so it is needed to import the reference
+    # implementation at all, not just to run the byte-codec baselines.
+    "zstandard",
+]
