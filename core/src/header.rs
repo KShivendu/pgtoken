@@ -1,24 +1,23 @@
 //! The 12-byte self-describing value header.
 //!
-//! Every stored value names its own tokenizer, codec, and coding table, so a column can
-//! hold values from different tokenizers during a migration and no per-column typmod has
-//! to be kept in sync. Naming the table in the value is also what lets `decode` be
-//! honestly `IMMUTABLE` in Postgres: the bytes fully determine the text.
+//! Every stored value names its own codec, coding table and token count. Nothing here refers
+//! to a tokenizer: this library compresses sequences of token IDs and has no opinion about
+//! which vocabulary produced them. Keeping that knowledge out means any tokenizer works,
+//! including ones that did not exist when this was written.
 //!
 //! ```text
 //! off  size  field
 //!   0     1  magic 0xA7
 //!   1     1  format version (1)
-//!   2     1  tokenizer id   1=r50k 2=cl100k 3=o200k
-//!   3     1  codec id       0=raw16 1=raw24 2=freq+svb 3=ANS
+//!   2     1  codec id  0=raw16 1=raw24 2=freq+svb 3=ANS
+//!   3     1  reserved, must be zero
 //!   4     2  table id (u16 LE; 0 = none, for the raw codecs)
 //!   6     2  reserved, must be zero
 //!   8     4  token count (u32 LE)
 //!  12     -  payload
 //! ```
 //!
-//! The token count is not redundant: both streamvbyte and ANS need `n` up front to
-//! decode. This mirrors the Python harness, which prepends `len(ids).to_bytes(4, 'big')`.
+//! The token count is not redundant: both streamvbyte and ANS need `n` up front to decode.
 
 use core::fmt;
 
@@ -26,70 +25,17 @@ pub const MAGIC: u8 = 0xA7;
 pub const VERSION: u8 = 1;
 pub const HEADER_LEN: usize = 12;
 
-/// Which BPE vocabulary the token IDs belong to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum Tokenizer {
-    R50k = 1,
-    Cl100k = 2,
-    O200k = 3,
-}
-
-impl Tokenizer {
-    pub fn from_u8(v: u8) -> Result<Self, HeaderError> {
-        match v {
-            1 => Ok(Tokenizer::R50k),
-            2 => Ok(Tokenizer::Cl100k),
-            3 => Ok(Tokenizer::O200k),
-            _ => Err(HeaderError::UnknownTokenizer(v)),
-        }
-    }
-
-    /// Vocabulary size. These fix the width of the rank and ANS tables, so they must match
-    /// the values the Python harness trains against.
-    pub fn vocab(self) -> u32 {
-        match self {
-            Tokenizer::R50k => 50_257,
-            Tokenizer::Cl100k => 100_277,
-            Tokenizer::O200k => 200_019,
-        }
-    }
-
-    /// True when every ID fits in a `u16`, i.e. the `raw16` codec is available.
-    pub fn fits_u16(self) -> bool {
-        self.vocab() <= u16::MAX as u32 + 1
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Tokenizer::R50k => "r50k",
-            Tokenizer::Cl100k => "cl100k",
-            Tokenizer::O200k => "o200k",
-        }
-    }
-
-    pub fn parse(s: &str) -> Result<Self, HeaderError> {
-        match s {
-            "r50k" | "r50k_base" => Ok(Tokenizer::R50k),
-            "cl100k" | "cl100k_base" => Ok(Tokenizer::Cl100k),
-            "o200k" | "o200k_base" => Ok(Tokenizer::O200k),
-            _ => Err(HeaderError::UnknownTokenizerName(s.to_owned())),
-        }
-    }
-}
-
 /// How the token-ID sequence is encoded in the payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Codec {
-    /// 2 bytes/id, little-endian. Only valid for vocabularies that fit in `u16`.
+    /// 2 bytes/id, little-endian. IDs must fit in `u16`.
     Raw16 = 0,
-    /// 3 bytes/id, big-endian. Matches `tnbench.pack3`.
+    /// 3 bytes/id, big-endian. IDs must fit in 24 bits, which covers every vocabulary in
+    /// practical use.
     Raw24 = 1,
     /// Frequency-rank remap, then streamvbyte.
     Freq = 2,
-    /// Static Laplace-smoothed unigram ANS.
-    Ans = 3,
 }
 
 impl Codec {
@@ -98,14 +44,23 @@ impl Codec {
             0 => Ok(Codec::Raw16),
             1 => Ok(Codec::Raw24),
             2 => Ok(Codec::Freq),
-            3 => Ok(Codec::Ans),
             _ => Err(HeaderError::UnknownCodec(v)),
         }
     }
 
     /// Whether this codec needs a trained table, and therefore a nonzero `table_id`.
     pub fn needs_table(self) -> bool {
-        matches!(self, Codec::Freq | Codec::Ans)
+        matches!(self, Codec::Freq)
+    }
+
+    /// Largest token ID this codec can represent, for the table-free codecs. The
+    /// table-driven ones are bounded by their table's vocabulary instead.
+    pub fn max_id(self) -> Option<u32> {
+        match self {
+            Codec::Raw16 => Some(u16::MAX as u32),
+            Codec::Raw24 => Some(0x00FF_FFFF),
+            Codec::Freq => None,
+        }
     }
 
     pub fn as_str(self) -> &'static str {
@@ -113,18 +68,15 @@ impl Codec {
             Codec::Raw16 => "raw16",
             Codec::Raw24 => "raw24",
             Codec::Freq => "freq",
-            Codec::Ans => "ans",
         }
     }
 
+    /// Parse a codec name. `raw` is resolved by the caller, which knows the ID range.
     pub fn parse(s: &str) -> Result<Self, HeaderError> {
         match s {
             "raw16" => Ok(Codec::Raw16),
             "raw24" => Ok(Codec::Raw24),
-            // `raw` picks the narrowest packing the vocabulary allows; resolved by the
-            // caller, which knows the tokenizer. Deliberately not accepted here.
             "freq" => Ok(Codec::Freq),
-            "ans" => Ok(Codec::Ans),
             _ => Err(HeaderError::UnknownCodecName(s.to_owned())),
         }
     }
@@ -132,23 +84,22 @@ impl Codec {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
-    pub tokenizer: Tokenizer,
     pub codec: Codec,
     pub table_id: u16,
     pub n_tokens: u32,
 }
 
 impl Header {
-    pub fn new(tokenizer: Tokenizer, codec: Codec, table_id: u16, n_tokens: u32) -> Self {
-        Header { tokenizer, codec, table_id, n_tokens }
+    pub fn new(codec: Codec, table_id: u16, n_tokens: u32) -> Self {
+        Header { codec, table_id, n_tokens }
     }
 
     /// Write the header into the first `HEADER_LEN` bytes of a fresh buffer.
     pub fn write_to(&self, out: &mut Vec<u8>) {
         out.push(MAGIC);
         out.push(VERSION);
-        out.push(self.tokenizer as u8);
         out.push(self.codec as u8);
+        out.push(0); // reserved
         out.extend_from_slice(&self.table_id.to_le_bytes());
         out.extend_from_slice(&[0u8, 0u8]); // reserved
         out.extend_from_slice(&self.n_tokens.to_le_bytes());
@@ -165,9 +116,9 @@ impl Header {
 
     /// Parse and validate a header, returning it alongside the payload slice.
     ///
-    /// Every malformed input is an error rather than a best-effort decode: a value that
-    /// reaches this function came off disk or off the wire, and silently reinterpreting
-    /// it would hand back plausible-looking wrong text.
+    /// Every malformed input is an error rather than a best-effort decode: a value reaching
+    /// this function came off disk or off the wire, and silently reinterpreting it would hand
+    /// back plausible-looking wrong IDs.
     pub fn parse(buf: &[u8]) -> Result<(Header, &[u8]), HeaderError> {
         if buf.len() < HEADER_LEN {
             return Err(HeaderError::TooShort(buf.len()));
@@ -178,19 +129,15 @@ impl Header {
         if buf[1] != VERSION {
             return Err(HeaderError::UnsupportedVersion(buf[1]));
         }
-        let tokenizer = Tokenizer::from_u8(buf[2])?;
-        let codec = Codec::from_u8(buf[3])?;
-        let table_id = u16::from_le_bytes([buf[4], buf[5]]);
-        // Reserved bytes are checked, not ignored. A future version that assigns meaning
-        // to them can then rely on old writers having left them zero.
-        if buf[6] != 0 || buf[7] != 0 {
+        let codec = Codec::from_u8(buf[2])?;
+        // Reserved bytes are checked, not ignored, so a future version that assigns meaning
+        // to them can rely on old writers having left them zero.
+        if buf[3] != 0 || buf[6] != 0 || buf[7] != 0 {
             return Err(HeaderError::ReservedNotZero);
         }
+        let table_id = u16::from_le_bytes([buf[4], buf[5]]);
         let n_tokens = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
 
-        if codec == Codec::Raw16 && !tokenizer.fits_u16() {
-            return Err(HeaderError::Raw16Overflow(tokenizer));
-        }
         if codec.needs_table() && table_id == 0 {
             return Err(HeaderError::MissingTable(codec));
         }
@@ -200,12 +147,12 @@ impl Header {
 
         let payload = &buf[HEADER_LEN..];
 
-        // The raw codecs have an exact expected length, so a truncated or padded payload
-        // is caught here rather than producing a short read downstream.
+        // The raw codecs have an exact expected length, so a truncated or padded payload is
+        // caught here rather than producing a short read downstream.
         let expected = match codec {
             Codec::Raw16 => Some(n_tokens as usize * 2),
             Codec::Raw24 => Some(n_tokens as usize * 3),
-            Codec::Freq | Codec::Ans => None,
+            Codec::Freq => None,
         };
         if let Some(want) = expected {
             if payload.len() != want {
@@ -215,7 +162,7 @@ impl Header {
             return Err(HeaderError::PayloadLen { want: 1, got: 0 });
         }
 
-        Ok((Header { tokenizer, codec, table_id, n_tokens }, payload))
+        Ok((Header { codec, table_id, n_tokens }, payload))
     }
 }
 
@@ -224,12 +171,9 @@ pub enum HeaderError {
     TooShort(usize),
     BadMagic(u8),
     UnsupportedVersion(u8),
-    UnknownTokenizer(u8),
-    UnknownTokenizerName(String),
     UnknownCodec(u8),
     UnknownCodecName(String),
     ReservedNotZero,
-    Raw16Overflow(Tokenizer),
     MissingTable(Codec),
     UnexpectedTable(Codec, u16),
     PayloadLen { want: usize, got: usize },
@@ -247,14 +191,9 @@ impl fmt::Display for HeaderError {
             HeaderError::UnsupportedVersion(v) => {
                 write!(f, "unsupported format version {v}, this build understands {VERSION}")
             }
-            HeaderError::UnknownTokenizer(v) => write!(f, "unknown tokenizer id {v}"),
-            HeaderError::UnknownTokenizerName(s) => write!(f, "unknown tokenizer name {s:?}"),
             HeaderError::UnknownCodec(v) => write!(f, "unknown codec id {v}"),
             HeaderError::UnknownCodecName(s) => write!(f, "unknown codec name {s:?}"),
             HeaderError::ReservedNotZero => write!(f, "reserved header bytes are not zero"),
-            HeaderError::Raw16Overflow(t) => {
-                write!(f, "codec raw16 cannot represent {} (vocab {})", t.as_str(), t.vocab())
-            }
             HeaderError::MissingTable(c) => {
                 write!(f, "codec {} requires a table but table_id is 0", c.as_str())
             }
@@ -276,23 +215,21 @@ mod tests {
 
     fn valid_raw24(n: u32) -> Vec<u8> {
         let mut v = Vec::new();
-        Header::new(Tokenizer::O200k, Codec::Raw24, 0, n).write_to(&mut v);
+        Header::new(Codec::Raw24, 0, n).write_to(&mut v);
         v.extend(std::iter::repeat_n(0u8, n as usize * 3));
         v
     }
 
     #[test]
     fn header_roundtrips() {
-        for (tok, codec, table) in [
-            (Tokenizer::R50k, Codec::Raw16, 0u16),
-            (Tokenizer::O200k, Codec::Raw24, 0),
-            (Tokenizer::Cl100k, Codec::Freq, 7),
-            (Tokenizer::O200k, Codec::Ans, 65535),
+        for (codec, table) in [
+            (Codec::Raw16, 0u16),
+            (Codec::Raw24, 0),
+            (Codec::Freq, 7),
         ] {
-            let h = Header::new(tok, codec, table, 512);
+            let h = Header::new(codec, table, 512);
             let mut buf = Vec::new();
             h.write_to(&mut buf);
-            // Give the table-driven codecs a nonempty payload; raw ones need exact length.
             match codec {
                 Codec::Raw16 => buf.extend(std::iter::repeat_n(0u8, 1024)),
                 Codec::Raw24 => buf.extend(std::iter::repeat_n(0u8, 1536)),
@@ -306,9 +243,16 @@ mod tests {
 
     #[test]
     fn header_is_exactly_12_bytes() {
-        let h = Header::new(Tokenizer::O200k, Codec::Freq, 1, 512);
-        assert_eq!(h.to_bytes().len(), HEADER_LEN);
+        assert_eq!(Header::new(Codec::Freq, 1, 512).to_bytes().len(), HEADER_LEN);
         assert_eq!(HEADER_LEN, 12);
+    }
+
+    #[test]
+    fn header_carries_no_tokenizer() {
+        // The point of the format: values are interchangeable regardless of which tokenizer
+        // produced their IDs, so nothing in the header may encode one.
+        let bytes = Header::new(Codec::Raw24, 0, 3).to_bytes();
+        assert_eq!(bytes[3], 0, "byte 3 must stay reserved, not become a tokenizer tag");
     }
 
     #[test]
@@ -332,22 +276,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_tokenizer_and_codec() {
+    fn rejects_unknown_codec() {
         let mut v = valid_raw24(2);
         v[2] = 9;
-        assert_eq!(Header::parse(&v), Err(HeaderError::UnknownTokenizer(9)));
-
-        let mut v = valid_raw24(2);
-        v[3] = 9;
         assert_eq!(Header::parse(&v), Err(HeaderError::UnknownCodec(9)));
     }
 
     #[test]
     fn rejects_nonzero_reserved() {
-        for idx in [6usize, 7] {
+        for idx in [3usize, 6, 7] {
             let mut v = valid_raw24(2);
             v[idx] = 1;
-            assert_eq!(Header::parse(&v), Err(HeaderError::ReservedNotZero));
+            assert_eq!(
+                Header::parse(&v),
+                Err(HeaderError::ReservedNotZero),
+                "reserved byte {idx} was not checked"
+            );
         }
     }
 
@@ -363,24 +307,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_raw16_for_wide_vocab() {
-        let mut v = Vec::new();
-        Header::new(Tokenizer::O200k, Codec::Raw16, 0, 1).write_to(&mut v);
-        v.extend_from_slice(&[0, 0]);
-        assert_eq!(Header::parse(&v), Err(HeaderError::Raw16Overflow(Tokenizer::O200k)));
-    }
-
-    #[test]
     fn table_id_presence_must_match_codec() {
-        // freq/ans without a table
         let mut v = Vec::new();
-        Header::new(Tokenizer::O200k, Codec::Freq, 0, 1).write_to(&mut v);
-        v.extend_from_slice(&[1]);
+        Header::new(Codec::Freq, 0, 1).write_to(&mut v);
+        v.push(1);
         assert_eq!(Header::parse(&v), Err(HeaderError::MissingTable(Codec::Freq)));
 
-        // raw with a table
         let mut v = Vec::new();
-        Header::new(Tokenizer::O200k, Codec::Raw24, 3, 1).write_to(&mut v);
+        Header::new(Codec::Raw24, 3, 1).write_to(&mut v);
         v.extend_from_slice(&[0, 0, 0]);
         assert_eq!(Header::parse(&v), Err(HeaderError::UnexpectedTable(Codec::Raw24, 3)));
     }
@@ -394,9 +328,10 @@ mod tests {
     }
 
     #[test]
-    fn only_r50k_fits_u16() {
-        assert!(Tokenizer::R50k.fits_u16());
-        assert!(!Tokenizer::Cl100k.fits_u16());
-        assert!(!Tokenizer::O200k.fits_u16());
+    fn codec_id_ranges() {
+        assert_eq!(Codec::Raw16.max_id(), Some(65_535));
+        assert_eq!(Codec::Raw24.max_id(), Some(16_777_215));
+        assert_eq!(Codec::Freq.max_id(), None);
+        assert_eq!(Codec::from_u8(3), Err(HeaderError::UnknownCodec(3)), "ANS was removed");
     }
 }

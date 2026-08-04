@@ -149,24 +149,10 @@ def measure_wal(
         conn.execute("CHECKPOINT")
 
         if t == "docs_tnt":
-            # The agent write path: encode once, then COPY opaque blobs. Encoding happens
-            # client-side here, which is the point of token-native storage -- the server
-            # never runs a tokenizer.
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT pgtoken.encode(%s, %s, %s, %s)",
-                    (texts[0], C.DEFAULT_TOKENIZER, C.DEFAULT_CODEC, C.FREQ_TABLE_ID),
-                )
-            encoded = []
-            with conn.cursor() as cur:
-                for chunk_start in range(0, len(texts), 500):
-                    batch = texts[chunk_start : chunk_start + 500]
-                    cur.execute(
-                        "SELECT pgtoken.encode(t, %s, %s, %s) FROM unnest(%s::text[]) t",
-                        (C.DEFAULT_TOKENIZER, C.DEFAULT_CODEC, C.FREQ_TABLE_ID, batch),
-                    )
-                    encoded.extend(r[0] for r in cur.fetchall())
-            payloads = encoded
+            # Tokenize client-side, exactly as an agent would: the server never runs a
+            # tokenizer, and the extension only ever sees token IDs.
+            id_lists = C.tokenize_all(texts)
+            payloads = C.encode_batch(conn, id_lists, C.DEFAULT_CODEC, C.FREQ_TABLE_ID)
         else:
             payloads = texts
 
@@ -194,7 +180,7 @@ def measure_wal(
 
 def run_one(conn, texts: list[str], domain: str, embedding_bytes: int) -> dict:
     C.apply_schema(conn)
-    C.train_tables(conn, domain)
+    C.train_table(conn, domain)
     wal = measure_wal(conn, texts, domain, embedding_bytes)
     sizes = relation_sizes(conn)
     payloads = payload_bytes(conn)
@@ -298,7 +284,7 @@ def main() -> int:
         "config": {
             "docs": len(texts),
             "domain": args.domain,
-            "tokenizer": C.DEFAULT_TOKENIZER,
+            "tokenizer": C.TOKENIZER,
             "codec": C.DEFAULT_CODEC,
             **settings,
         },
@@ -313,7 +299,7 @@ def main() -> int:
     )
     print(
         f"{len(texts)} docs from {args.domain}, "
-        f"token-native = {C.DEFAULT_TOKENIZER} +{C.DEFAULT_CODEC}"
+        f"token-native = {C.TOKENIZER} ids + {C.DEFAULT_CODEC}"
     )
     for run in runs:
         report(run, len(texts))

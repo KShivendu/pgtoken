@@ -38,18 +38,16 @@ sys.path.insert(0, TOKEN_STORAGE)
 
 import tnbench as T  # noqa: E402
 
-# The default tokenizer and codec for the token-native table. o200k is the tokenizer
-# GPT-4o-class models use, and +freq is the paper's recommended default: most of ANS's ratio
-# at the fastest decode.
-DEFAULT_TOKENIZER = "o200k"
+# The extension has no tokenizer, so the benchmark picks one and tokenizes client-side, which
+# is how a real deployment works too. o200k is what GPT-4o-class models use.
+TOKENIZER = "o200k"
 DEFAULT_CODEC = "freq"
 
 # A 1024-dim float32 embedding is 4096 bytes. Held constant across all three tables.
 EMBEDDING_BYTES = 4096
 
-# Coding table ids, matching what train_tables() writes.
+# Coding table id written by train_table().
 FREQ_TABLE_ID = 10
-ANS_TABLE_ID = 11
 
 
 def pg_env() -> dict:
@@ -110,43 +108,75 @@ def apply_schema(conn: psycopg.Connection) -> None:
         conn.execute(f.read())
 
 
-def train_tables(conn: psycopg.Connection, domain: str = "prose") -> None:
-    """Train the +freq and +ANS coding tables from the domain's train split.
+def encoder():
+    """The client-side tokenizer. Nothing about it is known to the database."""
+    return tiktoken.get_encoding(f"{TOKENIZER}_base")
 
-    Trained through the extension's own SQL entry point, on the train split only, so the
-    tables never see the test chunks the benchmark measures.
+
+def tokenize_all(texts: list[str]) -> list[list[int]]:
+    enc = encoder()
+    return [enc.encode(t, disallowed_special=()) for t in texts]
+
+
+def encode_batch(
+    conn: psycopg.Connection, id_lists: list[list[int]], codec: str, table_id: int
+) -> list[bytes]:
+    """Encode many token-ID arrays in as few round trips as possible.
+
+    The arrays travel as text[] of array literals and are cast back to int[] server-side.
+    `unnest` on an int[][] would flatten it into scalars rather than yielding one array per
+    row, so the two-dimensional form cannot be used here.
     """
-    # pgtoken.table_info raises if the table file is absent, which is the cheapest existence
-    # check available; the tables are files on disk, not catalog rows.
+    out: list[bytes] = []
+    with conn.cursor() as cur:
+        for start in range(0, len(id_lists), 500):
+            batch = ["{" + ",".join(map(str, ids)) + "}" for ids in id_lists[start : start + 500]]
+            cur.execute(
+                "SELECT pgtoken.encode(a::int[], %s, %s::int) "
+                "FROM unnest(%s::text[]) WITH ORDINALITY AS u(a, ord) ORDER BY ord",
+                (codec, table_id, batch),
+            )
+            out.extend(r[0] for r in cur.fetchall())
+    return out
+
+
+def train_table(conn: psycopg.Connection, domain: str = "prose") -> None:
+    """Train the freq coding table from the domain's train split.
+
+    Trained on the train split only, so the table never sees the test chunks the benchmark
+    measures. Token IDs are produced client-side and handed to the extension as int[].
+    """
     try:
         conn.execute("SELECT 1 FROM pgtoken.table_info(%s)", (FREQ_TABLE_ID,)).fetchone()
-        conn.execute("SELECT 1 FROM pgtoken.table_info(%s)", (ANS_TABLE_ID,)).fetchone()
-        return  # both already trained
+        return  # already trained
     except psycopg.Error:
         pass
 
     r50k = tiktoken.get_encoding("r50k_base")
     train_ids = T.load_ids(f"{domain}_train")
-    # A slice is enough to fit a stable unigram table and keeps setup to a few seconds.
+    # A slice is enough to fit a stable frequency table and keeps setup to a few seconds.
     train_text = r50k.decode(train_ids[: 400 * 512].tolist())
 
-    conn.execute("DROP TABLE IF EXISTS tnt_train_corpus")
-    conn.execute("CREATE TABLE tnt_train_corpus(body text)")
-    with conn.cursor() as cur:
-        # Split into rows so the training query looks like a normal corpus scan.
-        step = 4096
-        rows = [(train_text[i : i + step],) for i in range(0, len(train_text), step)]
-        cur.executemany("INSERT INTO tnt_train_corpus(body) VALUES (%s)", rows)
+    enc = encoder()
+    step = 4096
+    rows = [
+        (enc.encode(train_text[i : i + step], disallowed_special=()),)
+        for i in range(0, len(train_text), step)
+    ]
 
-    for tid, fn in ((FREQ_TABLE_ID, "train_freq_table"), (ANS_TABLE_ID, "train_ans_table")):
-        try:
-            conn.execute(
-                f"SELECT pgtoken.{fn}(%s, %s, 'SELECT body FROM tnt_train_corpus')",
-                (tid, DEFAULT_TOKENIZER),
-            )
-        except psycopg.errors.RaiseException as e:
-            if "already exists" not in str(e):
-                raise
+    conn.execute("DROP TABLE IF EXISTS pgtoken_train_corpus")
+    conn.execute("CREATE TABLE pgtoken_train_corpus(ids int[])")
+    with conn.cursor() as cur:
+        cur.executemany("INSERT INTO pgtoken_train_corpus(ids) VALUES (%s)", rows)
+
+    try:
+        conn.execute(
+            "SELECT pgtoken.train(%s, 'SELECT ids FROM pgtoken_train_corpus')",
+            (FREQ_TABLE_ID,),
+        )
+    except psycopg.errors.RaiseException as e:
+        if "already exists" not in str(e):
+            raise
 
 
 def percentile(values: list[float], p: float) -> float:

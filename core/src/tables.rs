@@ -1,13 +1,24 @@
-//! Trained coding tables: the frequency-rank permutation and the ANS unigram model.
+//! The frequency-rank table behind the `freq` codec.
 //!
-//! Ports `tnbench.build_rank_table` (tnbench.py:212) and `tnbench.build_ans_model`
-//! (tnbench.py:223). Both are deterministic and contain no RNG draw, which the Python
-//! versions call out explicitly; that property is preserved here and tested.
+//! BPE numbers its vocabulary in merge-discovery order, so a common token can sit at ID
+//! 40,000 while a rare one sits at 400. Remapping each ID to its descending-frequency rank
+//! puts common tokens on small integers, which is what a varint codec rewards.
 //!
-//! Tables are content-addressed by SHA-256 and referenced from a value's header by a small
-//! `table_id`. That indirection is what lets `decode` be `IMMUTABLE` in Postgres: the
-//! stored bytes name the exact table needed to interpret them, so the same input always
-//! produces the same output.
+//! The table is **sparse**: it holds only the tokens seen during training, in frequency
+//! order. Anything else maps to `k + id`, and decodes back by subtracting `k`. That single
+//! decision keeps this library free of any vocabulary size — nothing needs to know how large
+//! the tokenizer's vocabulary is, or which tokenizer it was.
+//!
+//! ```text
+//! encode:  r = rank_of(t)        if t was seen in training
+//!          r = k + t             otherwise
+//! decode:  t = token_of_rank[r]  if r < k
+//!          t = r - k             otherwise
+//! ```
+//!
+//! Lossless for every ID, because ranks below `k` are only ever produced for in-table tokens
+//! and ranks at or above `k` only for out-of-table ones. The cost is that a token absent from
+//! training encodes as a slightly wider varint than its bare ID would.
 //!
 //! # On-disk format
 //!
@@ -15,30 +26,23 @@
 //! off  size  field
 //!   0     4  magic "TNTT"
 //!   4     1  version (1)
-//!   5     1  kind    1=rank 2=ans
-//!   6     1  tokenizer id
-//!   7     1  reserved, must be zero
-//!   8     4  vocab (u32 LE)
-//!  12     4  entry count (u32 LE, == vocab)
-//!  16     -  payload: `vocab` x u32 LE
+//!   5     1  kind (1 = rank)
+//!   6     2  reserved, must be zero
+//!   8     4  k, the number of ranked tokens (u32 LE)
+//!  12     -  token_of_rank: k x u32 LE
 //! ```
 //!
-//! For a rank table the payload is `token_of_rank`; `rank_of` is its inverse and is rebuilt
-//! on load rather than stored, which halves the file. For an ANS table the payload is the
-//! Laplace-smoothed counts, from which the model is rebuilt. Storing counts rather than a
-//! quantized CDF keeps the file independent of how a given `constriction` version chooses
-//! to quantize, at the cost of doing that quantization once at load.
+//! `rank_of` is the inverse and is rebuilt on load rather than stored, which halves the file.
+
+use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 
-use crate::header::Tokenizer;
-
 pub const TABLE_MAGIC: &[u8; 4] = b"TNTT";
 pub const TABLE_VERSION: u8 = 1;
-pub const TABLE_HEADER_LEN: usize = 16;
+pub const TABLE_HEADER_LEN: usize = 12;
 
 const KIND_RANK: u8 = 1;
-const KIND_ANS: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TableError {
@@ -47,17 +51,13 @@ pub enum TableError {
     UnsupportedVersion(u8),
     UnknownKind(u8),
     ReservedNotZero,
-    /// The file says it is for a different tokenizer than the value that referenced it.
-    TokenizerMismatch { table: u8, want: u8 },
-    /// The declared vocabulary does not match the tokenizer's real vocabulary.
-    VocabMismatch { table: u32, want: u32 },
     PayloadLen { want: usize, got: usize },
-    /// `token_of_rank` was not a permutation of `0..vocab`.
-    NotAPermutation,
-    /// A count was zero, which would make an ANS symbol unencodable.
-    ZeroCount(u32),
-    /// `constriction` rejected the probability vector.
-    ModelBuild,
+    /// `token_of_rank` listed the same token twice, which would make decoding ambiguous.
+    DuplicateToken(u32),
+    /// Training saw no tokens at all.
+    Empty,
+    /// `k + id` would overflow, so this ID cannot be remapped against this table.
+    IdTooLarge { id: u32, k: u32 },
 }
 
 impl std::fmt::Display for TableError {
@@ -67,90 +67,24 @@ impl std::fmt::Display for TableError {
             TableError::BadMagic => write!(f, "table file has bad magic, expected TNTT"),
             TableError::UnsupportedVersion(v) => write!(f, "unsupported table version {v}"),
             TableError::UnknownKind(k) => write!(f, "unknown table kind {k}"),
-            TableError::ReservedNotZero => write!(f, "reserved table header byte is not zero"),
-            TableError::TokenizerMismatch { table, want } => {
-                write!(f, "table is for tokenizer id {table}, value needs {want}")
-            }
-            TableError::VocabMismatch { table, want } => {
-                write!(f, "table declares vocab {table}, tokenizer has {want}")
-            }
+            TableError::ReservedNotZero => write!(f, "reserved table header bytes are not zero"),
             TableError::PayloadLen { want, got } => {
                 write!(f, "table payload is {got} bytes, expected {want}")
             }
-            TableError::NotAPermutation => {
-                write!(f, "token_of_rank is not a permutation of the vocabulary")
+            TableError::DuplicateToken(t) => {
+                write!(f, "token {t} appears twice in the table; ranks must be a bijection")
             }
-            TableError::ZeroCount(id) => {
-                write!(f, "ANS count for token {id} is zero; every symbol must be encodable")
+            TableError::Empty => write!(f, "cannot train a table on an empty corpus"),
+            TableError::IdTooLarge { id, k } => {
+                write!(f, "token id {id} is too large to remap against a table of {k} ranks")
             }
-            TableError::ModelBuild => write!(f, "could not build the ANS model from the counts"),
         }
     }
 }
 
 impl std::error::Error for TableError {}
 
-/// Count token occurrences into a `vocab`-sized histogram. Equivalent to
-/// `np.bincount(ids, minlength=vocab)`, ignoring any out-of-range ID.
-fn bincount(ids: &[u32], vocab: u32) -> Vec<u32> {
-    let mut counts = vec![0u32; vocab as usize];
-    for &id in ids {
-        if id < vocab {
-            counts[id as usize] = counts[id as usize].saturating_add(1);
-        }
-    }
-    counts
-}
-
-fn write_table_header(out: &mut Vec<u8>, kind: u8, tokenizer: Tokenizer, vocab: u32) {
-    out.extend_from_slice(TABLE_MAGIC);
-    out.push(TABLE_VERSION);
-    out.push(kind);
-    out.push(tokenizer as u8);
-    out.push(0); // reserved
-    out.extend_from_slice(&vocab.to_le_bytes());
-    out.extend_from_slice(&vocab.to_le_bytes());
-    debug_assert_eq!(out.len(), TABLE_HEADER_LEN);
-}
-
-/// Validate a table file header and return `(kind, payload_as_u32)`.
-fn parse_table(buf: &[u8], tokenizer: Tokenizer) -> Result<(u8, Vec<u32>), TableError> {
-    if buf.len() < TABLE_HEADER_LEN {
-        return Err(TableError::TooShort(buf.len()));
-    }
-    if &buf[0..4] != TABLE_MAGIC {
-        return Err(TableError::BadMagic);
-    }
-    if buf[4] != TABLE_VERSION {
-        return Err(TableError::UnsupportedVersion(buf[4]));
-    }
-    let kind = buf[5];
-    if kind != KIND_RANK && kind != KIND_ANS {
-        return Err(TableError::UnknownKind(kind));
-    }
-    if buf[6] != tokenizer as u8 {
-        return Err(TableError::TokenizerMismatch { table: buf[6], want: tokenizer as u8 });
-    }
-    if buf[7] != 0 {
-        return Err(TableError::ReservedNotZero);
-    }
-    let vocab = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
-    if vocab != tokenizer.vocab() {
-        return Err(TableError::VocabMismatch { table: vocab, want: tokenizer.vocab() });
-    }
-    let n = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]) as usize;
-    let payload = &buf[TABLE_HEADER_LEN..];
-    if payload.len() != n * 4 {
-        return Err(TableError::PayloadLen { want: n * 4, got: payload.len() });
-    }
-    let vals = payload
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
-    Ok((kind, vals))
-}
-
-/// SHA-256 of a table file, used to content-address it in the catalog.
+/// SHA-256 of a table file, used to content-address it.
 pub fn table_digest(bytes: &[u8]) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(bytes);
@@ -165,149 +99,114 @@ pub fn digest_hex(digest: &[u8; 32]) -> String {
     s
 }
 
-/// The frequency-rank permutation behind the `+freq` codec.
-///
-/// BPE numbers its vocabulary in merge-discovery order, so a common token can sit at ID
-/// 40,000 while a rare one sits at 400. Remapping each ID to its descending-frequency rank
-/// puts the common tokens on small integers, which is what a varint codec rewards.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RankTable {
-    pub tokenizer: Tokenizer,
-    /// token id -> frequency rank
-    rank_of: Vec<u32>,
-    /// frequency rank -> token id
+    /// rank -> token id, most frequent first
     token_of_rank: Vec<u32>,
+    /// token id -> rank, only for tokens seen in training
+    rank_of: HashMap<u32, u32>,
 }
 
 impl RankTable {
     /// Train on a corpus of token IDs.
     ///
-    /// Ties are broken by ascending token ID, which numpy's `argsort` does *not* guarantee
-    /// (its default quicksort is unstable). Specifying the tiebreak makes the Rust table
-    /// reproducible; it can differ from Python's in the zero-count tail, which affects
-    /// neither correctness nor measured ratio.
-    pub fn train(ids: &[u32], tokenizer: Tokenizer) -> Self {
-        let vocab = tokenizer.vocab();
-        let counts = bincount(ids, vocab);
-
-        let mut order: Vec<u32> = (0..vocab).collect();
-        order.sort_by(|&a, &b| {
-            counts[b as usize]
-                .cmp(&counts[a as usize]) // descending count
-                .then(a.cmp(&b)) // ascending token id
-        });
-
-        let mut rank_of = vec![0u32; vocab as usize];
-        for (rank, &tok) in order.iter().enumerate() {
-            rank_of[tok as usize] = rank as u32;
+    /// Ranks every token that appears, descending by count, breaking ties by ascending token
+    /// ID so the result is reproducible. `max_ranks` caps the table size; tokens beyond the
+    /// cap take the `k + id` fallback.
+    pub fn train(ids: &[u32], max_ranks: Option<usize>) -> Result<Self, TableError> {
+        if ids.is_empty() {
+            return Err(TableError::Empty);
         }
-        RankTable { tokenizer, rank_of, token_of_rank: order }
+        let mut counts: HashMap<u32, u64> = HashMap::new();
+        for &id in ids {
+            *counts.entry(id).or_insert(0) += 1;
+        }
+        let mut ordered: Vec<(u32, u64)> = counts.into_iter().collect();
+        ordered.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        if let Some(cap) = max_ranks {
+            ordered.truncate(cap);
+        }
+        Ok(Self::from_ranked(ordered.into_iter().map(|(t, _)| t).collect()))
     }
 
-    pub fn vocab(&self) -> u32 {
-        self.tokenizer.vocab()
+    fn from_ranked(token_of_rank: Vec<u32>) -> Self {
+        let rank_of = token_of_rank.iter().enumerate().map(|(r, &t)| (t, r as u32)).collect();
+        RankTable { token_of_rank, rank_of }
     }
 
+    /// Number of ranked tokens, and the offset applied to unranked IDs.
+    pub fn k(&self) -> u32 {
+        self.token_of_rank.len() as u32
+    }
+
+    /// Map a token ID to the integer that actually gets packed.
     #[inline]
-    pub fn rank_of(&self, token: u32) -> Option<u32> {
-        self.rank_of.get(token as usize).copied()
+    pub fn rank(&self, token: u32) -> Result<u32, TableError> {
+        if let Some(&r) = self.rank_of.get(&token) {
+            return Ok(r);
+        }
+        let k = self.k();
+        token.checked_add(k).ok_or(TableError::IdTooLarge { id: token, k })
     }
 
+    /// Inverse of [`RankTable::rank`].
     #[inline]
-    pub fn token_of_rank(&self, rank: u32) -> Option<u32> {
-        self.token_of_rank.get(rank as usize).copied()
+    pub fn token(&self, rank: u32) -> u32 {
+        match self.token_of_rank.get(rank as usize) {
+            Some(&t) => t,
+            None => rank - self.k(),
+        }
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(TABLE_HEADER_LEN + self.token_of_rank.len() * 4);
-        write_table_header(&mut out, KIND_RANK, self.tokenizer, self.vocab());
+        out.extend_from_slice(TABLE_MAGIC);
+        out.push(TABLE_VERSION);
+        out.push(KIND_RANK);
+        out.extend_from_slice(&[0u8, 0u8]); // reserved
+        out.extend_from_slice(&self.k().to_le_bytes());
+        debug_assert_eq!(out.len(), TABLE_HEADER_LEN);
         for &t in &self.token_of_rank {
             out.extend_from_slice(&t.to_le_bytes());
         }
         out
     }
 
-    pub fn from_bytes(buf: &[u8], tokenizer: Tokenizer) -> Result<Self, TableError> {
-        let (kind, token_of_rank) = parse_table(buf, tokenizer)?;
-        if kind != KIND_RANK {
-            return Err(TableError::UnknownKind(kind));
+    pub fn from_bytes(buf: &[u8]) -> Result<Self, TableError> {
+        if buf.len() < TABLE_HEADER_LEN {
+            return Err(TableError::TooShort(buf.len()));
         }
-        let vocab = tokenizer.vocab();
+        if &buf[0..4] != TABLE_MAGIC {
+            return Err(TableError::BadMagic);
+        }
+        if buf[4] != TABLE_VERSION {
+            return Err(TableError::UnsupportedVersion(buf[4]));
+        }
+        if buf[5] != KIND_RANK {
+            return Err(TableError::UnknownKind(buf[5]));
+        }
+        if buf[6] != 0 || buf[7] != 0 {
+            return Err(TableError::ReservedNotZero);
+        }
+        let k = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]) as usize;
+        let payload = &buf[TABLE_HEADER_LEN..];
+        if payload.len() != k * 4 {
+            return Err(TableError::PayloadLen { want: k * 4, got: payload.len() });
+        }
+        let token_of_rank: Vec<u32> = payload
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
 
-        // A corrupt permutation would silently map tokens onto each other, so verify it is
-        // a true bijection rather than trusting the file.
-        let mut rank_of = vec![u32::MAX; vocab as usize];
-        for (rank, &tok) in token_of_rank.iter().enumerate() {
-            if tok >= vocab || rank_of[tok as usize] != u32::MAX {
-                return Err(TableError::NotAPermutation);
+        // A duplicate would make two ranks decode to the same token and silently corrupt the
+        // inverse mapping, so verify rather than trust the file.
+        let mut rank_of = HashMap::with_capacity(token_of_rank.len());
+        for (r, &t) in token_of_rank.iter().enumerate() {
+            if rank_of.insert(t, r as u32).is_some() {
+                return Err(TableError::DuplicateToken(t));
             }
-            rank_of[tok as usize] = rank as u32;
         }
-        if rank_of.contains(&u32::MAX) {
-            return Err(TableError::NotAPermutation);
-        }
-        Ok(RankTable { tokenizer, rank_of, token_of_rank })
-    }
-}
-
-/// The static Laplace-smoothed unigram model behind the `+ANS` codec.
-///
-/// Trained once on a corpus and shared across every document. A per-document table
-/// compresses better but has to travel with each document (~900 B per 512-token chunk),
-/// which erases the gain.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnsTable {
-    pub tokenizer: Tokenizer,
-    /// Laplace-smoothed counts, one per vocabulary entry. Always >= 1.
-    counts: Vec<u32>,
-}
-
-impl AnsTable {
-    /// Train on a corpus of token IDs with Laplace `+1` smoothing.
-    ///
-    /// The `+1` is not cosmetic: ANS cannot encode a symbol with zero probability, so an
-    /// unsmoothed table would fail on the first unseen token rather than compress worse.
-    pub fn train(ids: &[u32], tokenizer: Tokenizer) -> Self {
-        let vocab = tokenizer.vocab();
-        let mut counts = bincount(ids, vocab);
-        for c in counts.iter_mut() {
-            *c += 1;
-        }
-        AnsTable { tokenizer, counts }
-    }
-
-    pub fn vocab(&self) -> u32 {
-        self.tokenizer.vocab()
-    }
-
-    /// Normalized probabilities, matching `counts / counts.sum()` in the Python harness.
-    pub fn probabilities(&self) -> Vec<f64> {
-        let total: f64 = self.counts.iter().map(|&c| c as f64).sum();
-        self.counts.iter().map(|&c| c as f64 / total).collect()
-    }
-
-    pub fn counts(&self) -> &[u32] {
-        &self.counts
-    }
-
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(TABLE_HEADER_LEN + self.counts.len() * 4);
-        write_table_header(&mut out, KIND_ANS, self.tokenizer, self.vocab());
-        for &c in &self.counts {
-            out.extend_from_slice(&c.to_le_bytes());
-        }
-        out
-    }
-
-    pub fn from_bytes(buf: &[u8], tokenizer: Tokenizer) -> Result<Self, TableError> {
-        let (kind, counts) = parse_table(buf, tokenizer)?;
-        if kind != KIND_ANS {
-            return Err(TableError::UnknownKind(kind));
-        }
-        if let Some(pos) = counts.iter().position(|&c| c == 0) {
-            return Err(TableError::ZeroCount(pos as u32));
-        }
-        Ok(AnsTable { tokenizer, counts })
+        Ok(RankTable { token_of_rank, rank_of })
     }
 }
 
@@ -315,7 +214,7 @@ impl AnsTable {
 mod tests {
     use super::*;
 
-    /// A tiny synthetic corpus: token 3 most common, then 1, then 2, rest unseen.
+    /// Token 3 most common, then 1, then 2. Nothing else is seen.
     fn corpus() -> Vec<u32> {
         let mut v = vec![3u32; 10];
         v.extend(vec![1u32; 5]);
@@ -324,145 +223,136 @@ mod tests {
     }
 
     #[test]
-    fn rank_table_orders_by_descending_frequency() {
-        let t = RankTable::train(&corpus(), Tokenizer::R50k);
-        assert_eq!(t.token_of_rank(0), Some(3));
-        assert_eq!(t.token_of_rank(1), Some(1));
-        assert_eq!(t.token_of_rank(2), Some(2));
-        assert_eq!(t.rank_of(3), Some(0));
-        assert_eq!(t.rank_of(1), Some(1));
+    fn ranks_by_descending_frequency() {
+        let t = RankTable::train(&corpus(), None).unwrap();
+        assert_eq!(t.k(), 3);
+        assert_eq!(t.rank(3).unwrap(), 0);
+        assert_eq!(t.rank(1).unwrap(), 1);
+        assert_eq!(t.rank(2).unwrap(), 2);
     }
 
     #[test]
-    fn rank_table_breaks_ties_by_ascending_token_id() {
-        // Tokens 0 and 4..vocab all have count 0 and must come out in ID order.
-        let t = RankTable::train(&corpus(), Tokenizer::R50k);
-        assert_eq!(t.token_of_rank(3), Some(0));
-        assert_eq!(t.token_of_rank(4), Some(4));
-        assert_eq!(t.token_of_rank(5), Some(5));
+    fn breaks_ties_by_ascending_token_id() {
+        let ids = vec![7u32, 7, 4, 4, 9, 9]; // all count 2
+        let t = RankTable::train(&ids, None).unwrap();
+        assert_eq!(t.token(0), 4);
+        assert_eq!(t.token(1), 7);
+        assert_eq!(t.token(2), 9);
     }
 
     #[test]
-    fn rank_table_training_is_deterministic() {
-        let a = RankTable::train(&corpus(), Tokenizer::R50k);
-        let b = RankTable::train(&corpus(), Tokenizer::R50k);
+    fn training_is_deterministic() {
+        let a = RankTable::train(&corpus(), None).unwrap();
+        let b = RankTable::train(&corpus(), None).unwrap();
         assert_eq!(a.to_bytes(), b.to_bytes());
     }
 
     #[test]
-    fn rank_table_is_a_permutation() {
-        let t = RankTable::train(&corpus(), Tokenizer::R50k);
-        let vocab = Tokenizer::R50k.vocab();
-        let mut seen = vec![false; vocab as usize];
-        for r in 0..vocab {
-            let tok = t.token_of_rank(r).expect("rank in range");
-            assert!(!seen[tok as usize], "token {tok} appears twice");
-            seen[tok as usize] = true;
-            assert_eq!(t.rank_of(tok), Some(r), "rank_of is not the inverse");
+    fn roundtrips_ranked_tokens() {
+        let t = RankTable::train(&corpus(), None).unwrap();
+        for tok in [1u32, 2, 3] {
+            assert_eq!(t.token(t.rank(tok).unwrap()), tok);
         }
     }
 
     #[test]
-    fn rank_table_roundtrips_through_bytes() {
-        let t = RankTable::train(&corpus(), Tokenizer::O200k);
+    fn roundtrips_unranked_tokens_of_any_size() {
+        // The property that removes vocabulary from the interface entirely: a token the table
+        // never saw still roundtrips, whatever its ID.
+        let t = RankTable::train(&corpus(), None).unwrap();
+        for tok in [0u32, 4, 99, 50_000, 200_018, 1_000_000, u32::MAX - 3] {
+            let r = t.rank(tok).unwrap();
+            assert!(r >= t.k(), "unranked token {tok} should map at or above k");
+            assert_eq!(t.token(r), tok, "unranked token {tok} did not roundtrip");
+        }
+    }
+
+    #[test]
+    fn ranked_and_unranked_ranges_never_collide() {
+        let t = RankTable::train(&corpus(), None).unwrap();
+        let k = t.k();
+        for tok in 0..200u32 {
+            let r = t.rank(tok).unwrap();
+            assert_eq!(t.token(r), tok, "token {tok} did not roundtrip");
+            assert_eq!(r < k, [1u32, 2, 3].contains(&tok));
+        }
+    }
+
+    #[test]
+    fn rejects_ids_that_would_overflow() {
+        let t = RankTable::train(&corpus(), None).unwrap();
+        let too_big = u32::MAX - 1;
+        assert_eq!(t.rank(too_big), Err(TableError::IdTooLarge { id: too_big, k: 3 }));
+    }
+
+    #[test]
+    fn max_ranks_caps_the_table() {
+        let t = RankTable::train(&corpus(), Some(2)).unwrap();
+        assert_eq!(t.k(), 2);
+        assert_eq!(t.rank(3).unwrap(), 0);
+        assert_eq!(t.rank(1).unwrap(), 1);
+        // Token 2 fell outside the cap and now takes the fallback path, still losslessly.
+        assert!(t.rank(2).unwrap() >= t.k());
+        assert_eq!(t.token(t.rank(2).unwrap()), 2);
+    }
+
+    #[test]
+    fn roundtrips_through_bytes() {
+        let t = RankTable::train(&corpus(), None).unwrap();
         let bytes = t.to_bytes();
-        let back = RankTable::from_bytes(&bytes, Tokenizer::O200k).expect("should load");
+        let back = RankTable::from_bytes(&bytes).expect("should load");
+        assert_eq!(back, t);
         assert_eq!(back.to_bytes(), bytes);
-        assert_eq!(back.rank_of(3), t.rank_of(3));
     }
 
     #[test]
-    fn rank_table_rejects_wrong_tokenizer() {
-        let bytes = RankTable::train(&corpus(), Tokenizer::R50k).to_bytes();
-        assert_eq!(
-            RankTable::from_bytes(&bytes, Tokenizer::O200k),
-            Err(TableError::TokenizerMismatch { table: 1, want: 3 })
-        );
+    fn table_file_scales_with_observed_tokens_not_vocabulary() {
+        // 3 distinct tokens seen -> a 12-byte header plus 3 x u32, regardless of how large the
+        // tokenizer's vocabulary happens to be.
+        let t = RankTable::train(&corpus(), None).unwrap();
+        assert_eq!(t.to_bytes().len(), TABLE_HEADER_LEN + 3 * 4);
     }
 
     #[test]
-    fn rank_table_rejects_non_permutation() {
-        let t = RankTable::train(&corpus(), Tokenizer::R50k);
+    fn rejects_empty_corpus() {
+        assert_eq!(RankTable::train(&[], None), Err(TableError::Empty));
+    }
+
+    #[test]
+    fn rejects_duplicate_token_in_file() {
+        let t = RankTable::train(&corpus(), None).unwrap();
         let mut bytes = t.to_bytes();
-        // Duplicate rank 0's token into rank 1's slot.
         let a = TABLE_HEADER_LEN;
         let dup: Vec<u8> = bytes[a..a + 4].to_vec();
         bytes[a + 4..a + 8].copy_from_slice(&dup);
-        assert_eq!(
-            RankTable::from_bytes(&bytes, Tokenizer::R50k),
-            Err(TableError::NotAPermutation)
-        );
+        assert!(matches!(RankTable::from_bytes(&bytes), Err(TableError::DuplicateToken(_))));
     }
 
     #[test]
-    fn ans_table_applies_laplace_smoothing() {
-        let t = AnsTable::train(&corpus(), Tokenizer::R50k);
-        assert_eq!(t.counts()[3], 11); // 10 seen + 1
-        assert_eq!(t.counts()[1], 6); //   5 seen + 1
-        assert_eq!(t.counts()[0], 1); //   unseen, still encodable
-        assert!(t.counts().iter().all(|&c| c >= 1), "every symbol must be encodable");
-    }
+    fn rejects_bad_magic_version_and_kind() {
+        let base = RankTable::train(&corpus(), None).unwrap().to_bytes();
 
-    #[test]
-    fn ans_probabilities_sum_to_one() {
-        let t = AnsTable::train(&corpus(), Tokenizer::R50k);
-        let sum: f64 = t.probabilities().iter().sum();
-        assert!((sum - 1.0).abs() < 1e-12, "probabilities summed to {sum}");
-    }
+        let mut b = base.clone();
+        b[0] = b'X';
+        assert_eq!(RankTable::from_bytes(&b), Err(TableError::BadMagic));
 
-    #[test]
-    fn ans_table_roundtrips_through_bytes() {
-        let t = AnsTable::train(&corpus(), Tokenizer::Cl100k);
-        let bytes = t.to_bytes();
-        let back = AnsTable::from_bytes(&bytes, Tokenizer::Cl100k).expect("should load");
-        assert_eq!(back.counts(), t.counts());
-    }
+        let mut b = base.clone();
+        b[4] = 9;
+        assert_eq!(RankTable::from_bytes(&b), Err(TableError::UnsupportedVersion(9)));
 
-    #[test]
-    fn ans_table_rejects_zero_count() {
-        let t = AnsTable::train(&corpus(), Tokenizer::R50k);
-        let mut bytes = t.to_bytes();
-        bytes[TABLE_HEADER_LEN..TABLE_HEADER_LEN + 4].copy_from_slice(&0u32.to_le_bytes());
-        assert_eq!(
-            AnsTable::from_bytes(&bytes, Tokenizer::R50k),
-            Err(TableError::ZeroCount(0))
-        );
-    }
+        let mut b = base.clone();
+        b[5] = 7;
+        assert_eq!(RankTable::from_bytes(&b), Err(TableError::UnknownKind(7)));
 
-    #[test]
-    fn table_kinds_are_not_interchangeable() {
-        let rank = RankTable::train(&corpus(), Tokenizer::R50k).to_bytes();
-        assert_eq!(
-            AnsTable::from_bytes(&rank, Tokenizer::R50k),
-            Err(TableError::UnknownKind(KIND_RANK))
-        );
-        let ans = AnsTable::train(&corpus(), Tokenizer::R50k).to_bytes();
-        assert_eq!(
-            RankTable::from_bytes(&ans, Tokenizer::R50k),
-            Err(TableError::UnknownKind(KIND_ANS))
-        );
+        let mut b = base;
+        b[6] = 1;
+        assert_eq!(RankTable::from_bytes(&b), Err(TableError::ReservedNotZero));
     }
 
     #[test]
     fn digest_is_stable_and_hex_is_64_chars() {
-        let bytes = AnsTable::train(&corpus(), Tokenizer::R50k).to_bytes();
-        let d1 = table_digest(&bytes);
-        let d2 = table_digest(&bytes);
-        assert_eq!(d1, d2);
-        assert_eq!(digest_hex(&d1).len(), 64);
-    }
-
-    #[test]
-    fn table_rejects_bad_magic_and_version() {
-        let mut bytes = AnsTable::train(&corpus(), Tokenizer::R50k).to_bytes();
-        bytes[0] = b'X';
-        assert_eq!(AnsTable::from_bytes(&bytes, Tokenizer::R50k), Err(TableError::BadMagic));
-
-        let mut bytes = AnsTable::train(&corpus(), Tokenizer::R50k).to_bytes();
-        bytes[4] = 9;
-        assert_eq!(
-            AnsTable::from_bytes(&bytes, Tokenizer::R50k),
-            Err(TableError::UnsupportedVersion(9))
-        );
+        let bytes = RankTable::train(&corpus(), None).unwrap().to_bytes();
+        assert_eq!(table_digest(&bytes), table_digest(&bytes));
+        assert_eq!(digest_hex(&table_digest(&bytes)).len(), 64);
     }
 }

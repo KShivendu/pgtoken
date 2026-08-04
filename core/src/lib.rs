@@ -1,22 +1,23 @@
-//! Token-native storage codecs.
+//! Compress sequences of token IDs.
 //!
-//! Stores text as its BPE token IDs rather than UTF-8 bytes. See the paper in
-//! `research/token-native-storage/` for why; the short version is that the systems reading
-//! and writing this text work in token IDs, so a token-native store hands them the IDs
-//! directly instead of re-tokenizing on every read.
+//! Text is stored as the token IDs a model already works in, rather than UTF-8, which is both
+//! smaller and means a reader never has to re-tokenize. See the blog and paper linked from the
+//! README for why.
 //!
-//! Layering: [`header`] defines the self-describing value envelope, [`codec`] the four
-//! payload encodings. Neither depends on Postgres.
+//! **This library has no tokenizer.** It takes `&[u32]` and gives back `&[u32]`. Turning text
+//! into IDs is the caller's job, with whatever tokenizer they already run — a database has no
+//! business holding an opinion about that, and staying out of it means any tokenizer works,
+//! including ones that do not exist yet. Nothing here needs a vocabulary size either; see
+//! [`tables::RankTable`] for how that is avoided.
+//!
+//! Layering: [`header`] is the self-describing value envelope, [`codec`] the payload
+//! encodings, [`tables`] the trained frequency table, [`value`] the API most callers want.
 
 pub mod codec;
 pub mod header;
 pub mod tables;
-pub mod tokenizer;
 pub mod value;
 
-pub use header::{Codec, Header, HeaderError, Tokenizer, HEADER_LEN, MAGIC, VERSION};
-pub use tables::{AnsTable, RankTable, TableError};
-pub use value::{
-    decode_ids, decode_text, describe, encode_ids, encode_text, recode, resolve_codec, Tables,
-    ValueError,
-};
+pub use header::{Codec, Header, HeaderError, HEADER_LEN, MAGIC, VERSION};
+pub use tables::{RankTable, TableError};
+pub use value::{decode, describe, encode, recode, resolve_codec, ValueError};

@@ -1,20 +1,12 @@
-//! Raw token-ID packing: no coding table, no entropy model.
+//! Raw token-ID packing: no table, no model.
 //!
-//! Ports `tnbench.pack3` / `tnbench.unpack3` (tnbench.py:128-140) plus the `uint16` path
-//! the Python harness gets implicitly from `np.array(ids, dtype=np.uint16).tobytes()`.
-//!
-//! Byte order is deliberately asymmetric so both match the harness exactly:
-//! `raw24` is **big-endian** (that is what `pack3` writes), `raw16` is **little-endian**
-//! (numpy's native order on x86). Getting either backwards still roundtrips within this
-//! module, so only the cross-language test catches it.
+//! `raw24` is **big-endian**, `raw16` **little-endian**. Both orders are fixed by the format
+//! and pinned by tests, since either would roundtrip within this module if reversed.
 
-use crate::header::{Codec, HeaderError, Tokenizer};
+use crate::header::{Codec, HeaderError};
 
-/// Anything wrong with the token IDs themselves, as opposed to the header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawError {
-    /// A token ID is outside the tokenizer's vocabulary.
-    IdOutOfRange { id: u32, vocab: u32 },
     /// A token ID does not fit the packing width.
     IdTooWide { id: u32, codec: Codec },
 }
@@ -22,38 +14,26 @@ pub enum RawError {
 impl std::fmt::Display for RawError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RawError::IdOutOfRange { id, vocab } => {
-                write!(f, "token id {id} is outside the vocabulary (size {vocab})")
-            }
-            RawError::IdTooWide { id, codec } => {
-                write!(f, "token id {id} does not fit codec {}", codec.as_str())
-            }
+            RawError::IdTooWide { id, codec } => write!(
+                f,
+                "token id {id} does not fit codec {} (max {})",
+                codec.as_str(),
+                codec.max_id().unwrap_or(u32::MAX)
+            ),
         }
     }
 }
 
 impl std::error::Error for RawError {}
 
-/// Reject IDs the tokenizer could never have produced.
+/// The narrowest raw codec that can hold every ID in `ids`.
 ///
-/// Without this an out-of-range ID would be silently truncated by the packing and decode
-/// to a different, valid-looking token.
-pub fn validate_ids(ids: &[u32], tokenizer: Tokenizer) -> Result<(), RawError> {
-    let vocab = tokenizer.vocab();
-    for &id in ids {
-        if id >= vocab {
-            return Err(RawError::IdOutOfRange { id, vocab });
-        }
-    }
-    Ok(())
-}
-
-/// The narrowest raw codec that can represent this tokenizer's IDs.
-pub fn preferred_raw(tokenizer: Tokenizer) -> Codec {
-    if tokenizer.fits_u16() {
-        Codec::Raw16
-    } else {
-        Codec::Raw24
+/// Chosen from the data rather than from a declared vocabulary, so nothing needs to know how
+/// large the tokenizer is.
+pub fn preferred_raw(ids: &[u32]) -> Codec {
+    match ids.iter().copied().max() {
+        Some(m) if m > u16::MAX as u32 => Codec::Raw24,
+        _ => Codec::Raw16,
     }
 }
 
@@ -61,13 +41,14 @@ pub fn preferred_raw(tokenizer: Tokenizer) -> Codec {
 pub fn encode16(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     out.reserve(ids.len() * 2);
     for &id in ids {
-        let narrow = u16::try_from(id).map_err(|_| RawError::IdTooWide { id, codec: Codec::Raw16 })?;
+        let narrow =
+            u16::try_from(id).map_err(|_| RawError::IdTooWide { id, codec: Codec::Raw16 })?;
         out.extend_from_slice(&narrow.to_le_bytes());
     }
     Ok(())
 }
 
-/// 3 bytes/id, big-endian. Mirrors `tnbench.pack3`.
+/// 3 bytes/id, big-endian.
 pub fn encode24(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     out.reserve(ids.len() * 3);
     for &id in ids {
@@ -89,7 +70,7 @@ pub fn decode16(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
     Ok(payload.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) as u32).collect())
 }
 
-/// Decode a `raw24` payload. Mirrors `tnbench.unpack3`.
+/// Decode a `raw24` payload.
 pub fn decode24(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
     if payload.len() != n * 3 {
         return Err(HeaderError::PayloadLen { want: n * 3, got: payload.len() });
@@ -105,25 +86,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn raw24_matches_pack3_byte_order() {
-        // pack3 writes (id >> 16, id >> 8, id) — big-endian. Pin the exact bytes so a
-        // future "optimisation" to LE cannot pass silently.
+    fn raw24_is_big_endian() {
         let mut out = Vec::new();
         encode24(&[0x01_02_03], &mut out).unwrap();
         assert_eq!(out, vec![0x01, 0x02, 0x03]);
     }
 
     #[test]
-    fn raw16_matches_numpy_uint16_byte_order() {
-        // np.array([0x0102], dtype=np.uint16).tobytes() == b'\x02\x01' on x86.
+    fn raw16_is_little_endian() {
         let mut out = Vec::new();
         encode16(&[0x0102], &mut out).unwrap();
         assert_eq!(out, vec![0x02, 0x01]);
     }
 
     #[test]
-    fn raw16_roundtrips_across_r50k_range() {
-        let ids: Vec<u32> = (0..50_257).collect();
+    fn raw16_roundtrips_its_whole_range() {
+        let ids: Vec<u32> = (0..=u16::MAX as u32).collect();
         let mut out = Vec::new();
         encode16(&ids, &mut out).unwrap();
         assert_eq!(out.len(), ids.len() * 2);
@@ -131,8 +109,8 @@ mod tests {
     }
 
     #[test]
-    fn raw24_roundtrips_across_o200k_range() {
-        let ids: Vec<u32> = (0..200_019).collect();
+    fn raw24_roundtrips_across_a_large_range() {
+        let ids: Vec<u32> = (0..300_000).collect();
         let mut out = Vec::new();
         encode24(&ids, &mut out).unwrap();
         assert_eq!(out.len(), ids.len() * 3);
@@ -145,15 +123,6 @@ mod tests {
         encode24(&[], &mut out).unwrap();
         assert!(out.is_empty());
         assert_eq!(decode24(&out, 0).unwrap(), Vec::<u32>::new());
-    }
-
-    #[test]
-    fn rejects_out_of_vocab_id() {
-        assert_eq!(
-            validate_ids(&[50_257], Tokenizer::R50k),
-            Err(RawError::IdOutOfRange { id: 50_257, vocab: 50_257 })
-        );
-        assert!(validate_ids(&[50_256], Tokenizer::R50k).is_ok());
     }
 
     #[test]
@@ -177,9 +146,10 @@ mod tests {
     }
 
     #[test]
-    fn preferred_raw_narrows_only_for_r50k() {
-        assert_eq!(preferred_raw(Tokenizer::R50k), Codec::Raw16);
-        assert_eq!(preferred_raw(Tokenizer::Cl100k), Codec::Raw24);
-        assert_eq!(preferred_raw(Tokenizer::O200k), Codec::Raw24);
+    fn preferred_raw_widens_only_when_the_data_needs_it() {
+        assert_eq!(preferred_raw(&[]), Codec::Raw16);
+        assert_eq!(preferred_raw(&[0, 1, 65_535]), Codec::Raw16);
+        assert_eq!(preferred_raw(&[0, 65_536]), Codec::Raw24);
+        assert_eq!(preferred_raw(&[200_018]), Codec::Raw24);
     }
 }

@@ -21,12 +21,11 @@ Two protocol rules, both of which will silently invalidate the result if ignored
 
         taskset -c 4 uv run python 12_postgres/harness/bench_latency.py
 
-Codec coverage note: `+freq` is excluded from the client-decode path because the Rust
+Codec coverage note: `freq` is excluded from the client-decode path, because the Rust
 `stream-vbyte` container differs from Python's `pyfastpfor` one, so this Python client cannot
-decode what the extension wrote. `raw24` and `ans` are byte-compatible across the two (the
-Rust test suite verifies it) and bracket the interesting range: raw24 is the fastest decode,
-ans the highest ratio. `+freq`'s server side is byte-for-byte the same memcpy as raw24; only
-its client decode is unmeasured here.
+decode what the extension wrote. `raw` is measured instead. On the server side the two are the
+same memcpy, so the fetch half of the comparison holds for both; only `freq`'s client decode is
+unmeasured here.
 """
 
 from __future__ import annotations
@@ -42,8 +41,8 @@ import tiktoken
 import pgcommon as C
 import tnbench as T
 
-# Codecs the Python client can decode from the extension's output. See the module docstring.
-CLIENT_CODECS = ("raw24", "ans")
+# Codecs this Python client can decode from the extension's output. See the module docstring.
+CLIENT_CODECS = ("raw16", "raw24")
 
 
 def build_tables(conn, texts: list[str], codec: str, table_id: int, embedding_bytes: int):
@@ -65,17 +64,9 @@ def build_tables(conn, texts: list[str], codec: str, table_id: int, embedding_by
 
     embedding = b"\x00" * embedding_bytes
 
-    # Encode server-side once at load time. In production an agent would send already-encoded
-    # blobs, so this is setup cost, not part of any measurement below.
-    encoded: list[bytes] = []
-    with conn.cursor() as cur:
-        for start in range(0, len(texts), 500):
-            batch = texts[start : start + 500]
-            cur.execute(
-                "SELECT pgtoken.encode(t, %s, %s, %s) FROM unnest(%s::text[]) t",
-                (C.DEFAULT_TOKENIZER, codec, table_id, batch),
-            )
-            encoded.extend(r[0] for r in cur.fetchall())
+    # Tokenize and encode client-side, as an agent would. This is load-time setup, not part of
+    # any measurement below.
+    encoded = C.encode_batch(conn, C.tokenize_all(texts), codec, table_id)
 
     with conn.cursor() as cur:
         with cur.copy("COPY bench_text (id, embedding, body) FROM STDIN") as cp:
@@ -93,28 +84,27 @@ def build_tables(conn, texts: list[str], codec: str, table_id: int, embedding_by
     return encoded
 
 
-def decode_client(blobs: list[bytes], codec: str, enc, ans_model) -> int:
-    """Decode stored blobs to token IDs, client-side. Returns a token count so the work
-    cannot be optimised away."""
+def decode_client(blobs: list[bytes], codec: str) -> int:
+    """Decode stored blobs to token IDs, client-side.
+
+    Returns a token count so the work cannot be optimised away.
+    """
     total = 0
     for b in blobs:
-        # 12-byte header: magic, version, tokenizer, codec, table_id u16, reserved, n u32 LE.
+        # 12-byte header: magic, version, codec, reserved, table_id u16, reserved, n u32 LE.
         n = int.from_bytes(b[8:12], "little")
         payload = b[12:]
         if codec == "raw24":
             ids = T.unpack3(payload, n)
-        elif codec == "ans":
-            import constriction
-
-            buf = np.frombuffer(payload, dtype=np.uint32).copy()
-            ids = constriction.stream.stack.AnsCoder(buf).decode(ans_model, n)
+        elif codec == "raw16":
+            ids = np.frombuffer(payload, dtype=np.uint16)
         else:
             raise ValueError(f"no Python client decoder for {codec}")
         total += len(ids)
     return total
 
 
-def bench(conn, ids_pool: list[int], fanout: int, reps: int, codec: str, enc, ans_model) -> dict:
+def bench(conn, ids_pool: list[int], fanout: int, reps: int, codec: str, enc) -> dict:
     """Time one read of `fanout` rows, for each of the three storage shapes."""
     rng = np.random.default_rng(4242)
     out: dict[str, list[float]] = {
@@ -161,7 +151,7 @@ def bench(conn, ids_pool: list[int], fanout: int, reps: int, codec: str, enc, an
             cur.execute("SELECT body FROM bench_tnt WHERE id = ANY(%s)", (picks,))
             blobs = [bytes(r[0]) for r in cur.fetchall()]
             t1 = time.perf_counter()
-            decode_client(blobs, codec, enc, ans_model)
+            decode_client(blobs, codec)
             t2 = time.perf_counter()
             out["tnt_fetch"].append((t1 - t0) * 1e6)
             out["tnt_decode"].append((t2 - t1) * 1e6)
@@ -195,45 +185,32 @@ def main() -> int:
             ap.error(f"no Python client decoder for {c!r}; choose from {CLIENT_CODECS}")
 
     texts = C.load_corpus(args.domain, args.docs)
-    enc = tiktoken.get_encoding(f"{C.DEFAULT_TOKENIZER}_base")
-    print(f"corpus: {len(texts)} docs from {args.domain}, tokenizer {C.DEFAULT_TOKENIZER}")
+    enc = C.encoder()
+    print(f"corpus: {len(texts)} docs from {args.domain}, tokenizer {C.TOKENIZER} (client-side)")
 
     runs = []
     with C.connect() as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS pgtoken")
-        C.train_tables(conn, args.domain)
+        C.train_table(conn, args.domain)
         settings = {
             k: conn.execute(f"SHOW {k}").fetchone()[0]
             for k in ("shared_buffers", "default_toast_compression", "server_version")
         }
 
         for codec in args.codecs:
-            table_id = C.ANS_TABLE_ID if codec == "ans" else 0
+            table_id = 0
             print(f"\nloading token-native table with codec {codec}...")
             build_tables(conn, texts, codec, table_id, args.embedding_bytes)
 
-            ans_model = None
-            if codec == "ans":
-                # Rebuild the same static model the extension used, so the client can decode.
-                import constriction
-
-                r50k = tiktoken.get_encoding("r50k_base")
-                train_text = r50k.decode(T.load_ids(f"{args.domain}_train")[: 400 * 512].tolist())
-                vocab = 200_019
-                ids = np.array(enc.encode(train_text, disallowed_special=()), dtype=np.int64)
-                counts = np.bincount(ids[ids < vocab], minlength=vocab).astype(np.int64) + 1
-                probs = counts.astype(np.float64) / counts.sum()
-                ans_model = constriction.stream.model.Categorical(probs, perfect=False)
-
             for fanout in args.fanout:
                 print(f"  fanout {fanout}, {args.reps} reps...")
-                runs.append(bench(conn, list(range(len(texts))), fanout, args.reps, codec, enc, ans_model))
+                runs.append(bench(conn, list(range(len(texts))), fanout, args.reps, codec, enc))
 
     results = {
         "config": {
             "docs": len(texts),
             "domain": args.domain,
-            "tokenizer": C.DEFAULT_TOKENIZER,
+            "tokenizer": C.TOKENIZER,
             "reps": args.reps,
             "embedding_bytes": args.embedding_bytes,
             **settings,

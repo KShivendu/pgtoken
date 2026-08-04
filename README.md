@@ -1,9 +1,14 @@
 # pgtoken
 
-Store text in PostgreSQL as BPE token IDs instead of UTF-8.
+Store text in PostgreSQL as token IDs instead of UTF-8.
 
 Agents read and write token IDs, not characters. A `text` column makes them re-tokenize on
-every read; `pgtoken` hands over the IDs directly, in less than half the space.
+every read; `pgtoken` stores the IDs directly, compressed, and hands them back as-is.
+
+**No tokenizer.** The extension takes `int[]` and returns `int[]`. You tokenize with whatever
+you already use — tiktoken, HuggingFace, SentencePiece, your own — and the database stays out
+of it. So any tokenizer works, nothing needs a vocabulary size, and the server never spends a
+cycle tokenizing.
 
 <sub>Background: [blog](https://www.kshivendu.dev/blog/token-storage) ·
 [paper](https://arxiv.org/abs/2608.02376)</sub>
@@ -32,94 +37,94 @@ CREATE EXTENSION pgtoken;
 CREATE TABLE documents (id bigserial PRIMARY KEY, body bytea);
 ALTER TABLE documents ALTER COLUMN body SET STORAGE EXTERNAL;
 
-INSERT INTO documents (body) VALUES (pgtoken.encode('hello world'));
+-- token IDs from your tokenizer, client-side
+INSERT INTO documents (body) VALUES (pgtoken.encode('{24912,2375}'));
 
-SELECT pgtoken.decode(body) FROM documents;   -- text, for a human
-SELECT body FROM documents;                   -- blob, decoded client-side by an agent
+SELECT pgtoken.decode(body) FROM documents;   -- {24912,2375}
+SELECT body FROM documents;                   -- the blob, to decode client-side
 ```
 
 `STORAGE EXTERNAL` stops PostgreSQL compressing a payload that is already compressed.
 
-When the writer is a model that already holds token IDs, no tokenizer runs at all:
-
-```sql
-INSERT INTO documents (body)
-VALUES (pgtoken.encode_ids('{24912,2375}', 'o200k', 'raw', 0));
-```
+On the agent path, select `body` and decode client-side. `pgtoken.decode` is for SQL-side
+work — `int[]` costs 4 bytes per token on the wire, more than the blob it came from.
 
 ## Codecs
 
-| codec | ratio | read speed | needs a trained table |
+| codec | size | read | needs a table |
 | --- | --: | --- | --- |
-| `raw` | 1.6× | fastest | no |
-| `freq` | 2.7× | fast | yes |
-| `ans` | 3.4× | slower | yes |
+| `raw` | 2–3 B/token | fastest | no |
+| `freq` | ~1.3 B/token | fast | yes |
 
-`freq` is the recommended default. Train a table over your own corpus:
+`raw` packs IDs at a fixed width, picking 2 or 3 bytes from the data. `freq` remaps them to
+frequency rank and packs with a varint, so common tokens cost one byte.
+
+Train a table from any query returning `int[]`:
 
 ```sql
-SELECT pgtoken.train_freq_table(1, 'o200k', 'SELECT body FROM my_corpus');
-INSERT INTO documents (body)
-VALUES (pgtoken.encode('hello world', 'o200k', 'freq', 1));
+SELECT pgtoken.train(1, 'SELECT ids FROM my_corpus');
+INSERT INTO documents (body) VALUES (pgtoken.encode('{24912,2375}', 'freq', 1));
 ```
 
-Table ids are permanent, since stored values reference them.
+The table stores only the tokens your corpus actually contained — for one skewed corpus that
+is 28 bytes, not the 800 KB a full vocabulary would need. Tokens it never saw still encode
+losslessly, just a little wider, which is why nothing has to declare a vocabulary size.
 
-Tokenizers: `r50k`, `cl100k`, `o200k`.
+Table ids are permanent, since stored values reference them. `pgtoken.recode` changes a value's
+codec without leaving the token-ID domain.
 
 ## Benchmarks
 
-C4 English, 512-token chunks, o200k, PostgreSQL 14.
+C4 English, 512-token chunks, o200k, PostgreSQL 14. Agent reads against a `text` column:
 
-Agent reads, against a `text` column:
+| fan-out | speedup |
+| --: | --: |
+| 10 | 5.7–7.5× |
+| 100 | 9.5–14.3× |
 
-| fan-out | `raw` | `ans` |
-| --: | --: | --: |
-| 10 | 7.1–7.5× faster | 2.9–3.0× |
-| 100 | 11.6–14.3× faster | 3.6× |
+Spread across four runs at different machine loads. Roughly 90% of the `text` path is
+tokenization in every one of them.
 
-92% of the `text` path is tokenization. Storage is 2.1× smaller in payload, total relation
-size, and WAL.
+Storage is ~2.1× smaller in payload, total relation size, and WAL.
 
-To reproduce, you need the held-out corpora from the
+Reproducing needs the corpora from the
 [token-storage](https://github.com/KShivendu/token-storage) repo:
 
 ```sh
-TOKEN_STORAGE_REPO=/path/to/token-storage \
-  uv run python benchmarks/bench_latency.py
+TOKEN_STORAGE_REPO=/path/to/token-storage uv run python benchmarks/bench_latency.py
 ```
 
-Ratios are stable across runs; absolute microseconds are not — they inflate several-fold
-under load, so check `/proc/loadavg` before quoting one.
+Ratios are stable across runs; absolute microseconds are not — they inflate several-fold under
+load, so check `/proc/loadavg` before quoting one.
 
 ## Limitations
 
-- **One tokenizer per value.** IDs only mean something to a consumer using the same
-  tokenizer. Values record their own, so a column can hold several during a migration.
-- **No `ORDER BY`, `LIKE` or `pg_trgm`** on the column — byte order of a compressed value is
-  meaningless. For full-text search, index an expression:
-  `CREATE INDEX ON documents USING gin (to_tsvector('english', pgtoken.decode(body)));`
-- `=`, `GROUP BY`, `DISTINCT` and hash joins do work, on shorter keys than `text`.
+- **`decode` returns `int[]`, not text.** Detokenizing is yours to do. `psql` shows integers,
+  and there is no full-text search over the column — keep a separate `text` or `tsvector`
+  column if you need it.
+- **No `ORDER BY`, `LIKE` or `pg_trgm`** on the column: byte order of a compressed value is
+  meaningless. `=`, `GROUP BY`, `DISTINCT` and hash joins do work, on shorter keys than
+  `int[]`.
+- **IDs are only meaningful to the tokenizer that produced them.** The extension cannot check
+  that for you, so a column mixing tokenizers is your problem to avoid.
 - **Coding tables are corpus-specific.** Ratios drop if the table and your data diverge.
 
 ## Reference
 
 | function | returns | |
 | --- | --- | --- |
-| `encode(text)` | `bytea` | uses the `pgtoken.*` defaults |
-| `encode(text, tokenizer, codec, table_id)` | `bytea` | pinned, `IMMUTABLE` |
-| `encode_ids(int[], tokenizer, codec, table_id)` | `bytea` | from a model's own IDs |
-| `decode(bytea)` | `text` | back to text |
-| `token_ids(bytea)` | `int[]` | token IDs |
+| `encode(int[])` | `bytea` | uses the `pgtoken.*` defaults |
+| `encode(int[], codec, table_id)` | `bytea` | pinned, `IMMUTABLE` |
+| `decode(bytea)` | `int[]` | token IDs |
 | `token_count(bytea)` | `int` | header only, no decode |
-| `describe(bytea)` | record | tokenizer, codec, table, sizes |
+| `describe(bytea)` | record | codec, table, sizes |
 | `recode(bytea, codec, table_id)` | `bytea` | change codec, keeping the IDs |
-| `train_freq_table(id, tokenizer, query)` | `text` | |
-| `train_ans_table(id, tokenizer, query)` | `text` | |
-| `table_info(id)` | record | kind, tokenizer, vocab, sha256 |
+| `train(table_id, query)` | `text` | train from a query returning `int[]` |
+| `train(table_id, query, max_ranks)` | `text` | as above, capping table size |
+| `table_info(table_id)` | record | ranked tokens, sha256, file size |
 
-Settings: `pgtoken.table_dir` (where coding tables live, `SIGHUP`),
-`pgtoken.default_tokenizer`, `pgtoken.default_codec`, `pgtoken.default_table_id`.
+Settings: `pgtoken.table_dir` (where coding tables live, `SIGHUP`), `pgtoken.default_codec`,
+`pgtoken.default_table_id`.
 
 ## Tests
 
