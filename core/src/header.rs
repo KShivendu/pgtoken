@@ -9,7 +9,7 @@
 //! off  size  field
 //!   0     1  magic 0xA7
 //!   1     1  format version (1)
-//!   2     1  codec id  0=raw16 1=raw24 2=freq+svb 3=ANS
+//!   2     1  codec id  0=raw16 1=raw24 2=freq
 //!   3     1  reserved, must be zero
 //!   4     2  table id (u16 LE; 0 = none, for the raw codecs)
 //!   6     2  reserved, must be zero
@@ -17,7 +17,7 @@
 //!  12     -  payload
 //! ```
 //!
-//! The token count is not redundant: both streamvbyte and ANS need `n` up front to decode.
+//! The token count is not redundant: streamvbyte needs `n` up front to decode.
 
 use core::fmt;
 
