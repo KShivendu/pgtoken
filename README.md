@@ -51,13 +51,14 @@ work — `int[]` costs 4 bytes per token on the wire, more than the blob it came
 
 ## Codecs
 
-| codec | size | read | needs a table |
-| --- | --: | --- | --- |
-| `raw` | 2–3 B/token | fastest | no |
-| `freq` | ~1.3 B/token | fast | yes |
+| codec | size | decode | needs a table |
+| --- | --: | --: | --- |
+| `raw` | 2–3 B/token | 0.3–0.4 µs | no |
+| `freq` | ~1.9 B/token | 4 µs | yes |
 
-`raw` packs IDs at a fixed width, picking 2 or 3 bytes from the data. `freq` remaps them to
-frequency rank and packs with a varint, so common tokens cost one byte.
+Per 512-token chunk, on a Zipf-like stream over a 200k vocabulary. `raw` packs IDs at a fixed
+width, picking 2 or 3 bytes from the data. `freq` remaps them to frequency rank and packs with a
+varint, so common tokens cost one byte.
 
 Train a table from any query returning `int[]`:
 
@@ -75,23 +76,54 @@ codec without leaving the token-ID domain.
 
 ## Benchmarks
 
-C4 English, 512-token chunks, o200k, PostgreSQL 14. Agent reads against a `text` column:
+C4 English, 512-token chunks, o200k, PostgreSQL 14, one pinned core. The workload is an agent:
+it holds token IDs and wants token IDs back, so the `text` column pays a detokenize on write
+and a tokenize on every read.
 
-| fan-out | speedup |
-| --: | --: |
-| 10 | 5.7–7.5× |
-| 100 | 9.5–14.3× |
+**Write**, µs per row, batches of 50:
 
-Spread across four runs at different machine loads. Roughly 90% of the `text` path is
-tokenization in every one of them.
+| column | total | = client | + insert | bytes/row | vs text |
+| --- | --: | --: | --: | --: | --: |
+| `text` (pglz) | 190 | 78 | 113 | 2322 | 1.00× |
+| `text` (lz4) | 157 | 81 | 75 | 2322 | 1.21× |
+| `pgtoken` raw | **71** | 24 | 48 | 1473 | **2.68×** |
+| `pgtoken` freq | 165 | 115 | 50 | **884** | 1.16× |
 
-Storage is ~2.1× smaller in payload, total relation size, and WAL.
+**Read**, µs per query:
 
-Reproducing needs the corpora from the
+| column | fan-out 1 | fan-out 10 | fan-out 100 | wire @100 |
+| --- | --: | --: | --: | --: |
+| `text` (pglz) | 1176 | 4066 | 19258 | 233 KB |
+| `text` (lz4) | 1191 | 3864 | 19421 | 233 KB |
+| `pgtoken` raw | **748** (1.6×) | **903** (4.5×) | **2588** (7.4×) | 147 KB |
+| `pgtoken` freq | 938 (1.3×) | 1888 (2.2×) | 10485 (1.8×) | **88 KB** |
+
+At fan-out 100 the `text` column spends 16.5 ms of its 19.3 ms tokenizing. That is the cost
+`pgtoken` removes, and it recurs on every read.
+
+**`freq` is understated above.** Those figures use the Python client in `benchmarks/`, which
+pays numpy overhead on 512-element arrays. The codec itself, measured in Rust with no database
+in the way (`cd core && cargo run --release --example codec_bench`):
+
+| codec | encode | decode | bytes/token |
+| --- | --: | --: | --: |
+| `raw16` | 0.57 µs | 0.26 µs | 2.02 |
+| `raw24` | 1.11 µs | 0.42 µs | 3.02 |
+| `freq` | 5.38 µs | **4.06 µs** | **1.89** |
+
+Per 512-token chunk. So `freq` really costs ~4 µs to decode, not the ~90 µs the Python client
+shows — against ~250 µs to tokenize the equivalent text. A Rust client gets `freq`'s size with
+roughly `raw`'s speed.
+
+Storage is ~2.1× smaller than `text` in payload, total relation size, and WAL
+(`bench_storage_wal.py`).
+
+Reproducing the end-to-end numbers needs the corpora from the
 [token-storage](https://github.com/KShivendu/token-storage) repo:
 
 ```sh
-TOKEN_STORAGE_REPO=/path/to/token-storage uv run python benchmarks/bench_latency.py
+TOKEN_STORAGE_REPO=/path/to/token-storage \
+  taskset -c 4 uv run python benchmarks/bench_readwrite.py
 ```
 
 Ratios are stable across runs; absolute microseconds are not — they inflate several-fold under
@@ -108,6 +140,9 @@ load, so check `/proc/loadavg` before quoting one.
 - **IDs are only meaningful to the tokenizer that produced them.** The extension cannot check
   that for you, so a column mixing tokenizers is your problem to avoid.
 - **Coding tables are corpus-specific.** Ratios drop if the table and your data diverge.
+
+`benchmarks/pgtoken_client.py` is a reference client-side codec in Python, byte-compatible with
+the extension in both directions (`benchmarks/test_client.py` asserts it).
 
 ## Reference
 
