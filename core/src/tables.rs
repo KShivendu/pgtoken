@@ -51,13 +51,19 @@ pub enum TableError {
     UnsupportedVersion(u8),
     UnknownKind(u8),
     ReservedNotZero,
-    PayloadLen { want: usize, got: usize },
+    PayloadLen {
+        want: usize,
+        got: usize,
+    },
     /// `token_of_rank` listed the same token twice, which would make decoding ambiguous.
     DuplicateToken(u32),
     /// Training saw no tokens at all.
     Empty,
     /// `k + id` would overflow, so this ID cannot be remapped against this table.
-    IdTooLarge { id: u32, k: u32 },
+    IdTooLarge {
+        id: u32,
+        k: u32,
+    },
 }
 
 impl std::fmt::Display for TableError {
@@ -72,11 +78,17 @@ impl std::fmt::Display for TableError {
                 write!(f, "table payload is {got} bytes, expected {want}")
             }
             TableError::DuplicateToken(t) => {
-                write!(f, "token {t} appears twice in the table; ranks must be a bijection")
+                write!(
+                    f,
+                    "token {t} appears twice in the table; ranks must be a bijection"
+                )
             }
             TableError::Empty => write!(f, "cannot train a table on an empty corpus"),
             TableError::IdTooLarge { id, k } => {
-                write!(f, "token id {id} is too large to remap against a table of {k} ranks")
+                write!(
+                    f,
+                    "token id {id} is too large to remap against a table of {k} ranks"
+                )
             }
         }
     }
@@ -126,12 +138,21 @@ impl RankTable {
         if let Some(cap) = max_ranks {
             ordered.truncate(cap);
         }
-        Ok(Self::from_ranked(ordered.into_iter().map(|(t, _)| t).collect()))
+        Ok(Self::from_ranked(
+            ordered.into_iter().map(|(t, _)| t).collect(),
+        ))
     }
 
     fn from_ranked(token_of_rank: Vec<u32>) -> Self {
-        let rank_of = token_of_rank.iter().enumerate().map(|(r, &t)| (t, r as u32)).collect();
-        RankTable { token_of_rank, rank_of }
+        let rank_of = token_of_rank
+            .iter()
+            .enumerate()
+            .map(|(r, &t)| (t, r as u32))
+            .collect();
+        RankTable {
+            token_of_rank,
+            rank_of,
+        }
     }
 
     /// Number of ranked tokens, and the offset applied to unranked IDs.
@@ -146,7 +167,9 @@ impl RankTable {
             return Ok(r);
         }
         let k = self.k();
-        token.checked_add(k).ok_or(TableError::IdTooLarge { id: token, k })
+        token
+            .checked_add(k)
+            .ok_or(TableError::IdTooLarge { id: token, k })
     }
 
     /// Inverse of [`RankTable::rank`].
@@ -191,7 +214,10 @@ impl RankTable {
         let k = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]) as usize;
         let payload = &buf[TABLE_HEADER_LEN..];
         if payload.len() != k * 4 {
-            return Err(TableError::PayloadLen { want: k * 4, got: payload.len() });
+            return Err(TableError::PayloadLen {
+                want: k * 4,
+                got: payload.len(),
+            });
         }
         let token_of_rank: Vec<u32> = payload
             .chunks_exact(4)
@@ -206,7 +232,10 @@ impl RankTable {
                 return Err(TableError::DuplicateToken(t));
             }
         }
-        Ok(RankTable { token_of_rank, rank_of })
+        Ok(RankTable {
+            token_of_rank,
+            rank_of,
+        })
     }
 }
 
@@ -282,7 +311,10 @@ mod tests {
     fn rejects_ids_that_would_overflow() {
         let t = RankTable::train(&corpus(), None).unwrap();
         let too_big = u32::MAX - 1;
-        assert_eq!(t.rank(too_big), Err(TableError::IdTooLarge { id: too_big, k: 3 }));
+        assert_eq!(
+            t.rank(too_big),
+            Err(TableError::IdTooLarge { id: too_big, k: 3 })
+        );
     }
 
     #[test]
@@ -325,7 +357,10 @@ mod tests {
         let a = TABLE_HEADER_LEN;
         let dup: Vec<u8> = bytes[a..a + 4].to_vec();
         bytes[a + 4..a + 8].copy_from_slice(&dup);
-        assert!(matches!(RankTable::from_bytes(&bytes), Err(TableError::DuplicateToken(_))));
+        assert!(matches!(
+            RankTable::from_bytes(&bytes),
+            Err(TableError::DuplicateToken(_))
+        ));
     }
 
     #[test]
@@ -338,7 +373,10 @@ mod tests {
 
         let mut b = base.clone();
         b[4] = 9;
-        assert_eq!(RankTable::from_bytes(&b), Err(TableError::UnsupportedVersion(9)));
+        assert_eq!(
+            RankTable::from_bytes(&b),
+            Err(TableError::UnsupportedVersion(9))
+        );
 
         let mut b = base.clone();
         b[5] = 7;

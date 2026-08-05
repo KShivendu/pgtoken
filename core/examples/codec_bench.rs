@@ -50,7 +50,10 @@ fn time<F: FnMut()>(label: &str, iters: usize, per_iter: usize, mut f: F) -> f64
         f();
     }
     let us = t0.elapsed().as_secs_f64() * 1e6 / iters as f64;
-    println!("  {label:<28} {us:>8.2} us/chunk  ({:>5.2} us per 1k tokens)", us * 1000.0 / per_iter as f64);
+    println!(
+        "  {label:<28} {us:>8.2} us/chunk  ({:>5.2} us per 1k tokens)",
+        us * 1000.0 / per_iter as f64
+    );
     us
 }
 
@@ -79,7 +82,11 @@ fn main() {
 
         let encoded = value::encode(&ids, codec, tid, tbl).expect("encode");
         let ratio = (ids.len() * 4) as f64 / encoded.len() as f64;
-        println!("{name}  ({} B/chunk, {:.2} B/token, {ratio:.2}x vs int32)", encoded.len(), encoded.len() as f64 / ids.len() as f64);
+        println!(
+            "{name}  ({} B/chunk, {:.2} B/token, {ratio:.2}x vs int32)",
+            encoded.len(),
+            encoded.len() as f64 / ids.len() as f64
+        );
 
         time("encode", 2000, ids.len(), || {
             std::hint::black_box(value::encode(&ids, codec, tid, tbl).unwrap());

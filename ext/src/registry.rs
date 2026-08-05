@@ -94,8 +94,7 @@ pub fn describe_table(table_id: u16) -> Result<(u32, String, u64), String> {
     let bytes: &[u8] = &mmap;
     let table = RankTable::from_bytes(bytes)
         .map_err(|e| format!("coding table {table_id} is not valid: {e}"))?;
-    let digest =
-        pgtoken_core::tables::digest_hex(&pgtoken_core::tables::table_digest(bytes));
+    let digest = pgtoken_core::tables::digest_hex(&pgtoken_core::tables::table_digest(bytes));
     Ok((table.k(), digest, bytes.len() as u64))
 }
 

@@ -91,7 +91,11 @@ pub struct Header {
 
 impl Header {
     pub fn new(codec: Codec, table_id: u16, n_tokens: u32) -> Self {
-        Header { codec, table_id, n_tokens }
+        Header {
+            codec,
+            table_id,
+            n_tokens,
+        }
     }
 
     /// Write the header into the first `HEADER_LEN` bytes of a fresh buffer.
@@ -156,13 +160,23 @@ impl Header {
         };
         if let Some(want) = expected {
             if payload.len() != want {
-                return Err(HeaderError::PayloadLen { want, got: payload.len() });
+                return Err(HeaderError::PayloadLen {
+                    want,
+                    got: payload.len(),
+                });
             }
         } else if n_tokens > 0 && payload.is_empty() {
             return Err(HeaderError::PayloadLen { want: 1, got: 0 });
         }
 
-        Ok((Header { codec, table_id, n_tokens }, payload))
+        Ok((
+            Header {
+                codec,
+                table_id,
+                n_tokens,
+            },
+            payload,
+        ))
     }
 }
 
@@ -183,13 +197,19 @@ impl fmt::Display for HeaderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HeaderError::TooShort(n) => {
-                write!(f, "value is {n} bytes, shorter than the {HEADER_LEN}-byte header")
+                write!(
+                    f,
+                    "value is {n} bytes, shorter than the {HEADER_LEN}-byte header"
+                )
             }
             HeaderError::BadMagic(b) => {
                 write!(f, "bad magic byte 0x{b:02X}, expected 0x{MAGIC:02X}")
             }
             HeaderError::UnsupportedVersion(v) => {
-                write!(f, "unsupported format version {v}, this build understands {VERSION}")
+                write!(
+                    f,
+                    "unsupported format version {v}, this build understands {VERSION}"
+                )
             }
             HeaderError::UnknownCodec(v) => write!(f, "unknown codec id {v}"),
             HeaderError::UnknownCodecName(s) => write!(f, "unknown codec name {s:?}"),
@@ -198,7 +218,11 @@ impl fmt::Display for HeaderError {
                 write!(f, "codec {} requires a table but table_id is 0", c.as_str())
             }
             HeaderError::UnexpectedTable(c, id) => {
-                write!(f, "codec {} takes no table but table_id is {id}", c.as_str())
+                write!(
+                    f,
+                    "codec {} takes no table but table_id is {id}",
+                    c.as_str()
+                )
             }
             HeaderError::PayloadLen { want, got } => {
                 write!(f, "payload is {got} bytes, expected {want}")
@@ -222,11 +246,7 @@ mod tests {
 
     #[test]
     fn header_roundtrips() {
-        for (codec, table) in [
-            (Codec::Raw16, 0u16),
-            (Codec::Raw24, 0),
-            (Codec::Freq, 7),
-        ] {
+        for (codec, table) in [(Codec::Raw16, 0u16), (Codec::Raw24, 0), (Codec::Freq, 7)] {
             let h = Header::new(codec, table, 512);
             let mut buf = Vec::new();
             h.write_to(&mut buf);
@@ -243,7 +263,10 @@ mod tests {
 
     #[test]
     fn header_is_exactly_12_bytes() {
-        assert_eq!(Header::new(Codec::Freq, 1, 512).to_bytes().len(), HEADER_LEN);
+        assert_eq!(
+            Header::new(Codec::Freq, 1, 512).to_bytes().len(),
+            HEADER_LEN
+        );
         assert_eq!(HEADER_LEN, 12);
     }
 
@@ -252,7 +275,10 @@ mod tests {
         // The point of the format: values are interchangeable regardless of which tokenizer
         // produced their IDs, so nothing in the header may encode one.
         let bytes = Header::new(Codec::Raw24, 0, 3).to_bytes();
-        assert_eq!(bytes[3], 0, "byte 3 must stay reserved, not become a tokenizer tag");
+        assert_eq!(
+            bytes[3], 0,
+            "byte 3 must stay reserved, not become a tokenizer tag"
+        );
     }
 
     #[test]
@@ -299,11 +325,17 @@ mod tests {
     fn rejects_truncated_and_padded_raw_payload() {
         let mut v = valid_raw24(4);
         v.pop();
-        assert_eq!(Header::parse(&v), Err(HeaderError::PayloadLen { want: 12, got: 11 }));
+        assert_eq!(
+            Header::parse(&v),
+            Err(HeaderError::PayloadLen { want: 12, got: 11 })
+        );
 
         let mut v = valid_raw24(4);
         v.push(0);
-        assert_eq!(Header::parse(&v), Err(HeaderError::PayloadLen { want: 12, got: 13 }));
+        assert_eq!(
+            Header::parse(&v),
+            Err(HeaderError::PayloadLen { want: 12, got: 13 })
+        );
     }
 
     #[test]
@@ -311,12 +343,18 @@ mod tests {
         let mut v = Vec::new();
         Header::new(Codec::Freq, 0, 1).write_to(&mut v);
         v.push(1);
-        assert_eq!(Header::parse(&v), Err(HeaderError::MissingTable(Codec::Freq)));
+        assert_eq!(
+            Header::parse(&v),
+            Err(HeaderError::MissingTable(Codec::Freq))
+        );
 
         let mut v = Vec::new();
         Header::new(Codec::Raw24, 3, 1).write_to(&mut v);
         v.extend_from_slice(&[0, 0, 0]);
-        assert_eq!(Header::parse(&v), Err(HeaderError::UnexpectedTable(Codec::Raw24, 3)));
+        assert_eq!(
+            Header::parse(&v),
+            Err(HeaderError::UnexpectedTable(Codec::Raw24, 3))
+        );
     }
 
     #[test]
@@ -332,6 +370,10 @@ mod tests {
         assert_eq!(Codec::Raw16.max_id(), Some(65_535));
         assert_eq!(Codec::Raw24.max_id(), Some(16_777_215));
         assert_eq!(Codec::Freq.max_id(), None);
-        assert_eq!(Codec::from_u8(3), Err(HeaderError::UnknownCodec(3)), "ANS was removed");
+        assert_eq!(
+            Codec::from_u8(3),
+            Err(HeaderError::UnknownCodec(3)),
+            "ANS was removed"
+        );
     }
 }

@@ -41,8 +41,10 @@ pub fn preferred_raw(ids: &[u32]) -> Codec {
 pub fn encode16(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     out.reserve(ids.len() * 2);
     for &id in ids {
-        let narrow =
-            u16::try_from(id).map_err(|_| RawError::IdTooWide { id, codec: Codec::Raw16 })?;
+        let narrow = u16::try_from(id).map_err(|_| RawError::IdTooWide {
+            id,
+            codec: Codec::Raw16,
+        })?;
         out.extend_from_slice(&narrow.to_le_bytes());
     }
     Ok(())
@@ -53,7 +55,10 @@ pub fn encode24(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     out.reserve(ids.len() * 3);
     for &id in ids {
         if id > 0x00FF_FFFF {
-            return Err(RawError::IdTooWide { id, codec: Codec::Raw24 });
+            return Err(RawError::IdTooWide {
+                id,
+                codec: Codec::Raw24,
+            });
         }
         out.push((id >> 16) as u8);
         out.push((id >> 8) as u8);
@@ -65,15 +70,24 @@ pub fn encode24(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
 /// Decode a `raw16` payload. `Header::parse` has already checked the length.
 pub fn decode16(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
     if payload.len() != n * 2 {
-        return Err(HeaderError::PayloadLen { want: n * 2, got: payload.len() });
+        return Err(HeaderError::PayloadLen {
+            want: n * 2,
+            got: payload.len(),
+        });
     }
-    Ok(payload.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) as u32).collect())
+    Ok(payload
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]) as u32)
+        .collect())
 }
 
 /// Decode a `raw24` payload.
 pub fn decode24(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
     if payload.len() != n * 3 {
-        return Err(HeaderError::PayloadLen { want: n * 3, got: payload.len() });
+        return Err(HeaderError::PayloadLen {
+            want: n * 3,
+            got: payload.len(),
+        });
     }
     Ok(payload
         .chunks_exact(3)
@@ -130,12 +144,18 @@ mod tests {
         let mut out = Vec::new();
         assert_eq!(
             encode16(&[65_536], &mut out),
-            Err(RawError::IdTooWide { id: 65_536, codec: Codec::Raw16 })
+            Err(RawError::IdTooWide {
+                id: 65_536,
+                codec: Codec::Raw16
+            })
         );
         let mut out = Vec::new();
         assert_eq!(
             encode24(&[0x0100_0000], &mut out),
-            Err(RawError::IdTooWide { id: 0x0100_0000, codec: Codec::Raw24 })
+            Err(RawError::IdTooWide {
+                id: 0x0100_0000,
+                codec: Codec::Raw24
+            })
         );
     }
 

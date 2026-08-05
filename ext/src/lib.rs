@@ -80,7 +80,9 @@ pub extern "C-unwind" fn _PG_init() {
 // ── helpers ──────────────────────────────────────────────────────────────────────────
 
 fn guc_str(g: &GucSetting<Option<CString>>, default: &str) -> String {
-    g.get().and_then(|c| c.into_string().ok()).unwrap_or_else(|| default.to_string())
+    g.get()
+        .and_then(|c| c.into_string().ok())
+        .unwrap_or_else(|| default.to_string())
 }
 
 fn table_id_u16(id: i32) -> u16 {
@@ -117,7 +119,9 @@ fn encode_with(ids: Vec<Option<i32>>, codec: &str, table_id: i32) -> Vec<u8> {
     let ids = ids_from_sql(ids);
     let c = value::resolve_codec(codec, &ids).unwrap_or_else(|e| bail(e));
     let tid = table_id_u16(table_id);
-    with_table(c, tid, |t| value::encode(&ids, c, tid, t).unwrap_or_else(|e| bail(e)))
+    with_table(c, tid, |t| {
+        value::encode(&ids, c, tid, t).unwrap_or_else(|e| bail(e))
+    })
 }
 
 /// Convenience form driven by the `pgtoken.*` GUCs.
@@ -185,7 +189,9 @@ fn recode(v: &[u8], codec: &str, table_id: i32) -> Vec<u8> {
     });
     let to = value::resolve_codec(codec, &ids).unwrap_or_else(|e| bail(e));
     let to_tid = table_id_u16(table_id);
-    with_table(to, to_tid, |t| value::encode(&ids, to, to_tid, t).unwrap_or_else(|e| bail(e)))
+    with_table(to, to_tid, |t| {
+        value::encode(&ids, to, to_tid, t).unwrap_or_else(|e| bail(e))
+    })
 }
 
 // ── coding tables ────────────────────────────────────────────────────────────────────
@@ -204,7 +210,11 @@ fn train(table_id: i32, query: &str) -> String {
 #[pg_extern(strict, name = "train")]
 fn train_capped(table_id: i32, query: &str, max_ranks: i32) -> String {
     let tid = table_id_u16(table_id);
-    let cap = if max_ranks < 0 { None } else { Some(max_ranks as usize) };
+    let cap = if max_ranks < 0 {
+        None
+    } else {
+        Some(max_ranks as usize)
+    };
 
     let mut ids: Vec<u32> = Vec::new();
     let mut rows = 0usize;
@@ -213,7 +223,12 @@ fn train_capped(table_id: i32, query: &str, max_ranks: i32) -> String {
         for row in tup {
             let arr: Option<Vec<Option<i32>>> = row.get(1).unwrap_or_else(|e| bail(e));
             if let Some(arr) = arr {
-                ids.extend(arr.into_iter().flatten().filter(|&v| v >= 0).map(|v| v as u32));
+                ids.extend(
+                    arr.into_iter()
+                        .flatten()
+                        .filter(|&v| v >= 0)
+                        .map(|v| v as u32),
+                );
                 rows += 1;
             }
         }
@@ -225,7 +240,11 @@ fn train_capped(table_id: i32, query: &str, max_ranks: i32) -> String {
     let table = RankTable::train(&ids, cap).unwrap_or_else(|e| bail(e));
     let k = table.k();
     let path = registry::write_table(tid, &table.to_bytes()).unwrap_or_else(|e| bail(e));
-    format!("trained table {tid} on {rows} rows / {} tokens, {k} ranked -> {}", ids.len(), path.display())
+    format!(
+        "trained table {tid} on {rows} rows / {} tokens, {k} ranked -> {}",
+        ids.len(),
+        path.display()
+    )
 }
 
 /// Report what a coding table contains.
@@ -234,7 +253,11 @@ fn table_info(
     table_id: i32,
 ) -> TableIterator<
     'static,
-    (name!(ranked_tokens, i32), name!(sha256, String), name!(file_bytes, i64)),
+    (
+        name!(ranked_tokens, i32),
+        name!(sha256, String),
+        name!(file_bytes, i64),
+    ),
 > {
     let (k, digest, len) =
         registry::describe_table(table_id_u16(table_id)).unwrap_or_else(|e| bail(e));
@@ -320,7 +343,107 @@ mod tests {
         )
         .expect("query failed");
         let (arr, packed) = (arr.unwrap(), packed.unwrap());
-        assert!(packed < arr, "packed ({packed} B) should beat int[] ({arr} B)");
+        assert!(
+            packed < arr,
+            "packed ({packed} B) should beat int[] ({arr} B)"
+        );
+    }
+
+    /// Train a coding table if it is not already there.
+    ///
+    /// Coding tables are files and `train` deliberately refuses to overwrite one, so a test
+    /// that trains unconditionally passes once and fails on every re-run. Each test below owns
+    /// a fixed id with fixed training data, so the file's contents are the same either way;
+    /// this just makes getting there idempotent. The PL/pgSQL block's subtransaction is what
+    /// lets the error be swallowed without poisoning the test's transaction.
+    fn ensure_table(table_id: i32, corpus_sql: &str) {
+        Spi::run(&format!(
+            "DO $ensure$ BEGIN \
+               PERFORM pgtoken.train({table_id}, $corpus${corpus_sql}$corpus$); \
+             EXCEPTION WHEN OTHERS THEN NULL; \
+             END $ensure$"
+        ))
+        .expect("ensure_table");
+    }
+
+    #[pg_test]
+    fn trains_a_table_and_uses_it() {
+        // A skewed corpus, so the frequency remap has something to exploit.
+        const TID: i32 = 1001;
+        ensure_table(
+            TID,
+            "SELECT ARRAY[7,7,7,7,3,3,199999]::int[] FROM generate_series(1,40)",
+        );
+
+        let ranked = Spi::get_one::<i32>(&format!(
+            "SELECT ranked_tokens FROM pgtoken.table_info({TID})"
+        ))
+        .expect("table_info failed");
+        assert_eq!(
+            ranked,
+            Some(3),
+            "only the three distinct tokens should be ranked"
+        );
+
+        let got = Spi::get_one::<Vec<i32>>(&format!(
+            "SELECT pgtoken.decode(pgtoken.encode('{{7,3,199999}}', 'freq', {TID}))"
+        ))
+        .expect("freq roundtrip failed");
+        assert_eq!(got, Some(vec![7, 3, 199999]));
+    }
+
+    #[pg_test]
+    fn freq_roundtrips_ids_the_table_never_saw() {
+        // The sparse table's whole point: no vocabulary is declared, so an unseen id must
+        // still come back exactly.
+        const TID: i32 = 1002;
+        ensure_table(
+            TID,
+            "SELECT ARRAY[1,1,1,2]::int[] FROM generate_series(1,20)",
+        );
+
+        let got = Spi::get_one::<Vec<i32>>(&format!(
+            "SELECT pgtoken.decode(pgtoken.encode('{{1,2,999999,0,16000000}}', 'freq', {TID}))"
+        ))
+        .expect("query failed");
+        assert_eq!(got, Some(vec![1, 2, 999999, 0, 16000000]));
+    }
+
+    #[pg_test]
+    fn freq_beats_raw_on_a_skewed_stream() {
+        const TID: i32 = 1003;
+        ensure_table(
+            TID,
+            "SELECT array_agg(199999)::int[] FROM generate_series(1,64)",
+        );
+
+        let (raw, freq) = Spi::get_two::<i32, i32>(&format!(
+            "SELECT length(pgtoken.encode(a, 'raw', 0)), \
+                    length(pgtoken.encode(a, 'freq', {TID})) \
+             FROM (SELECT array_agg(199999)::int[] AS a FROM generate_series(1,512)) s"
+        ))
+        .expect("query failed");
+        let (raw, freq) = (raw.unwrap(), freq.unwrap());
+        assert!(
+            freq < raw,
+            "freq ({freq} B) should beat raw ({raw} B) on a skewed stream"
+        );
+    }
+
+    #[pg_test]
+    fn recode_moves_between_raw_and_freq() {
+        const TID: i32 = 1004;
+        ensure_table(
+            TID,
+            "SELECT ARRAY[5,5,5,9]::int[] FROM generate_series(1,20)",
+        );
+
+        let got = Spi::get_one::<Vec<i32>>(&format!(
+            "SELECT pgtoken.decode(\
+               pgtoken.recode(pgtoken.encode('{{5,9,70000}}', 'raw', 0), 'freq', {TID}))"
+        ))
+        .expect("query failed");
+        assert_eq!(got, Some(vec![5, 9, 70000]));
     }
 
     // A Postgres ERROR aborts the transaction, so pgrx needs the expected message declared.
@@ -338,17 +461,53 @@ mod tests {
 
     #[pg_test(error = "bad magic byte 0x00, expected 0xA7")]
     fn rejects_bad_magic() {
-        Spi::get_one::<Vec<i32>>(
-            "SELECT pgtoken.decode('\\x000000000000000000000000'::bytea)",
-        )
-        .unwrap();
+        Spi::get_one::<Vec<i32>>("SELECT pgtoken.decode('\\x000000000000000000000000'::bytea)")
+            .unwrap();
     }
 
-    #[pg_test(error = "pgtoken.table_dir is not set; the freq codec needs a coding table")]
-    fn freq_errors_without_a_table_dir() {
+    #[pg_test(
+        error = "cannot open coding table /tmp/pgtoken-pgrx-test-tables/1.tntt: \
+                 No such file or directory (os error 2)"
+    )]
+    fn freq_errors_without_its_coding_table() {
         // Failing loudly beats falling back to a raw codec, which would write a value whose
-        // header claims a coding table it was not encoded with.
+        // header claims a coding table it was not encoded with. Table id 1 is never trained;
+        // the other tests use pid-derived ids well above it.
         Spi::get_one::<Vec<u8>>("SELECT pgtoken.encode('{1,2,3}', 'freq', 1)").unwrap();
+    }
+
+    #[pg_test]
+    fn train_refuses_to_overwrite() {
+        // Stored values reference table ids and `decode` is IMMUTABLE, so replacing a table
+        // would change what existing rows mean. Deliberately not idempotent.
+        //
+        // Checked through a PL/pgSQL exception block rather than `#[pg_test(error = ...)]`:
+        // the message names a path that differs per machine, and the block's subtransaction
+        // lets the test survive the error and carry on asserting.
+        const TID: i32 = 1005;
+        ensure_table(TID, "SELECT ARRAY[1,2]::int[]");
+
+        Spi::run(
+            "CREATE FUNCTION train_is_refused(tid int, q text) RETURNS bool AS $fn$
+             BEGIN
+               PERFORM pgtoken.train(tid, q);
+               RETURN false;
+             EXCEPTION WHEN OTHERS THEN
+               RETURN true;
+             END
+             $fn$ LANGUAGE plpgsql",
+        )
+        .expect("helper");
+
+        let refused = Spi::get_one::<bool>(&format!(
+            "SELECT train_is_refused({TID}, $$SELECT ARRAY[1,2]::int[]$$)"
+        ))
+        .expect("query failed");
+        assert_eq!(
+            refused,
+            Some(true),
+            "a second train on the same id must be refused"
+        );
     }
 }
 
@@ -357,6 +516,9 @@ pub mod pg_test {
     pub fn setup(_options: Vec<&str>) {}
 
     pub fn postgresql_conf_options() -> Vec<&'static str> {
-        vec![]
+        // `pgtoken.table_dir` is SIGHUP-scoped, so it cannot be set with SET inside a test.
+        // Giving the test cluster one lets the suite cover `train` and the `freq` codec rather
+        // than only the table-free paths.
+        vec!["pgtoken.table_dir = '/tmp/pgtoken-pgrx-test-tables'"]
     }
 }

@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # The codec library has no pgrx and no PostgreSQL dependency, so it builds and tests in
+  # seconds. Kept as its own job to fail fast before the slow matrix starts.
+  core:
+    name: core (no PostgreSQL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      # Formatting needs no pg_config, so both crates are checked here rather than repeating it
+      # five times across the matrix.
+      - name: Format
+        run: |
+          cargo fmt --check --manifest-path core/Cargo.toml
+          cargo fmt --check --manifest-path ext/Cargo.toml
+
+      - name: Clippy
+        working-directory: core
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: core
+        run: cargo test
+
+      - name: Codec benchmark builds and runs
+        working-directory: core
+        run: cargo run --release --example codec_bench
+
+  extension:
+    name: extension (pg${{ matrix.pg }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [14, 15, 16, 17, 18]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      # Ubuntu ships only one PostgreSQL version, so the matrix needs PGDG.
+      - name: Install PostgreSQL ${{ matrix.pg }} and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates gnupg lsb-release \
+            build-essential libreadline-dev zlib1g-dev flex bison \
+            libxml2-dev libxslt1-dev libssl-dev libxml2-utils xsltproc \
+            pkg-config libclang-dev
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-${{ matrix.pg }} postgresql-server-dev-${{ matrix.pg }}
+          # pgrx creates and runs its own cluster, so stop the packaged one to avoid a port
+          # clash, and let the runner user write to the install directories.
+          sudo systemctl stop postgresql || true
+          sudo chmod a+rwx \
+            /usr/share/postgresql/${{ matrix.pg }}/extension \
+            /usr/lib/postgresql/${{ matrix.pg }}/lib
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ext
+          key: pg${{ matrix.pg }}
+
+      # Pinned to the pgrx version in ext/Cargo.toml: cargo-pgrx and the pgrx crate must match.
+      - name: Install cargo-pgrx
+        run: |
+          version=$(grep -m1 '^pgrx = ' ext/Cargo.toml | sed 's/.*"=\?\([0-9.]*\)".*/\1/')
+          echo "pinning cargo-pgrx to $version"
+          cargo install cargo-pgrx --version "=$version" --locked
+
+      - name: pgrx init
+        run: |
+          cargo pgrx init \
+            --pg${{ matrix.pg }} /usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
+
+      - name: Clippy
+        working-directory: ext
+        run: |
+          cargo clippy --features pg${{ matrix.pg }} --no-default-features -- -D warnings
+
+      - name: Test
+        working-directory: ext
+        run: |
+          rm -rf /tmp/pgtoken-pgrx-test-tables
+          cargo pgrx test pg${{ matrix.pg }} \
+            --features pg${{ matrix.pg }} --no-default-features
+
+      # A build failure here would mean the extension cannot actually be installed, which the
+      # test harness does not otherwise prove.
+      - name: Install into the packaged PostgreSQL
+        working-directory: ext
+        run: |
+          cargo pgrx install --release \
+            --features pg${{ matrix.pg }} --no-default-features \
+            --pg-config /usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config

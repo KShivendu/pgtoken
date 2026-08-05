@@ -1,5 +1,7 @@
 # pgtoken
 
+[![CI](https://github.com/KShivendu/pgtoken/actions/workflows/ci.yml/badge.svg)](https://github.com/KShivendu/pgtoken/actions/workflows/ci.yml)
+
 Store text in PostgreSQL as token IDs instead of UTF-8.
 
 Agents read and write token IDs, not characters. A `text` column makes them re-tokenize on
@@ -13,7 +15,7 @@ cycle tokenizing.
 <sub>Background: [blog](https://www.kshivendu.dev/blog/token-storage) ·
 [paper](https://arxiv.org/abs/2608.02376)</sub>
 
-> Early days. Tested on PostgreSQL 14 only, and the API may still change.
+> Early days. The API may still change. CI covers PostgreSQL 14 through 18.
 
 ## Install
 
@@ -167,6 +169,10 @@ Settings: `pgtoken.table_dir` (where coding tables live, `SIGHUP`), `pgtoken.def
 cd core && cargo test          # codecs, no PostgreSQL needed
 cd ext  && cargo pgrx test pg14
 ```
+
+CI runs both across PostgreSQL 14–18, plus `cargo fmt`, `clippy -D warnings`, and an install
+check. `benchmarks/test_client.py` additionally asserts the Python client is byte-compatible
+with the extension, but needs a running server so it is not part of CI.
 
 ## License
 

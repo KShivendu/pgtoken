@@ -66,7 +66,10 @@ pub fn decode_freq(payload: &[u8], n: usize, table: &RankTable) -> Result<Vec<u3
     let mut ranks = vec![0u32; n.max(4)];
     let consumed = decode::<Scalar>(payload, n, &mut ranks);
     if consumed != payload.len() {
-        return Err(FreqError::TrailingBytes { consumed, len: payload.len() });
+        return Err(FreqError::TrailingBytes {
+            consumed,
+            len: payload.len(),
+        });
     }
     ranks.truncate(n);
     Ok(ranks.into_iter().map(|r| table.token(r)).collect())
@@ -141,7 +144,11 @@ mod tests {
         let ids = vec![199_999u32; 4];
         let mut out = Vec::new();
         encode_freq(&ids, &t, &mut out).expect("encode");
-        assert_eq!(out.len(), 5, "4 values in one quad: 1 control byte + 1 data byte each");
+        assert_eq!(
+            out.len(),
+            5,
+            "4 values in one quad: 1 control byte + 1 data byte each"
+        );
         assert!(out.len() < ids.len() * 3, "should beat 3-byte raw packing");
     }
 

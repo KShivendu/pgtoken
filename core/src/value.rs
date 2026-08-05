@@ -25,10 +25,18 @@ impl std::fmt::Display for ValueError {
             ValueError::Raw(e) => write!(f, "{e}"),
             ValueError::Freq(e) => write!(f, "{e}"),
             ValueError::MissingTable(c) => {
-                write!(f, "codec {} needs a coding table, none was supplied", c.as_str())
+                write!(
+                    f,
+                    "codec {} needs a coding table, none was supplied",
+                    c.as_str()
+                )
             }
             ValueError::TooManyTokens(n) => {
-                write!(f, "{n} tokens exceeds the {} the format can address", u32::MAX)
+                write!(
+                    f,
+                    "{n} tokens exceeds the {} the format can address",
+                    u32::MAX
+                )
             }
         }
     }
@@ -67,8 +75,7 @@ pub fn encode(
     table_id: u16,
     table: Option<&RankTable>,
 ) -> Result<Vec<u8>, ValueError> {
-    let n_tokens =
-        u32::try_from(ids.len()).map_err(|_| ValueError::TooManyTokens(ids.len()))?;
+    let n_tokens = u32::try_from(ids.len()).map_err(|_| ValueError::TooManyTokens(ids.len()))?;
 
     let mut out = Vec::with_capacity(HEADER_LEN + ids.len() * 2);
     Header::new(codec, table_id, n_tokens).write_to(&mut out);
@@ -149,8 +156,11 @@ mod tests {
         let t = table();
         for ids in CASES {
             for codec in codecs_for(ids) {
-                let (tid, tbl) =
-                    if codec.needs_table() { (1u16, Some(&t)) } else { (0u16, None) };
+                let (tid, tbl) = if codec.needs_table() {
+                    (1u16, Some(&t))
+                } else {
+                    (0u16, None)
+                };
                 let v = encode(ids, codec, tid, tbl)
                     .unwrap_or_else(|e| panic!("encode {} {ids:?}: {e}", codec.as_str()));
                 let back = decode(&v, tbl)
@@ -167,8 +177,11 @@ mod tests {
         let t = table();
         for ids in CASES {
             for codec in codecs_for(ids) {
-                let (tid, tbl) =
-                    if codec.needs_table() { (1u16, Some(&t)) } else { (0u16, None) };
+                let (tid, tbl) = if codec.needs_table() {
+                    (1u16, Some(&t))
+                } else {
+                    (0u16, None)
+                };
                 let first = encode(ids, codec, tid, tbl).unwrap();
                 for _ in 0..32 {
                     assert_eq!(encode(ids, codec, tid, tbl).unwrap(), first);
@@ -183,12 +196,19 @@ mod tests {
         let ids: &[u32] = &[3, 1, 2, 0, 65_536, 200_018];
         for from in [Codec::Raw24, Codec::Freq] {
             for to in [Codec::Raw24, Codec::Freq] {
-                let (fid, ftbl) = if from.needs_table() { (1u16, Some(&t)) } else { (0, None) };
-                let (tid, ttbl) = if to.needs_table() { (1u16, Some(&t)) } else { (0, None) };
+                let (fid, ftbl) = if from.needs_table() {
+                    (1u16, Some(&t))
+                } else {
+                    (0, None)
+                };
+                let (tid, ttbl) = if to.needs_table() {
+                    (1u16, Some(&t))
+                } else {
+                    (0, None)
+                };
                 let v = encode(ids, from, fid, ftbl).unwrap();
-                let r = recode(&v, to, tid, ftbl, ttbl).unwrap_or_else(|e| {
-                    panic!("recode {} -> {}: {e}", from.as_str(), to.as_str())
-                });
+                let r = recode(&v, to, tid, ftbl, ttbl)
+                    .unwrap_or_else(|e| panic!("recode {} -> {}: {e}", from.as_str(), to.as_str()));
                 assert_eq!(decode(&r, ttbl).unwrap(), ids);
             }
         }
@@ -230,10 +250,17 @@ mod tests {
     fn freq_beats_raw_on_a_realistic_distribution() {
         // Zipf-ish: a few tokens dominate, which is what the rank remap exploits.
         let t = table();
-        let ids: Vec<u32> = (0..512).map(|i| [3u32, 3, 3, 1, 1, 2][(i % 6) as usize]).collect();
+        let ids: Vec<u32> = (0..512)
+            .map(|i| [3u32, 3, 3, 1, 1, 2][(i % 6) as usize])
+            .collect();
         let raw = encode(&ids, Codec::Raw24, 0, None).unwrap();
         let freq = encode(&ids, Codec::Freq, 1, Some(&t)).unwrap();
-        assert!(freq.len() < raw.len(), "freq {} vs raw {}", freq.len(), raw.len());
+        assert!(
+            freq.len() < raw.len(),
+            "freq {} vs raw {}",
+            freq.len(),
+            raw.len()
+        );
         assert_eq!(decode(&freq, Some(&t)).unwrap(), ids);
     }
 }
