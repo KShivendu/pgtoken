@@ -158,6 +158,11 @@ fn no_vocabulary_typmod() -> ! {
 /// because the unresolved-value exemption in [`tokens_typmod_apply_impl`] lets this bare
 /// assignment form through, and `encode_for`'s `vocab_size` bound still applies on the way through.
 /// So this names the symptom, the cause and the cheap fix, rather than only the symptom.
+///
+/// The exact statement shape the hint prints — no `USING`, since it is the bare assignment form
+/// the exemption is for, not an explicit cast — is executed end to end, starting from an actually
+/// unresolved value, by `tests::a_typmodless_columns_rows_repair_in_place_via_alter_table`. Change
+/// the hint and change that test together.
 fn unresolved_value() -> ! {
     pgrx::pg_sys::panic::ErrorReport::new(
         PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
@@ -809,6 +814,60 @@ mod tests {
         Spi::run("CREATE TABLE bare (x pgtoken.tokens)").expect("create table");
         Spi::run("INSERT INTO bare VALUES ('{1,2,3}')").expect("insert");
         Spi::get_one::<String>("SELECT x::text FROM bare").unwrap();
+    }
+
+    #[pg_test]
+    fn a_typmodless_columns_rows_repair_in_place_via_alter_table() {
+        // The repair `unresolved_value`'s HINT prints, run from the exact starting state the hint
+        // addresses: a value that is actually unresolved, not merely under a different vocabulary.
+        // `an_explicit_cast_moves_a_value_to_another_vocabulary` covers the same code path
+        // (`tokens_typmod_apply_impl`) but starting from a *resolved* value under a different
+        // vocabulary — a different starting state, and the difference is precisely the UNRESOLVED
+        // exemption this repair depends on. Change the hint and change this test together.
+        //
+        // Pinned id 62000, disjoint from every other pinned vocabulary in this crate (40000, 41,
+        // 60001, 60002, 61001-61005), for the same on-disk-file reason those are pinned.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('t_repair', 256, id => 62000); \
+             CREATE TABLE unresolved_ur (x pgtoken.tokens); \
+             INSERT INTO unresolved_ur VALUES ('{1,2,3}');",
+        )
+        .expect("setup");
+
+        // Confirm the value really is unresolved before "fixing" it, rather than assuming it:
+        // `describe` is exempt from `require_vocabulary` (see its doc comment in `lib.rs`), so it
+        // can report `vocabulary_id 0` on a value `::text` would refuse to read at all.
+        let vocabulary_id =
+            Spi::get_one::<i32>("SELECT vocabulary_id FROM unresolved_ur u, pgtoken.describe(u.x)")
+                .expect("query failed");
+        assert_eq!(
+            vocabulary_id,
+            Some(0),
+            "must be unresolved (vocabulary_id 0) before the repair, or the test proves nothing"
+        );
+
+        // The exact statement shape the HINT prints: no `USING`. This is the bare assignment form
+        // that a resolved cross-vocabulary value would have refused (see
+        // `assignment_refuses_a_value_from_another_vocabulary`); it goes through here only because
+        // `tokens_typmod_apply_impl` exempts [`UNRESOLVED`] from that refusal.
+        Spi::run("ALTER TABLE unresolved_ur ALTER COLUMN x TYPE tokens.t_repair").expect("repair");
+
+        let (rendered, len) =
+            Spi::get_two::<String, i32>("SELECT x::text, length(x::bytea) FROM unresolved_ur")
+                .expect("query failed");
+        assert_eq!(
+            rendered,
+            Some("{1,2,3}".to_string()),
+            "the ids must survive the repair"
+        );
+        // Was raw24 (12 + 9) while unresolved, since `encode_unresolved` always picks the widest
+        // packing. raw8 (12 + 3) here proves the repair re-encoded at t_repair's own width rather
+        // than merely re-labelling the same raw24 bytes under its vocabulary id.
+        assert_eq!(
+            len,
+            Some(12 + 3),
+            "must re-encode to the vocabulary's own width (raw8), not relabel the raw24 carrier"
+        );
     }
 
     #[pg_test]
