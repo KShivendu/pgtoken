@@ -137,10 +137,11 @@ load, so check `/proc/loadavg` before quoting one.
   and there is no full-text search over the column — keep a separate `text` or `tsvector`
   column if you need it.
 - **No `ORDER BY`, `LIKE` or `pg_trgm`** on the column: byte order of a compressed value is
-  meaningless. `=`, `GROUP BY`, `DISTINCT` and hash joins do work, on shorter keys than
-  `int[]`.
-- **IDs are only meaningful to the tokenizer that produced them.** The extension cannot check
-  that for you, so a column mixing tokenizers is your problem to avoid.
+  meaningless.
+- **IDs are only meaningful to the tokenizer that produced them.** `vocab_size` bounds every id
+  on the text and `int[]` paths, and moving a value to another vocabulary by assignment is
+  refused, but nothing checks that two columns under the *same* vocabulary came from the same
+  tokenizer — that mixing is still your problem to avoid.
 - **Coding tables are corpus-specific.** Ratios drop if the table and your data diverge.
 
 `benchmarks/pgtoken_client.py` is a reference client-side codec in Python, byte-compatible with

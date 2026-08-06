@@ -75,18 +75,6 @@ impl Codec {
             Codec::Raw8 => "raw8",
         }
     }
-
-    /// Parse an exact codec name. There is no `raw` alias: a width is never inferred from the
-    /// data, it comes from a vocabulary's declared `vocab_size`.
-    pub fn parse(s: &str) -> Result<Self, HeaderError> {
-        match s {
-            "raw16" => Ok(Codec::Raw16),
-            "raw24" => Ok(Codec::Raw24),
-            "freq" => Ok(Codec::Freq),
-            "raw8" => Ok(Codec::Raw8),
-            _ => Err(HeaderError::UnknownCodecName(s.to_owned())),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,7 +182,6 @@ pub enum HeaderError {
     BadMagic(u8),
     UnsupportedVersion(u8),
     UnknownCodec(u8),
-    UnknownCodecName(String),
     ReservedNotZero,
     MissingTable(Codec),
     PayloadLen { want: usize, got: usize },
@@ -219,7 +206,6 @@ impl fmt::Display for HeaderError {
                 )
             }
             HeaderError::UnknownCodec(v) => write!(f, "unknown codec id {v}"),
-            HeaderError::UnknownCodecName(s) => write!(f, "unknown codec name {s:?}"),
             HeaderError::ReservedNotZero => write!(f, "reserved header bytes are not zero"),
             HeaderError::MissingTable(c) => {
                 write!(

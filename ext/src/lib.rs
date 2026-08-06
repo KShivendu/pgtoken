@@ -67,12 +67,20 @@ fn guc_str(g: &GucSetting<Option<CString>>, default: &str) -> String {
 
 // ── inspect (header only, O(1), loads no table) ──────────────────────────────────────
 
+/// Deliberately exempt from `require_vocabulary`, unlike every value-returning path in
+/// `tokens.rs` and `casts.rs`. This is a diagnostic: it exists precisely to let you inspect a
+/// value that might be broken, and refusing to report on an unresolved value would remove the
+/// only way to see that it *is* unresolved rather than merely learning that reading it failed.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn token_count(v: &[u8]) -> i32 {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
     h.n_tokens as i32
 }
 
+/// Deliberately exempt from `require_vocabulary`, for the same reason as `token_count`: this is
+/// a diagnostic, meant to tell you what a value contains when something about it is wrong, and an
+/// unresolved `vocabulary_id` is exactly the kind of wrong it should be able to report rather than
+/// refuse to look at.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn describe(
     v: &[u8],

@@ -153,8 +153,11 @@ fn no_vocabulary_typmod() -> ! {
 ///
 /// The one error here a user can hit in bulk: a million rows can go into a column declared as a
 /// bare `pgtoken.tokens` before anything reads one back, because nothing in the write path can
-/// tell that column from a value about to be length-coerced. So this names the symptom, the
-/// cause and the fix, rather than only the symptom.
+/// tell that column from a value about to be length-coerced. Those rows are recoverable in place,
+/// though, not just by re-inserting: `ALTER TABLE t ALTER COLUMN x TYPE tokens.<name>` works,
+/// because the unresolved-value exemption in [`tokens_typmod_apply_impl`] lets this bare
+/// assignment form through, and `encode_for`'s `vocab_size` bound still applies on the way through.
+/// So this names the symptom, the cause and the cheap fix, rather than only the symptom.
 fn unresolved_value() -> ! {
     pgrx::pg_sys::panic::ErrorReport::new(
         PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
@@ -166,7 +169,8 @@ fn unresolved_value() -> ! {
          therefore no storage width, so it was stored unresolved.",
     )
     .set_hint(
-        "Declare the column as tokens.<name> or pgtoken.tokens('<name>'), then re-insert the rows.",
+        "Repair in place: ALTER TABLE t ALTER COLUMN x TYPE tokens.<name>. If the stored ids \
+         turn out to be wrong for that vocabulary, re-insert the rows instead.",
     )
     .report(PgLogLevel::ERROR);
     unreachable!("unresolved_value must not return")
@@ -177,8 +181,10 @@ fn unresolved_value() -> ! {
 ///
 /// A user who reaches this from the vocabulary catalog's immutability error has already followed
 /// one hint to get here, so this one has to end the chain: it names the target vocabulary and the
-/// statement that works, rather than only explaining the refusal. The statement shape it prints is
-/// executed by `tests::an_explicit_cast_moves_a_value_to_another_vocabulary`, and matches the one
+/// statement that works, rather than only explaining the refusal. The statement shape it prints —
+/// the `tokens.<name>` domain spelling, not the `pgtoken.tokens('<name>')` base-type one, since the
+/// docs call the domain the intended surface — is executed by
+/// `tests::an_explicit_cast_moves_a_value_to_another_vocabulary`, and matches the one
 /// `pgtoken.vocabulary_is_immutable`'s HINT prints.
 fn cross_vocabulary_assignment(from: u16, to: u16) -> ! {
     let to = vocabulary_label(to);
@@ -196,8 +202,8 @@ fn cross_vocabulary_assignment(from: u16, to: u16) -> ! {
     )
     .set_hint(format!(
         "token ids are only meaningful to the vocabulary that produced them; to reinterpret them \
-         anyway, cast explicitly: ALTER TABLE t ALTER COLUMN c TYPE pgtoken.tokens('{to}') \
-         USING c::pgtoken.tokens('{to}')"
+         anyway, cast explicitly: ALTER TABLE t ALTER COLUMN c TYPE tokens.{to} \
+         USING c::tokens.{to}"
     ))
     .report(PgLogLevel::ERROR);
     unreachable!("cross_vocabulary_assignment must not return")
@@ -222,12 +228,17 @@ fn encode_unresolved(ids: &[u32]) -> Vec<u8> {
     value::encode(ids, Codec::Raw24, UNRESOLVED, None).unwrap_or_else(|e| bail(e))
 }
 
-/// Raise if `v` never had a typmod applied. Every path that hands a value back to a caller goes
-/// through this — text output, binary output and both receive paths — so an unresolved value can
-/// be written but never read, by any route.
+/// Raise if `v` never had a typmod applied.
+///
+/// The four value-returning paths — text output, binary output (`SEND`) and both receive paths
+/// (`RECEIVE`, `tokens_recv_bytes`) — call this, directly or via [`validate`], so an unresolved
+/// value can be written but never read back through them. The `int[]` and `bytea` output casts in
+/// `casts.rs` call it too, for the same reason. `pgtoken.token_count` and `pgtoken.describe`
+/// deliberately do not: they are diagnostics, and refusing to describe an unresolved value would
+/// remove the only way to see that it *is* unresolved.
 ///
 /// Reads the 12-byte header and nothing else, which is what makes it affordable on `SEND`.
-fn require_vocabulary(v: &[u8]) {
+pub fn require_vocabulary(v: &[u8]) {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
     if h.vocabulary_id == UNRESOLVED {
         unresolved_value();
@@ -281,8 +292,10 @@ pub fn encode_for(ids: &[u32], typmod: i32) -> Vec<u8> {
 
     // A cheap, exact check that these ids came from this tokenizer — but only for the paths that
     // arrive here, which is text input and (from Task 7) `int[]` input. The binary paths do not
-    // reach this: `RECEIVE` and `tokens_recv_bytes` compare the header's vocabulary and codec and
-    // then hand the payload through untouched. That is deliberate. Scanning every id would put an
+    // reach this: `RECEIVE` compares the header's vocabulary and codec against the column's
+    // typmod (`check_against_typmod`) and then hands the payload through untouched;
+    // `tokens_recv_bytes` has no typmod to compare against and just checks the header through
+    // `validate`. Neither scans a single id. That is deliberate. Scanning every id would put an
     // O(n) pass on precisely the operation this project exists to make fast, and the harm is
     // bounded — an out-of-vocabulary id decodes back to itself, the stride stays uniform, and a
     // detokenizer that later finds no mapping for it fails loudly. So: text and `int[]` input
@@ -326,15 +339,18 @@ pub fn decode_value(v: &[u8]) -> Vec<u32> {
 /// Check a blob's **header** and return it unchanged.
 ///
 /// What this guarantees: the magic, version, codec id and reserved bytes are sound, the raw
-/// codecs' payload length matches the token count exactly, and the value names a real vocabulary
-/// rather than being unresolved. Failing loudly on any of that beats storing something that
-/// decodes to plausible-looking wrong IDs.
+/// codecs' payload length matches the token count exactly, and the vocabulary id is nonzero, i.e.
+/// not [`UNRESOLVED`]. Failing loudly on any of that beats storing something that decodes to
+/// plausible-looking wrong IDs.
 ///
-/// What it deliberately does **not** check: the token ids in the payload. Reading them would cost
-/// an O(n) pass on the binary write path — see the note in [`encode_for`] on why the binary paths
-/// trust their client where text input does not. `RECEIVE` pairs this with
-/// [`check_against_typmod`], which compares the header against the column; neither looks at a
-/// single id.
+/// What it deliberately does **not** check: that the vocabulary id names a vocabulary that
+/// actually exists — a hand-framed value naming an unregistered id passes this and can be stored
+/// in a bare column. That is caught elsewhere for any typmod'd column, by the length coercion
+/// (`encode_for`'s `vocab_size_for` lookup) or by [`check_against_typmod`]; it also does not check
+/// the token ids in the payload. Reading them would cost an O(n) pass on the binary write path —
+/// see the note in [`encode_for`] on why the binary paths trust their client where text input does
+/// not. `RECEIVE` pairs this with [`check_against_typmod`], which compares the header against the
+/// column; neither looks at a single id.
 pub fn validate(v: &[u8]) -> Vec<u8> {
     require_vocabulary(v);
     v.to_vec()
@@ -799,7 +815,8 @@ mod tests {
     fn an_explicit_cast_moves_a_value_to_another_vocabulary() {
         // The migration path, and the guarantee that the syntax we print is the syntax that works:
         // the statement below is the shape both `pgtoken.vocabulary_is_immutable`'s HINT and
-        // `cross_vocabulary_assignment`'s HINT tell the user to run. Change either hint and change
+        // `cross_vocabulary_assignment`'s HINT tell the user to run — the `tokens.<name>` domain
+        // spelling, not the `pgtoken.tokens('<name>')` base-type one. Change either hint and change
         // this together.
         //
         // `USING` is not decoration: the bare `ALTER TABLE … TYPE` form coerces in assignment
@@ -815,8 +832,8 @@ mod tests {
         assert_eq!(before, Some(12 + 9), "raw24 to start with");
 
         Spi::run(
-            "ALTER TABLE moved ALTER COLUMN body TYPE pgtoken.tokens('t_to') \
-             USING body::pgtoken.tokens('t_to')",
+            "ALTER TABLE moved ALTER COLUMN body TYPE tokens.t_to \
+             USING body::tokens.t_to",
         )
         .expect("alter type");
         let (rendered, after) =

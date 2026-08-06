@@ -102,13 +102,14 @@ SELECT pg_catalog.pg_extension_config_dump('pgtoken.vocabulary', '');
 -- between vocabularies takes an explicit cast (see `tokens::tokens_typmod_apply_impl`). A hint that
 -- stopped at "ALTER TABLE ... TYPE" would walk the user straight into a second error. Inner
 -- dollar-quoting keeps the SQL readable rather than doubling every quote.
--- The exact statement shape printed here is executed by
--- `tokens::tests::an_explicit_cast_moves_a_value_to_another_vocabulary`.
+-- The exact statement shape printed here — the `tokens.<name>` domain spelling, since the docs
+-- call the domain the intended surface, not the `pgtoken.tokens('<name>')` base-type one — is
+-- executed by `tokens::tests::an_explicit_cast_moves_a_value_to_another_vocabulary`.
 CREATE FUNCTION pgtoken.vocabulary_is_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'vocabulary % is immutable', OLD.name
-        USING HINT = $h$create a new vocabulary, then: ALTER TABLE t ALTER COLUMN c TYPE pgtoken.tokens('<new>') USING c::pgtoken.tokens('<new>')$h$;
+        USING HINT = $h$create a new vocabulary, then: ALTER TABLE t ALTER COLUMN c TYPE tokens.<new> USING c::tokens.<new>$h$;
 END
 $$;
 
