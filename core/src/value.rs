@@ -60,25 +60,17 @@ impl From<freq::FreqError> for ValueError {
     }
 }
 
-/// Resolve a codec name against the data. `raw` picks the narrowest packing that fits.
-pub fn resolve_codec(name: &str, ids: &[u32]) -> Result<Codec, HeaderError> {
-    if name == "raw" {
-        return Ok(raw::preferred_raw(ids));
-    }
-    Codec::parse(name)
-}
-
 /// Encode token IDs into a stored value.
 pub fn encode(
     ids: &[u32],
     codec: Codec,
-    table_id: u16,
+    vocabulary_id: u16,
     table: Option<&RankTable>,
 ) -> Result<Vec<u8>, ValueError> {
     let n_tokens = u32::try_from(ids.len()).map_err(|_| ValueError::TooManyTokens(ids.len()))?;
 
     let mut out = Vec::with_capacity(HEADER_LEN + ids.len() * 2);
-    Header::new(codec, table_id, n_tokens).write_to(&mut out);
+    Header::new(codec, vocabulary_id, n_tokens).write_to(&mut out);
 
     match codec {
         Codec::Raw16 => raw::encode16(ids, &mut out)?,
@@ -109,12 +101,12 @@ pub fn decode(value: &[u8], table: Option<&RankTable>) -> Result<Vec<u32>, Value
 pub fn recode(
     value: &[u8],
     to_codec: Codec,
-    to_table_id: u16,
+    to_vocabulary_id: u16,
     from_table: Option<&RankTable>,
     to_table: Option<&RankTable>,
 ) -> Result<Vec<u8>, ValueError> {
     let ids = decode(value, from_table)?;
-    encode(&ids, to_codec, to_table_id, to_table)
+    encode(&ids, to_codec, to_vocabulary_id, to_table)
 }
 
 /// Header-only inspection. O(1): reads 12 bytes and loads no table.
@@ -229,14 +221,6 @@ mod tests {
             encode(&[1, 2, 3], Codec::Freq, 1, None),
             Err(ValueError::MissingTable(Codec::Freq))
         );
-    }
-
-    #[test]
-    fn resolve_codec_picks_raw_width_from_the_data() {
-        assert_eq!(resolve_codec("raw", &[1, 2, 3]).unwrap(), Codec::Raw16);
-        assert_eq!(resolve_codec("raw", &[70_000]).unwrap(), Codec::Raw24);
-        assert_eq!(resolve_codec("freq", &[1]).unwrap(), Codec::Freq);
-        assert!(resolve_codec("nope", &[1]).is_err());
     }
 
     #[test]

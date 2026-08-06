@@ -11,7 +11,7 @@
 //!   1     1  format version (1)
 //!   2     1  codec id  0=raw16 1=raw24 2=freq
 //!   3     1  reserved, must be zero
-//!   4     2  table id (u16 LE; 0 = none, for the raw codecs)
+//!   4     2  vocabulary id (u16 LE; 0 = none)
 //!   6     2  reserved, must be zero
 //!   8     4  token count (u32 LE)
 //!  12     -  payload
@@ -48,7 +48,7 @@ impl Codec {
         }
     }
 
-    /// Whether this codec needs a trained table, and therefore a nonzero `table_id`.
+    /// Whether this codec needs a trained ranking, and therefore a nonzero `vocabulary_id`.
     pub fn needs_table(self) -> bool {
         matches!(self, Codec::Freq)
     }
@@ -85,15 +85,15 @@ impl Codec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
     pub codec: Codec,
-    pub table_id: u16,
+    pub vocabulary_id: u16,
     pub n_tokens: u32,
 }
 
 impl Header {
-    pub fn new(codec: Codec, table_id: u16, n_tokens: u32) -> Self {
+    pub fn new(codec: Codec, vocabulary_id: u16, n_tokens: u32) -> Self {
         Header {
             codec,
-            table_id,
+            vocabulary_id,
             n_tokens,
         }
     }
@@ -104,7 +104,7 @@ impl Header {
         out.push(VERSION);
         out.push(self.codec as u8);
         out.push(0); // reserved
-        out.extend_from_slice(&self.table_id.to_le_bytes());
+        out.extend_from_slice(&self.vocabulary_id.to_le_bytes());
         out.extend_from_slice(&[0u8, 0u8]); // reserved
         out.extend_from_slice(&self.n_tokens.to_le_bytes());
         debug_assert_eq!(out.len(), HEADER_LEN);
@@ -139,14 +139,14 @@ impl Header {
         if buf[3] != 0 || buf[6] != 0 || buf[7] != 0 {
             return Err(HeaderError::ReservedNotZero);
         }
-        let table_id = u16::from_le_bytes([buf[4], buf[5]]);
+        let vocabulary_id = u16::from_le_bytes([buf[4], buf[5]]);
         let n_tokens = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
 
-        if codec.needs_table() && table_id == 0 {
+        // `freq` cannot decode without its ranking, so a zero id is a broken value. The converse
+        // is deliberately allowed: a `raw` value names the vocabulary it belongs to even though
+        // the codec itself needs nothing from it.
+        if codec.needs_table() && vocabulary_id == 0 {
             return Err(HeaderError::MissingTable(codec));
-        }
-        if !codec.needs_table() && table_id != 0 {
-            return Err(HeaderError::UnexpectedTable(codec, table_id));
         }
 
         let payload = &buf[HEADER_LEN..];
@@ -172,7 +172,7 @@ impl Header {
         Ok((
             Header {
                 codec,
-                table_id,
+                vocabulary_id,
                 n_tokens,
             },
             payload,
@@ -189,7 +189,6 @@ pub enum HeaderError {
     UnknownCodecName(String),
     ReservedNotZero,
     MissingTable(Codec),
-    UnexpectedTable(Codec, u16),
     PayloadLen { want: usize, got: usize },
 }
 
@@ -215,12 +214,9 @@ impl fmt::Display for HeaderError {
             HeaderError::UnknownCodecName(s) => write!(f, "unknown codec name {s:?}"),
             HeaderError::ReservedNotZero => write!(f, "reserved header bytes are not zero"),
             HeaderError::MissingTable(c) => {
-                write!(f, "codec {} requires a table but table_id is 0", c.as_str())
-            }
-            HeaderError::UnexpectedTable(c, id) => {
                 write!(
                     f,
-                    "codec {} takes no table but table_id is {id}",
+                    "codec {} requires a table but vocabulary_id is 0",
                     c.as_str()
                 )
             }
@@ -339,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn table_id_presence_must_match_codec() {
+    fn freq_still_requires_a_vocabulary() {
         let mut v = Vec::new();
         Header::new(Codec::Freq, 0, 1).write_to(&mut v);
         v.push(1);
@@ -347,14 +343,17 @@ mod tests {
             Header::parse(&v),
             Err(HeaderError::MissingTable(Codec::Freq))
         );
+    }
 
+    #[test]
+    fn raw_codecs_may_carry_a_vocabulary_id() {
+        // Every column belongs to a vocabulary now, including `raw` ones, and the value must
+        // record which — for the cast's type check, and for detokenization later.
         let mut v = Vec::new();
         Header::new(Codec::Raw24, 3, 1).write_to(&mut v);
         v.extend_from_slice(&[0, 0, 0]);
-        assert_eq!(
-            Header::parse(&v),
-            Err(HeaderError::UnexpectedTable(Codec::Raw24, 3))
-        );
+        let (h, _) = Header::parse(&v).expect("raw with a vocabulary id must parse");
+        assert_eq!(h.vocabulary_id, 3);
     }
 
     #[test]

@@ -26,17 +26,6 @@ impl std::fmt::Display for RawError {
 
 impl std::error::Error for RawError {}
 
-/// The narrowest raw codec that can hold every ID in `ids`.
-///
-/// Chosen from the data rather than from a declared vocabulary, so nothing needs to know how
-/// large the tokenizer is.
-pub fn preferred_raw(ids: &[u32]) -> Codec {
-    match ids.iter().copied().max() {
-        Some(m) if m > u16::MAX as u32 => Codec::Raw24,
-        _ => Codec::Raw16,
-    }
-}
-
 /// 2 bytes/id, little-endian.
 pub fn encode16(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     out.reserve(ids.len() * 2);
@@ -163,13 +152,5 @@ mod tests {
     fn decode_rejects_wrong_length() {
         assert!(decode16(&[0, 0, 0], 1).is_err());
         assert!(decode24(&[0, 0], 1).is_err());
-    }
-
-    #[test]
-    fn preferred_raw_widens_only_when_the_data_needs_it() {
-        assert_eq!(preferred_raw(&[]), Codec::Raw16);
-        assert_eq!(preferred_raw(&[0, 1, 65_535]), Codec::Raw16);
-        assert_eq!(preferred_raw(&[0, 65_536]), Codec::Raw24);
-        assert_eq!(preferred_raw(&[200_018]), Codec::Raw24);
     }
 }

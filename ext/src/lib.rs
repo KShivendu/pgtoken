@@ -117,7 +117,7 @@ fn with_table<R>(codec: Codec, table_id: u16, f: impl FnOnce(Option<&RankTable>)
 #[pg_extern(immutable, parallel_safe, strict, name = "encode")]
 fn encode_with(ids: Vec<Option<i32>>, codec: &str, table_id: i32) -> Vec<u8> {
     let ids = ids_from_sql(ids);
-    let c = value::resolve_codec(codec, &ids).unwrap_or_else(|e| bail(e));
+    let c = Codec::parse(codec).unwrap_or_else(|e| bail(e));
     let tid = table_id_u16(table_id);
     with_table(c, tid, |t| {
         value::encode(&ids, c, tid, t).unwrap_or_else(|e| bail(e))
@@ -137,7 +137,7 @@ fn encode_default(ids: Vec<Option<i32>>) -> Vec<u8> {
 #[pg_extern(immutable, parallel_safe, strict)]
 fn decode(v: &[u8]) -> Vec<i32> {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
-    with_table(h.codec, h.table_id, |t| {
+    with_table(h.codec, h.vocabulary_id, |t| {
         value::decode(v, t)
             .unwrap_or_else(|e| bail(e))
             .into_iter()
@@ -172,7 +172,7 @@ fn describe(
     TableIterator::once((
         pgtoken_core::VERSION as i32,
         h.codec.as_str().to_string(),
-        h.table_id as i32,
+        h.vocabulary_id as i32,
         h.n_tokens as i32,
         payload_len as i32,
         v.len() as i32,
@@ -184,10 +184,10 @@ fn describe(
 #[pg_extern(immutable, parallel_safe, strict)]
 fn recode(v: &[u8], codec: &str, table_id: i32) -> Vec<u8> {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
-    let ids = with_table(h.codec, h.table_id, |t| {
+    let ids = with_table(h.codec, h.vocabulary_id, |t| {
         value::decode(v, t).unwrap_or_else(|e| bail(e))
     });
-    let to = value::resolve_codec(codec, &ids).unwrap_or_else(|e| bail(e));
+    let to = Codec::parse(codec).unwrap_or_else(|e| bail(e));
     let to_tid = table_id_u16(table_id);
     with_table(to, to_tid, |t| {
         value::encode(&ids, to, to_tid, t).unwrap_or_else(|e| bail(e))

@@ -20,4 +20,4 @@ pub mod value;
 
 pub use header::{Codec, Header, HeaderError, HEADER_LEN, MAGIC, VERSION};
 pub use tables::{RankTable, TableError};
-pub use value::{decode, describe, encode, recode, resolve_codec, ValueError};
+pub use value::{decode, describe, encode, recode, ValueError};
