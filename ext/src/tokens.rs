@@ -174,6 +174,12 @@ fn unresolved_value() -> ! {
 
 /// Asked to store a value under a vocabulary other than the one that produced its ids, by an
 /// assignment rather than an explicit cast. See [`tokens_typmod_apply_impl`].
+///
+/// A user who reaches this from the vocabulary catalog's immutability error has already followed
+/// one hint to get here, so this one has to end the chain: it names the target vocabulary and the
+/// statement that works, rather than only explaining the refusal. The statement shape it prints is
+/// executed by `tests::an_explicit_cast_moves_a_value_to_another_vocabulary`, and matches the one
+/// `pgtoken.vocabulary_is_immutable`'s HINT prints.
 fn cross_vocabulary_assignment(from: u16, to: u16) -> ! {
     let to = vocabulary_label(to);
     pgrx::pg_sys::panic::ErrorReport::new(
@@ -188,7 +194,11 @@ fn cross_vocabulary_assignment(from: u16, to: u16) -> ! {
         "An assignment will not reinterpret token ids under a different vocabulary. An explicit \
          cast will, and says so at the call site.",
     )
-    .set_hint("token ids are only meaningful to the vocabulary that produced them")
+    .set_hint(format!(
+        "token ids are only meaningful to the vocabulary that produced them; to reinterpret them \
+         anyway, cast explicitly: ALTER TABLE t ALTER COLUMN c TYPE pgtoken.tokens('{to}') \
+         USING c::pgtoken.tokens('{to}')"
+    ))
     .report(PgLogLevel::ERROR);
     unreachable!("cross_vocabulary_assignment must not return")
 }
@@ -787,10 +797,14 @@ mod tests {
 
     #[pg_test]
     fn an_explicit_cast_moves_a_value_to_another_vocabulary() {
-        // The migration path the vocabulary catalog's immutability HINT points at. `USING` is not
-        // decoration: the bare `ALTER TABLE … TYPE` form coerces in assignment context, which
-        // `assignment_refuses_a_value_from_another_vocabulary` shows is refused. The explicit cast
-        // inside `USING` is the user saying they meant it.
+        // The migration path, and the guarantee that the syntax we print is the syntax that works:
+        // the statement below is the shape both `pgtoken.vocabulary_is_immutable`'s HINT and
+        // `cross_vocabulary_assignment`'s HINT tell the user to run. Change either hint and change
+        // this together.
+        //
+        // `USING` is not decoration: the bare `ALTER TABLE … TYPE` form coerces in assignment
+        // context, which `assignment_refuses_a_value_from_another_vocabulary` shows is refused. The
+        // explicit cast inside `USING` is the user saying they meant it.
         vocab("t_from", 200019);
         vocab("t_to", 256);
         ensure_bytea_cast();

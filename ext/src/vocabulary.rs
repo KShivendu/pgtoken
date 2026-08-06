@@ -75,11 +75,18 @@ CREATE TABLE pgtoken.vocabulary (
 -- typmod names a vocabulary that no longer exists.
 SELECT pg_catalog.pg_extension_config_dump('pgtoken.vocabulary', '');
 
+-- The HINT spells the migration out in full, `USING` clause included, because the bare
+-- `ALTER TABLE ... TYPE` form is refused: it coerces in assignment context, and moving token ids
+-- between vocabularies takes an explicit cast (see `tokens::tokens_typmod_apply_impl`). A hint that
+-- stopped at "ALTER TABLE ... TYPE" would walk the user straight into a second error. Inner
+-- dollar-quoting keeps the SQL readable rather than doubling every quote.
+-- The exact statement shape printed here is executed by
+-- `tokens::tests::an_explicit_cast_moves_a_value_to_another_vocabulary`.
 CREATE FUNCTION pgtoken.vocabulary_is_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'vocabulary % is immutable', OLD.name
-        USING HINT = 'create a new vocabulary and ALTER TABLE ... TYPE to move to it';
+        USING HINT = $h$create a new vocabulary, then: ALTER TABLE t ALTER COLUMN c TYPE pgtoken.tokens('<new>') USING c::pgtoken.tokens('<new>')$h$;
 END
 $$;
 
