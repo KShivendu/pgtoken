@@ -7,10 +7,10 @@ Store text in PostgreSQL as token IDs instead of UTF-8.
 Agents read and write token IDs, not characters. A `text` column makes them re-tokenize on
 every read; `pgtoken` stores the IDs directly, compressed, and hands them back as-is.
 
-**No tokenizer.** The extension takes `int[]` and returns `int[]`. You tokenize with whatever
-you already use — tiktoken, HuggingFace, SentencePiece, your own — and the database stays out
-of it. So any tokenizer works, nothing needs a vocabulary size, and the server never spends a
-cycle tokenizing.
+**No tokenizer.** You tokenize with whatever you already use — tiktoken, HuggingFace,
+SentencePiece, your own — and the database stays out of it. It only needs to know how many token
+IDs your tokenizer has, so it can pick a storage width; it never sees a merge table and never
+spends a cycle tokenizing.
 
 <sub>Background: [blog](https://www.kshivendu.dev/blog/token-storage) ·
 [paper](https://arxiv.org/abs/2608.02376)</sub>
@@ -36,60 +36,67 @@ No PostgreSQL to hand? `setup_pg.sh` installs one under `~/.local/share`, no roo
 ```sql
 CREATE EXTENSION pgtoken;
 
-CREATE TABLE documents (id bigserial PRIMARY KEY, body bytea);
-ALTER TABLE documents ALTER COLUMN body SET STORAGE EXTERNAL;
+-- Declare the ID space once. The storage width follows from it: 200019 ids need 3 bytes.
+SELECT pgtoken.create_vocabulary('o200k', vocab_size => 200019);
+
+CREATE TABLE documents (id bigserial PRIMARY KEY, body tokens.o200k);
 
 -- token IDs from your tokenizer, client-side
-INSERT INTO documents (body) VALUES (pgtoken.encode('{24912,2375}'));
+INSERT INTO documents (body) VALUES ('{24912,2375}');
 
-SELECT pgtoken.decode(body) FROM documents;   -- {24912,2375}
-SELECT body FROM documents;                   -- the blob, to decode client-side
+SELECT body FROM documents;          -- binary mode: the stored bytes, no server work
+SELECT body::bytea FROM documents;   -- any client: hex, decode with the reference codec
+SELECT body::int[] FROM documents;   -- {24912,2375}
 ```
 
-`STORAGE EXTERNAL` stops PostgreSQL compressing a payload that is already compressed.
+`create_vocabulary` also creates the domain `tokens.o200k`, which is what you put on the column.
+Two vocabularies are two types, so PostgreSQL refuses to move values between them by assignment —
+token IDs are only meaningful to the tokenizer that produced them.
 
-On the agent path, select `body` and decode client-side. `pgtoken.decode` is for SQL-side
-work — `int[]` costs 4 bytes per token on the wire, more than the blob it came from.
+The type sets `STORAGE EXTERNAL` itself, so PostgreSQL will not try to compress a payload that is
+already compressed. There is no `ALTER TABLE` to remember.
 
-## Codecs
+**Pick your read by what the caller is.** In binary mode `SELECT body` hands over exactly what is
+on disk — that is the fast path, and the reason this extension exists. `body::bytea` is the
+fallback for drivers that make binary mode awkward, at hex's 2× expansion but still with no
+server-side work. `body::int[]` is for SQL-side use; it costs 4 bytes per token on the wire, more
+than the blob it came from.
 
-| codec | size | decode | needs a table |
+## Compression
+
+| method | size | decode | needs training |
 | --- | --: | --: | --- |
-| `raw` | 2–3 B/token | 0.3–0.4 µs | no |
+| `raw` (default) | 1–3 B/token | 0.3–0.4 µs | no |
 | `freq` | ~1.9 B/token | 4 µs | yes |
 
-Per 512-token chunk, on a Zipf-like stream over a 200k vocabulary. `raw` packs IDs at a fixed
-width, picking 2 or 3 bytes from the data. `freq` remaps them to frequency rank and packs with a
-varint, so common tokens cost one byte.
+Per 512-token chunk over a 200k vocabulary. `raw` packs IDs at the fixed width `vocab_size`
+implies. `freq` remaps them to frequency rank and packs with a varint, so common tokens cost one
+byte.
 
-Train a table from any query returning `int[]`:
+`freq` needs a ranking, trained from any query returning `int[]`:
 
 ```sql
-SELECT pgtoken.train(1, 'SELECT ids FROM my_corpus');
-INSERT INTO documents (body) VALUES (pgtoken.encode('{24912,2375}', 'freq', 1));
+SELECT pgtoken.create_vocabulary('corpus', vocab_size => 200019, compression => 'freq');
+SELECT pgtoken.train('corpus', 'SELECT ids FROM my_corpus');
 ```
 
-The table stores only the tokens your corpus actually contained — for one skewed corpus that
-is 28 bytes, not the 800 KB a full vocabulary would need. Tokens it never saw still encode
-losslessly, just a little wider, which is why nothing has to declare a vocabulary size.
+The ranking holds only the tokens your corpus actually contained — for one skewed corpus that is
+28 bytes, not the 800 KB a full vocabulary would need. Tokens it never saw still encode
+losslessly, just a little wider.
 
-Table ids are permanent, since stored values reference them. `pgtoken.recode` changes a value's
-codec without leaving the token-ID domain.
+A vocabulary is immutable: its size, compression and ranking are fixed once set, because stored
+values reference its id. Changing your mind means a new vocabulary and an `ALTER TABLE`:
+
+```sql
+SELECT pgtoken.create_vocabulary('corpus_v2', vocab_size => 200019);
+ALTER TABLE documents ALTER COLUMN body TYPE tokens.corpus_v2 USING body::tokens.corpus_v2;
+```
 
 ## Benchmarks
 
-C4 English, 512-token chunks, o200k, PostgreSQL 14, one pinned core. The workload is an agent:
-it holds token IDs and wants token IDs back, so the `text` column pays a detokenize on write
-and a tokenize on every read.
-
-**Write**, µs per row, batches of 50:
-
-| column | total | = client | + insert | bytes/row | vs text |
-| --- | --: | --: | --: | --: | --: |
-| `text` (pglz) | 190 | 78 | 113 | 2322 | 1.00× |
-| `text` (lz4) | 157 | 81 | 75 | 2322 | 1.21× |
-| `pgtoken` raw | **71** | 24 | 48 | 1473 | **2.68×** |
-| `pgtoken` freq | 165 | 115 | 50 | **884** | 1.16× |
+C4 English, 512-token chunks, o200k, PostgreSQL 14, one pinned core. The workload is an agent: it
+holds token IDs and wants token IDs back, so the `text` column pays a detokenize on write and a
+tokenize on every read.
 
 **Read**, µs per query:
 
@@ -101,11 +108,11 @@ and a tokenize on every read.
 | `pgtoken` freq | 938 (1.3×) | 1888 (2.2×) | 10485 (1.8×) | **88 KB** |
 
 At fan-out 100 the `text` column spends 16.5 ms of its 19.3 ms tokenizing. That is the cost
-`pgtoken` removes, and it recurs on every read.
+`pgtoken` removes, and it recurs on every read. Storage is ~2.1× smaller than `text` in payload,
+relation size, and WAL.
 
-**`freq` is understated above.** Those figures use the Python client in `benchmarks/`, which
-pays numpy overhead on 512-element arrays. The codec itself, measured in Rust with no database
-in the way (`cd core && cargo run --release --example codec_bench`):
+The codec alone, measured in Rust with no database in the way
+(`cd core && cargo run --release --example codec_bench`):
 
 | codec | encode | decode | bytes/token |
 | --- | --: | --: | --: |
@@ -113,36 +120,32 @@ in the way (`cd core && cargo run --release --example codec_bench`):
 | `raw24` | 1.11 µs | 0.42 µs | 3.02 |
 | `freq` | 5.38 µs | **4.06 µs** | **1.89** |
 
-Per 512-token chunk. So `freq` really costs ~4 µs to decode, not the ~90 µs the Python client
-shows — against ~250 µs to tokenize the equivalent text. A Rust client gets `freq`'s size with
-roughly `raw`'s speed.
+So `freq` costs ~4 µs to decode, against ~250 µs to tokenize the equivalent text. The end-to-end
+figures above understate it, because the Python client pays numpy overhead on 512-element arrays.
 
-Storage is ~2.1× smaller than `text` in payload, total relation size, and WAL
-(`bench_storage_wal.py`).
-
-Reproducing the end-to-end numbers needs the corpora from the
-[token-storage](https://github.com/KShivendu/token-storage) repo:
-
-```sh
-TOKEN_STORAGE_REPO=/path/to/token-storage \
-  taskset -c 4 uv run python benchmarks/bench_readwrite.py
-```
-
-Ratios are stable across runs; absolute microseconds are not — they inflate several-fold under
-load, so check `/proc/loadavg` before quoting one.
+> The end-to-end numbers predate the type. `benchmarks/bench_readwrite.py` and `pgcommon.py`
+> still call the removed `encode`/`decode` functions and need porting to vocabularies before they
+> run again. Ratios were stable across runs; absolute microseconds are not — they inflate
+> several-fold under load.
 
 ## Limitations
 
-- **`decode` returns `int[]`, not text.** Detokenizing is yours to do. `psql` shows integers,
-  and there is no full-text search over the column — keep a separate `text` or `tsvector`
-  column if you need it.
-- **No `ORDER BY`, `LIKE` or `pg_trgm`** on the column: byte order of a compressed value is
-  meaningless.
-- **IDs are only meaningful to the tokenizer that produced them.** `vocab_size` bounds every id
-  on the text and `int[]` paths, and moving a value to another vocabulary by assignment is
-  refused, but nothing checks that two columns under the *same* vocabulary came from the same
-  tokenizer — that mixing is still your problem to avoid.
-- **Coding tables are corpus-specific.** Ratios drop if the table and your data diverge.
+- **Reads give you token IDs, not text.** Detokenizing is yours to do. `psql` shows integers, and
+  there is no full-text search over the column — keep a separate `text` or `tsvector` column if
+  you need it.
+- **No `=`, `ORDER BY`, `LIKE` or `pg_trgm`** on the column. Byte order of a compressed value is
+  meaningless, and there is no equality operator yet, so `GROUP BY` and `DISTINCT` do not work
+  either.
+- **A column must name a vocabulary.** A bare `pgtoken.tokens` column accepts inserts and then
+  fails on read, because PostgreSQL applies a type modifier after the input function runs, so
+  there is nowhere earlier to refuse. The rows are recoverable in place with
+  `ALTER TABLE ... TYPE tokens.<name>`.
+- **Binary writes are trusted.** Text and `int[]` input check every id against `vocab_size`;
+  `COPY BINARY` and the `bytea` cast check only the 12-byte header, because scanning the payload
+  would cost the write path the speed it exists for.
+- **A vocabulary's name and id are reserved forever**, even after you drop its domain, since
+  stored values reference the id.
+- **Rankings are corpus-specific.** Ratios drop if the ranking and your data diverge.
 
 `benchmarks/pgtoken_client.py` is a reference client-side codec in Python, byte-compatible with
 the extension in both directions (`benchmarks/test_client.py` asserts it).
@@ -151,18 +154,18 @@ the extension in both directions (`benchmarks/test_client.py` asserts it).
 
 | function | returns | |
 | --- | --- | --- |
-| `encode(int[])` | `bytea` | uses the `pgtoken.*` defaults |
-| `encode(int[], codec, table_id)` | `bytea` | pinned, `IMMUTABLE` |
-| `decode(bytea)` | `int[]` | token IDs |
-| `token_count(bytea)` | `int` | header only, no decode |
-| `describe(bytea)` | record | codec, table, sizes |
-| `recode(bytea, codec, table_id)` | `bytea` | change codec, keeping the IDs |
-| `train(table_id, query)` | `text` | train from a query returning `int[]` |
-| `train(table_id, query, max_ranks)` | `text` | as above, capping table size |
-| `table_info(table_id)` | record | ranked tokens, sha256, file size |
+| `create_vocabulary(name, vocab_size [, compression] [, id])` | `int` | also creates `tokens.<name>` |
+| `train(name, query [, max_ranks])` | `text` | ranking for `freq`, write-once |
+| `vocabulary_info(name)` | record | size, compression, width, ranking, sha256 |
+| `drop_vocabulary(name)` | | drops the domain; the id stays reserved |
+| `token_count(tokens)` | `int` | header only, no decode |
+| `describe(tokens)` | record | codec, vocabulary, sizes |
 
-Settings: `pgtoken.table_dir` (where coding tables live, `SIGHUP`), `pgtoken.default_codec`,
-`pgtoken.default_table_id`.
+Casts: `int[] → tokens` (assignment), and `tokens → int[]`, `tokens → bytea`, `bytea → tokens`
+(explicit).
+
+Setting: `pgtoken.table_dir`, where rankings live (`SIGHUP`). It is not session-settable on
+purpose — two sessions must never decode one value differently.
 
 ## Tests
 
@@ -171,9 +174,12 @@ cd core && cargo test          # codecs, no PostgreSQL needed
 cd ext  && cargo pgrx test pg14
 ```
 
+Clear `$pgtoken.table_dir` between runs — rankings are files, they survive the rollback that
+resets everything else, and `train` refuses to overwrite one.
+
 CI runs both across PostgreSQL 14–18, plus `cargo fmt`, `clippy -D warnings`, and an install
-check. `benchmarks/test_client.py` additionally asserts the Python client is byte-compatible
-with the extension, but needs a running server so it is not part of CI.
+check. `benchmarks/test_client.py` additionally asserts the Python client is byte-compatible with
+the extension, but needs a running server so it is not part of CI.
 
 ## License
 
