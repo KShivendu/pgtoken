@@ -43,6 +43,22 @@ fn quote_ident(name: &str) -> String {
         .unwrap_or_else(|| bail("quote_ident returned NULL"))
 }
 
+/// Whether `tokens.<name>` currently exists as a type.
+///
+/// A catalog row surviving `drop_vocabulary` does not imply the domain still does — the row is
+/// permanent, the domain is not — so this is a real catalog lookup rather than inferred from
+/// `lookup_by_name`. `to_regtype` returns NULL for a name that does not resolve rather than
+/// raising, which is what makes it safe to call before deciding whether `DROP DOMAIN` or
+/// `CREATE DOMAIN` would even apply.
+fn domain_exists(name: &str) -> bool {
+    Spi::get_one_with_args::<bool>(
+        "SELECT to_regtype('tokens.' || quote_ident($1)) IS NOT NULL",
+        &[name.into()],
+    )
+    .unwrap_or_else(|e| bail(e))
+    .unwrap_or(false)
+}
+
 fn compression_code(name: &str) -> u8 {
     match name {
         "raw" => COMPRESSION_RAW,
@@ -135,7 +151,18 @@ fn create_vocabulary(
     let width = width_for(vocab_size);
 
     if lookup_by_name(name).is_some() {
-        bail(format!("vocabulary {name:?} already exists"));
+        // A catalog row survives `drop_vocabulary`, so a live vocabulary and a dropped-but-
+        // reserved name both land here — and they need different messages. A user who just
+        // dropped `name` and expects it freed for reuse gets nothing from "already exists"; tell
+        // them the id is permanently spoken for instead of implying a same-shaped collision.
+        if domain_exists(name) {
+            bail(format!("vocabulary {name:?} already exists"));
+        }
+        bail(format!(
+            "vocabulary {name:?} was dropped and its name is permanently reserved: stored \
+             values may still reference its id, so neither the id nor the name can be recycled; \
+             pick a different name"
+        ));
     }
 
     let assigned = match id {
@@ -178,11 +205,20 @@ fn create_vocabulary(
 ///
 /// The catalog row and its id stay forever — stored values may still reference the id, and
 /// reusing one would change what those rows mean. The immutability trigger enforces that even
-/// against a deliberate `DELETE`.
+/// against a deliberate `DELETE`. Three states, three outcomes: no catalog row is a plain "does
+/// not exist"; a row whose domain is already gone is an error naming that rather than a Postgres
+/// "type does not exist" from a bare `DROP DOMAIN` that was never asked to run twice; and a row
+/// with a live domain is the ordinary drop.
 #[pg_extern]
 fn drop_vocabulary(name: &str) {
     if lookup_by_name(name).is_none() {
         bail(format!("vocabulary {name:?} does not exist"));
+    }
+    if !domain_exists(name) {
+        bail(format!(
+            "vocabulary {name:?} was already dropped; its id stays reserved forever and cannot \
+             be dropped again"
+        ));
     }
     Spi::run(&format!("DROP DOMAIN tokens.{}", quote_ident(name))).unwrap_or_else(|e| bail(e));
 }
@@ -460,5 +496,34 @@ mod tests {
             Spi::get_one::<i64>("SELECT count(*) FROM pgtoken.vocabulary WHERE name = 'dom_gone'")
                 .expect("query failed");
         assert_eq!(reserved, Some(1), "the id stays reserved forever");
+    }
+
+    #[pg_test(
+        error = "vocabulary \"dom_double\" was already dropped; its id stays reserved forever \
+                 and cannot be dropped again"
+    )]
+    fn dropping_a_vocabulary_twice_names_the_real_state() {
+        // The catalog row `drop_vocabulary`'s guard checks via `lookup_by_name` is permanent by
+        // design, so it cannot tell a second drop from a first one — only `domain_exists` can.
+        // Without that second check this fell through to Postgres's raw
+        // `type "tokens.dom_double" does not exist` on the second call, which does not say the
+        // vocabulary itself is fine and only its domain is already gone.
+        Spi::run("SELECT pgtoken.create_vocabulary('dom_double', 300)").expect("create");
+        Spi::run("SELECT pgtoken.drop_vocabulary('dom_double')").expect("first drop");
+        Spi::run("SELECT pgtoken.drop_vocabulary('dom_double')").unwrap();
+    }
+
+    #[pg_test(
+        error = "vocabulary \"dom_reserved\" was dropped and its name is permanently reserved: \
+                 stored values may still reference its id, so neither the id nor the name can be \
+                 recycled; pick a different name"
+    )]
+    fn creating_a_dropped_name_explains_the_reservation() {
+        // Before this fix, re-creating a dropped name hit the same "already exists" used for an
+        // ordinary name collision, which tells someone who just freed the name nothing about why
+        // it is not actually free.
+        Spi::run("SELECT pgtoken.create_vocabulary('dom_reserved', 300)").expect("create");
+        Spi::run("SELECT pgtoken.drop_vocabulary('dom_reserved')").expect("drop");
+        Spi::run("SELECT pgtoken.create_vocabulary('dom_reserved', 300)").unwrap();
     }
 }
