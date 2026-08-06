@@ -71,7 +71,8 @@ impl Codec {
         }
     }
 
-    /// Parse a codec name. `raw` is resolved by the caller, which knows the ID range.
+    /// Parse an exact codec name. There is no `raw` alias: a width is never inferred from the
+    /// data, it comes from a vocabulary's declared `vocab_size`.
     pub fn parse(s: &str) -> Result<Self, HeaderError> {
         match s {
             "raw16" => Ok(Codec::Raw16),
