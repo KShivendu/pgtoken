@@ -60,7 +60,11 @@ fn compression_name(code: u8) -> &'static str {
 extension_sql!(
     r#"
 CREATE TABLE pgtoken.vocabulary (
-    id          smallint PRIMARY KEY CHECK (id > 0),
+    -- `int`, not `smallint`: the upper bound is 65535 because the value header's vocabulary_id
+    -- is a u16 and the typmod packs the id into bits 0-15, and smallint stops at 32767. Do not
+    -- "simplify" this CHECK to `id > 0` — the bound is what the storage format can address.
+    -- 0 is excluded because the header reserves it to mean "no vocabulary".
+    id          int      PRIMARY KEY CHECK (id BETWEEN 1 AND 65535),
     name        text     NOT NULL UNIQUE,
     vocab_size  int      NOT NULL CHECK (vocab_size >= 1),
     compression text     NOT NULL CHECK (compression IN ('raw', 'freq')),
@@ -132,7 +136,7 @@ fn create_vocabulary(
 
     Spi::run_with_args(
         "INSERT INTO pgtoken.vocabulary (id, name, vocab_size, compression, width) \
-         VALUES ($1::smallint, $2, $3, $4, $5::smallint)",
+         VALUES ($1, $2, $3, $4, $5::smallint)",
         &[
             assigned.into(),
             name.into(),
@@ -151,7 +155,7 @@ pub fn lookup_by_name(name: &str) -> Option<Vocabulary> {
     Spi::connect(|client| {
         let rows = client
             .select(
-                "SELECT id::int, compression, width::int FROM pgtoken.vocabulary WHERE name = $1",
+                "SELECT id, compression, width::int FROM pgtoken.vocabulary WHERE name = $1",
                 Some(1),
                 &[name.into()],
             )
@@ -176,7 +180,7 @@ pub fn name_for_id(id: u16) -> Option<String> {
     Spi::connect(|client| {
         client
             .select(
-                "SELECT name FROM pgtoken.vocabulary WHERE id = $1::smallint",
+                "SELECT name FROM pgtoken.vocabulary WHERE id = $1",
                 Some(1),
                 &[(id as i32).into()],
             )
@@ -194,7 +198,7 @@ pub fn vocab_size_for(id: u16) -> Option<u32> {
     Spi::connect(|client| {
         client
             .select(
-                "SELECT vocab_size FROM pgtoken.vocabulary WHERE id = $1::smallint",
+                "SELECT vocab_size FROM pgtoken.vocabulary WHERE id = $1",
                 Some(1),
                 &[(id as i32).into()],
             )
@@ -283,6 +287,23 @@ mod tests {
         let id = Spi::get_one::<i32>("SELECT pgtoken.create_vocabulary('pinned', 300, id => 41)")
             .expect("query failed");
         assert_eq!(id, Some(41));
+    }
+
+    #[pg_test]
+    fn accepts_an_id_across_the_whole_u16_range() {
+        // The value header's vocabulary_id is a u16, so the catalog must address all of it.
+        // A smallint column would have failed here with "smallint out of range".
+        let id = Spi::get_one::<i32>("SELECT pgtoken.create_vocabulary('wide', 300, id => 40000)")
+            .expect("query failed");
+        assert_eq!(id, Some(40000));
+        let found =
+            Spi::get_one::<i32>("SELECT vocab_size FROM pgtoken.vocabulary WHERE id = 40000")
+                .expect("query failed");
+        assert_eq!(
+            found,
+            Some(300),
+            "the row must be findable at an id above smallint's range"
+        );
     }
 
     #[pg_test(error = "vocab_size is required and must be at least 1")]
