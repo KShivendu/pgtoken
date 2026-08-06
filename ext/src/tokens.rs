@@ -33,6 +33,11 @@
 //! `INSERT` into a column declared as a bare `pgtoken.tokens` stores the unresolved value and
 //! fails on the way back out, not on the way in — see
 //! `a_typmodless_column_cannot_be_read_back`.
+//!
+//! `RECEIVE` is the exception that has to police itself. It *does* get the real typmod, but
+//! nothing re-checks what it returns — `CopyFrom` calls `ReceiveFunctionCall` and stores the
+//! result, with no length coercion behind it — so `tokens_recv` compares the incoming value's
+//! vocabulary and codec against the column's typmod itself. See `check_against_typmod`.
 
 use std::ffi::{CStr, CString};
 
@@ -98,18 +103,50 @@ pub fn render_ids(ids: &[u32]) -> String {
     s
 }
 
-/// The one error worth a DETAIL rather than a bare [`bail`]: it is the error a user hits by
-/// forgetting the vocabulary, and the fix is not guessable from the message alone.
+/// A vocabulary's name, falling back to its raw id when the catalog has no row for it — which
+/// happens when a value outlives the vocabulary it names, and while formatting an error inside an
+/// already-aborted transaction.
+fn vocabulary_label(id: u16) -> String {
+    name_for_id(id).unwrap_or_else(|| id.to_string())
+}
+
+/// Asked to apply a typmod that names no vocabulary. Only reachable by calling
+/// `tokens_typmod_apply_impl` or `encode_for` by hand: the planner skips the length coercion
+/// entirely for a negative typmod, and `tokens_in` emits an unresolved value rather than failing.
 ///
 /// A separate `-> !` function because `ereport!(ERROR, ...)` expands to two statements and so
 /// cannot sit in expression position.
-fn no_vocabulary() -> ! {
+fn no_vocabulary_typmod() -> ! {
     ereport!(
         ERROR,
         PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
         "pgtoken.tokens requires a vocabulary",
-        "declare the column as tokens.<name>, or pgtoken.tokens('<name>')"
+        "A typmod is the only thing that supplies a vocabulary, and so a storage width. \
+         There is no default width to fall back to."
     );
+}
+
+/// Asked to read a value whose typmod was never applied.
+///
+/// The one error here a user can hit in bulk: a million rows can go into a column declared as a
+/// bare `pgtoken.tokens` before anything reads one back, because nothing in the write path can
+/// tell that column from a value about to be length-coerced. So this names the symptom, the
+/// cause and the fix, rather than only the symptom.
+fn unresolved_value() -> ! {
+    pgrx::pg_sys::panic::ErrorReport::new(
+        PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+        "cannot read a pgtoken.tokens value that has no vocabulary",
+        function_name!(),
+    )
+    .set_detail(
+        "The value was written through a bare pgtoken.tokens, which declares no vocabulary and \
+         therefore no storage width, so it was stored unresolved.",
+    )
+    .set_hint(
+        "Declare the column as tokens.<name> or pgtoken.tokens('<name>'), then re-insert the rows.",
+    )
+    .report(PgLogLevel::ERROR);
+    unreachable!()
 }
 
 /// Encode token IDs with no vocabulary and therefore no width of their own.
@@ -127,7 +164,41 @@ fn encode_unresolved(ids: &[u32]) -> Vec<u8> {
 fn require_vocabulary(v: &[u8]) {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
     if h.vocabulary_id == UNRESOLVED {
-        no_vocabulary();
+        unresolved_value();
+    }
+}
+
+/// Check a value arriving from outside against the column's typmod.
+///
+/// `RECEIVE` is the one write path with nothing behind it: `CopyFrom` calls
+/// `ReceiveFunctionCall` and stores whatever comes back, with no length coercion to re-encode or
+/// re-check it. So this is all that stands between a binary client and a column full of values
+/// from the wrong vocabulary — which would decode under their own header rather than the
+/// column's, i.e. silently mean different text.
+fn check_against_typmod(v: &[u8], typmod: i32) {
+    let Some(target) = unpack(typmod) else {
+        // No vocabulary to check against. A bare `pgtoken.tokens` column accepts an unresolved
+        // value here for the same reason `tokens_in` produces one; reading it back still fails.
+        return;
+    };
+    let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
+    if h.vocabulary_id != target.id {
+        bail(format!(
+            "binary value belongs to vocabulary {}, but the column is {}",
+            vocabulary_label(h.vocabulary_id),
+            vocabulary_label(target.id)
+        ));
+    }
+    // Right vocabulary, wrong packing is equally wrong: a column's stride has to be uniform for
+    // the header's width to mean anything.
+    let want = codec_for(target);
+    if h.codec != want {
+        bail(format!(
+            "binary value is encoded {}, but vocabulary {} stores {}",
+            h.codec.as_str(),
+            vocabulary_label(target.id),
+            want.as_str()
+        ));
     }
 }
 
@@ -137,14 +208,14 @@ fn require_vocabulary(v: &[u8]) {
 /// there is no auto width, so there would be nothing to fall back to.
 pub fn encode_for(ids: &[u32], typmod: i32) -> Vec<u8> {
     let Some(v) = unpack(typmod) else {
-        no_vocabulary()
+        no_vocabulary_typmod()
     };
 
     // The declared ID space is a cheap, exact check that these ids came from this tokenizer.
     let size = vocab_size_for(v.id)
         .unwrap_or_else(|| bail(format!("vocabulary id {} is not registered", v.id)));
     if let Some(&bad) = ids.iter().find(|&&id| id >= size) {
-        let name = name_for_id(v.id).unwrap_or_else(|| v.id.to_string());
+        let name = vocabulary_label(v.id);
         bail(format!(
             "token id {bad} is outside vocabulary {name} (size {size})"
         ));
@@ -154,7 +225,7 @@ pub fn encode_for(ids: &[u32], typmod: i32) -> Vec<u8> {
     if codec.needs_table() {
         // Name the vocabulary rather than a path: the vocabulary is what the user typed.
         if !table_path(v.id).exists() {
-            let name = name_for_id(v.id).unwrap_or_else(|| v.id.to_string());
+            let name = vocabulary_label(v.id);
             bail(format!(
                 "vocabulary {name} has no ranking; run pgtoken.train first"
             ));
@@ -213,7 +284,7 @@ fn tokens_typmod_apply_impl(value: &[u8], typmod: i32, _is_explicit: bool) -> Ve
     let Some(target) = unpack(typmod) else {
         // Unreachable through the planner: `coerce_type_typmod` returns the value untouched for a
         // negative typmod rather than calling this. Reachable by calling the function by hand.
-        no_vocabulary()
+        no_vocabulary_typmod()
     };
     let (h, _) = value::describe(value).unwrap_or_else(|e| bail(e));
     if h.vocabulary_id == target.id && h.codec == codec_for(target) {
@@ -239,12 +310,16 @@ fn tokens_send_impl(value: &[u8]) -> Vec<u8> {
     value.to_vec()
 }
 
-/// `RECEIVE`: read the rest of the binary buffer, validate the header, store it as-is.
+/// `RECEIVE`: read the rest of the binary buffer, check it against the column, store it as-is.
+///
+/// The typmod is load-bearing here, not decoration. Nothing re-checks a received value — there is
+/// no length coercion behind `RECEIVE` — so if this hands back a value from another vocabulary or
+/// at another width, that is what lands on disk.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_recv_impl(
     mut internal: pgrx::datum::Internal,
     _oid: pg_sys::Oid,
-    _typmod: i32,
+    typmod: i32,
 ) -> Vec<u8> {
     // Safety: for a type's `RECEIVE` function Postgres passes the `StringInfo` it is reading the
     // binary wire format from, so the `internal` datum is a `StringInfoData *`.
@@ -267,6 +342,7 @@ fn tokens_recv_impl(
                 (total - cursor) as usize,
             )
         };
+        check_against_typmod(bytes, typmod);
         validate(bytes)
     };
     // Postgres reports "incorrect binary data format" unless the buffer is fully consumed.
@@ -536,7 +612,7 @@ mod tests {
         );
     }
 
-    #[pg_test(error = "pgtoken.tokens requires a vocabulary")]
+    #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
     fn a_value_without_a_vocabulary_cannot_be_read() {
         // No typmod means no length coercion, so this value stays unresolved. There is no auto
         // width to fall back to, so reading it is an error rather than a guess.
@@ -544,6 +620,19 @@ mod tests {
     }
 
     #[pg_test(error = "pgtoken.tokens requires a vocabulary")]
+    fn applying_a_negative_typmod_by_hand_errors() {
+        // The `_impl` functions stay callable from SQL (a known wart of hand-writing the type),
+        // so the length coercion has to refuse a typmod that names no vocabulary rather than
+        // trusting the planner never to pass one. This is the only reachable caller of that arm.
+        vocab("t_bare_tm", 300);
+        Spi::get_one::<Vec<u8>>(
+            "SELECT pgtoken.tokens_typmod_apply_impl(\
+               pgtoken.tokens_send('{1,2}'::pgtoken.tokens('t_bare_tm')), -1, false)",
+        )
+        .unwrap();
+    }
+
+    #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
     fn a_typmodless_column_cannot_be_read_back() {
         // The one asymmetry the two-step coercion forces: PostgreSQL accepts the DDL, and the
         // INSERT stores an unresolved value, because nothing in the write path can tell a
@@ -604,6 +693,51 @@ mod tests {
         )
         .expect("create_vocabulary");
         Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens('t_freq')::text").unwrap();
+    }
+
+    #[pg_test(error = "binary value belongs to vocabulary v_from, but the column is v_to")]
+    fn recv_refuses_a_value_from_another_vocabulary() {
+        // Nothing re-checks a received value, so RECEIVE is the last line of defence against a
+        // binary client filling a column with ids that mean different text. Both vocabularies are
+        // the same size, so the width matches and only the vocabulary differs.
+        vocab("v_from", 200019);
+        vocab("v_to", 200019);
+        Spi::run("CREATE TABLE from_t (body pgtoken.tokens('v_from'))").expect("src");
+        Spi::run("INSERT INTO from_t VALUES ('{1,2,70000}')").expect("insert");
+        Spi::run("CREATE TABLE to_t (body pgtoken.tokens('v_to'))").expect("dst");
+        Spi::run("COPY from_t TO '/tmp/pgtoken-copy-crossvocab.bin' WITH (FORMAT binary)")
+            .expect("copy out");
+        Spi::run("COPY to_t FROM '/tmp/pgtoken-copy-crossvocab.bin' WITH (FORMAT binary)").unwrap();
+    }
+
+    #[pg_test(error = "binary value is encoded raw16, but vocabulary w_to stores raw24")]
+    fn recv_refuses_a_value_at_the_wrong_width() {
+        // Right vocabulary, wrong packing. No two columns can differ this way — a vocabulary's
+        // width is fixed — so the value has to be built by hand and the COPY BINARY stream framed
+        // around it: an 11-byte signature, zeroed flags and header extension, then one tuple of
+        // one field, then the -1 trailer. A large object is the only way to write raw bytes to a
+        // file from SQL.
+        let id = Spi::get_one::<i32>("SELECT pgtoken.create_vocabulary('w_to', 200019)")
+            .expect("create failed")
+            .expect("create returned NULL");
+        Spi::run("CREATE TABLE w (body pgtoken.tokens('w_to'))").expect("create table");
+        // Creating and exporting have to be separate statements, for the same reason
+        // `vocabulary.rs`'s `create` helper splits: `lo_export` in the same statement runs under a
+        // snapshot taken before `lo_from_bytea` inserted the object, and fails to find it.
+        let loid = Spi::get_one::<String>(&format!(
+            "SELECT lo_from_bytea(0, \
+                 '\\x5047434f50590aff0d0a00'::bytea || int4send(0) || int4send(0) \
+                 || int2send(1::smallint) || int4send(length(v)) || v \
+                 || int2send((-1)::smallint))::text \
+             FROM (SELECT pgtoken.encode('{{1,2,3}}', 'raw16', {id}) AS v) s"
+        ))
+        .expect("build the COPY BINARY stream")
+        .expect("lo_from_bytea returned NULL");
+        Spi::run(&format!(
+            "SELECT lo_export({loid}, '/tmp/pgtoken-recv-wrongwidth.bin')"
+        ))
+        .expect("write the COPY BINARY stream");
+        Spi::run("COPY w FROM '/tmp/pgtoken-recv-wrongwidth.bin' WITH (FORMAT binary)").unwrap();
     }
 
     #[pg_test(error = "bad magic byte 0x00, expected 0xA7")]
