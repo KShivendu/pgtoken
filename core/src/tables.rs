@@ -79,6 +79,9 @@ pub enum TableError {
     EmptyEntry(u32),
     /// A mapping's offset array is not non-decreasing, or runs past the blob.
     BadOffsets,
+    /// The header's declared `vocab_size` is large enough that computing the offsets array
+    /// size would overflow `usize`. Only a corrupt header can claim this.
+    VocabSizeOverflow(u32),
 }
 
 impl std::fmt::Display for TableError {
@@ -119,6 +122,10 @@ impl std::fmt::Display for TableError {
             TableError::BadOffsets => {
                 write!(f, "mapping offsets are not monotonic or run past the blob")
             }
+            TableError::VocabSizeOverflow(v) => write!(
+                f,
+                "table header claims vocab_size {v}, which overflows the offsets array size"
+            ),
         }
     }
 }
@@ -373,8 +380,11 @@ impl ByteMap {
         if buf[6] != 0 || buf[7] != 0 {
             return Err(TableError::ReservedNotZero);
         }
-        let vocab_size = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]) as usize;
-        let off_bytes = (vocab_size + 1) * 4;
+        let vocab_size = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let off_bytes = (vocab_size as usize)
+            .checked_add(1)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(TableError::VocabSizeOverflow(vocab_size))?;
         let payload = &buf[TABLE_HEADER_LEN..];
         if payload.len() < off_bytes {
             return Err(TableError::PayloadLen {
@@ -555,6 +565,14 @@ mod tests {
     }
 
     #[test]
+    fn rank_table_refuses_a_byte_map_file() {
+        // The mirror of `byte_map_refuses_a_rank_table_file`: the kind byte must guard both
+        // directions, not just the one Task 1 happened to cover.
+        let map = ByteMap::build(&pairs(), 5).unwrap().to_bytes();
+        assert_eq!(RankTable::from_bytes(&map), Err(TableError::UnknownKind(2)));
+    }
+
+    #[test]
     fn digest_is_stable_and_hex_is_64_chars() {
         let bytes = RankTable::train(&corpus(), None).unwrap().to_bytes();
         assert_eq!(table_digest(&bytes), table_digest(&bytes));
@@ -628,6 +646,21 @@ mod tests {
         assert!(
             ByteMap::from_bytes(&b).is_err(),
             "offsets must be validated"
+        );
+    }
+
+    #[test]
+    fn byte_map_rejects_a_header_claiming_an_absurd_vocab_size() {
+        // A corrupt header claiming vocab_size = u32::MAX must error, not panic or attempt a
+        // huge allocation. (vocab_size + 1) * 4 only overflows `usize` on a 32-bit target, so
+        // this asserts the platform-independent guarantee -- an `Err`, never a panic -- rather
+        // than pinning the exact variant, which is `VocabSizeOverflow` on 32-bit and
+        // `PayloadLen` on 64-bit (the claimed size then simply exceeds the real buffer).
+        let mut b = ByteMap::build(&pairs(), 5).unwrap().to_bytes();
+        b[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            ByteMap::from_bytes(&b).is_err(),
+            "an absurd vocab_size must error, not panic"
         );
     }
 

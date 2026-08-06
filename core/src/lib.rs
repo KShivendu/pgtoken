@@ -11,13 +11,16 @@
 //! [`tables::RankTable`] for how that is avoided.
 //!
 //! Layering: [`header`] is the self-describing value envelope, [`codec`] the payload
-//! encodings, [`tables`] the trained frequency table, [`value`] the API most callers want.
+//! encodings, [`tables`] the trained frequency table, [`detok`] turns ids back into text,
+//! [`value`] the API most callers want.
 
 pub mod codec;
+pub mod detok;
 pub mod header;
 pub mod tables;
 pub mod value;
 
+pub use detok::{to_text, DetokError};
 pub use header::{Codec, Header, HeaderError, HEADER_LEN, MAGIC, VERSION};
 pub use tables::{ByteMap, RankTable, TableError, KIND_MAP};
 pub use value::{decode, describe, encode, recode, ValueError};
