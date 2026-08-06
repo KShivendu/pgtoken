@@ -139,11 +139,21 @@ pub fn write_map(vocabulary_id: u16, bytes: &[u8]) -> Result<PathBuf, String> {
         .create_new(true)
         .open(&path)
         .map_err(|e| {
-            format!(
-                "mapping for vocabulary {vocabulary_id} already exists at {}; stored values \
-                 reference vocabulary ids, so pick an unused id rather than replacing one: {e}",
-                path.display()
-            )
+            // `create_new` fails for plenty of reasons besides a real collision -- permission
+            // denied, a vanished parent directory, a full disk -- and only `AlreadyExists` means
+            // "pick a different id". Reporting every failure as a collision would send an
+            // operator chasing the one fix that cannot possibly help; this matters especially
+            // here, since managed PostgreSQL is exactly where permission and directory problems
+            // turn up.
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                format!(
+                    "mapping for vocabulary {vocabulary_id} already exists at {}; stored values \
+                     reference vocabulary ids, so pick an unused id rather than replacing one",
+                    path.display()
+                )
+            } else {
+                format!("cannot create mapping file {}: {e}", path.display())
+            }
         })?;
     file.write_all(bytes)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;

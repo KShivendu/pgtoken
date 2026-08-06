@@ -281,7 +281,7 @@ pub fn vocab_size_for(id: u16) -> Option<u32> {
 
 /// Report what a vocabulary declares and which optional parts are filled.
 #[pg_extern]
-#[allow(clippy::type_complexity)] // A 7-column TableIterator tuple; a type alias would just move the noise.
+#[allow(clippy::type_complexity)] // An 8-column TableIterator tuple; a type alias would just move the noise.
 fn vocabulary_info(
     name: &str,
 ) -> TableIterator<

@@ -36,10 +36,13 @@ fn load_mapping(name: &str, query: &str) -> String {
         for row in tup {
             let id: Option<i32> = row.get(1).unwrap_or_else(|e| bail(e));
             let bytes: Option<Vec<u8>> = row.get(2).unwrap_or_else(|e| bail(e));
+            // Four outcomes, not one collapsed "NULL" catch-all: a 200k-row export failing here
+            // needs to know which column was null, and the id when there is one to name.
             match (id, bytes) {
-                (Some(i), Some(b)) if i >= 0 => pairs.push((i as u32, b)),
+                (None, _) => bail("mapping rows must not have a NULL id"),
                 (Some(i), _) if i < 0 => bail(format!("token id {i} is negative")),
-                _ => bail("mapping rows must not contain NULL"),
+                (Some(i), None) => bail(format!("token id {i} has NULL bytes")),
+                (Some(i), Some(b)) => pairs.push((i as u32, b)),
             }
         }
     });
@@ -137,6 +140,34 @@ mod tests {
         Spi::run("SELECT pgtoken.create_vocabulary('m_empty', 8, id => 62005)").expect("create");
         Spi::get_one::<String>(
             "SELECT pgtoken.load_mapping('m_empty', $$SELECT 0::int, 'x'::bytea WHERE false$$)",
+        )
+        .unwrap();
+    }
+
+    #[pg_test(error = "mapping rows must not have a NULL id")]
+    fn load_mapping_rejects_a_null_id() {
+        Spi::run("SELECT pgtoken.create_vocabulary('m_null_id', 8, id => 62006)").expect("create");
+        Spi::get_one::<String>(
+            "SELECT pgtoken.load_mapping('m_null_id', $$SELECT NULL::int, 'x'::bytea$$)",
+        )
+        .unwrap();
+    }
+
+    #[pg_test(error = "token id 2 has NULL bytes")]
+    fn load_mapping_rejects_null_bytes() {
+        Spi::run("SELECT pgtoken.create_vocabulary('m_null_bytes', 8, id => 62007)")
+            .expect("create");
+        Spi::get_one::<String>(
+            "SELECT pgtoken.load_mapping('m_null_bytes', $$SELECT 2::int, NULL::bytea$$)",
+        )
+        .unwrap();
+    }
+
+    #[pg_test(error = "token id -1 is negative")]
+    fn load_mapping_rejects_a_negative_id() {
+        Spi::run("SELECT pgtoken.create_vocabulary('m_neg_id', 8, id => 62008)").expect("create");
+        Spi::get_one::<String>(
+            "SELECT pgtoken.load_mapping('m_neg_id', $$SELECT -1::int, 'x'::bytea$$)",
         )
         .unwrap();
     }
