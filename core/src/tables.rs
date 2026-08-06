@@ -42,7 +42,10 @@ pub const TABLE_MAGIC: &[u8; 4] = b"TNTT";
 pub const TABLE_VERSION: u8 = 1;
 pub const TABLE_HEADER_LEN: usize = 12;
 
+/// Artefact kinds sharing this envelope. The byte exists so that loading the wrong file into the
+/// wrong parser is an error rather than a misinterpretation.
 const KIND_RANK: u8 = 1;
+pub const KIND_MAP: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TableError {
@@ -64,6 +67,18 @@ pub enum TableError {
         id: u32,
         k: u32,
     },
+    /// A mapping supplied an id at or beyond the vocabulary's declared size.
+    IdOutsideVocabulary {
+        id: u32,
+        vocab_size: u32,
+    },
+    /// One token id was given two different byte strings.
+    DuplicateId(u32),
+    /// A token decoded to zero bytes. Rejected at build time so that an empty offset range can
+    /// only ever mean "absent" -- see [`ByteMap`].
+    EmptyEntry(u32),
+    /// A mapping's offset array is not non-decreasing, or runs past the blob.
+    BadOffsets,
 }
 
 impl std::fmt::Display for TableError {
@@ -89,6 +104,20 @@ impl std::fmt::Display for TableError {
                     f,
                     "token id {id} is too large to remap against a table of {k} ranks"
                 )
+            }
+            TableError::IdOutsideVocabulary { id, vocab_size } => write!(
+                f,
+                "token id {id} is outside the vocabulary's declared size {vocab_size}"
+            ),
+            TableError::DuplicateId(id) => {
+                write!(f, "token id {id} appears twice in the mapping")
+            }
+            TableError::EmptyEntry(id) => write!(
+                f,
+                "token id {id} decodes to zero bytes, which no real tokenizer produces"
+            ),
+            TableError::BadOffsets => {
+                write!(f, "mapping offsets are not monotonic or run past the blob")
             }
         }
     }
@@ -236,6 +265,144 @@ impl RankTable {
             token_of_rank,
             rank_of,
         })
+    }
+}
+
+/// `token_id -> bytes`, for turning stored IDs back into text.
+///
+/// A dense offset array indexed by token id: `blob[offsets[id]..offsets[id + 1]]`. Sized from the
+/// vocabulary's declared `vocab_size`, so a lookup is two loads and a slice — no parsing, no
+/// hashing, and nothing to rebuild on load. Costs 4 bytes per id in offsets, which for a 200k
+/// vocabulary is 800 KB against roughly 1.2 MB of actual bytes.
+///
+/// An id's range being empty means that id has **no entry** — [`ByteMap::get`] returns `None`,
+/// which callers must treat as a fault: it means the mapping and the stored IDs disagree about
+/// which tokenizer produced them. This is only unambiguous because [`ByteMap::build`] refuses
+/// zero-length entries outright (no real tokenizer decodes a token to zero bytes), so an empty
+/// range can never mean "supplied, but empty" — see `EmptyEntry` in [`TableError`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByteMap {
+    /// `vocab_size + 1` entries, non-decreasing.
+    offsets: Vec<u32>,
+    blob: Vec<u8>,
+}
+
+impl ByteMap {
+    pub fn build(pairs: &[(u32, Vec<u8>)], vocab_size: u32) -> Result<Self, TableError> {
+        let n = vocab_size as usize;
+        let mut owned: Vec<Option<&[u8]>> = vec![None; n];
+        for (id, bytes) in pairs {
+            if *id >= vocab_size {
+                return Err(TableError::IdOutsideVocabulary {
+                    id: *id,
+                    vocab_size,
+                });
+            }
+            if bytes.is_empty() {
+                return Err(TableError::EmptyEntry(*id));
+            }
+            let slot = &mut owned[*id as usize];
+            if slot.is_some() {
+                return Err(TableError::DuplicateId(*id));
+            }
+            *slot = Some(bytes.as_slice());
+        }
+
+        let mut offsets = Vec::with_capacity(n + 1);
+        let mut blob = Vec::new();
+        offsets.push(0u32);
+        for slot in owned {
+            if let Some(b) = slot {
+                blob.extend_from_slice(b);
+            }
+            offsets.push(blob.len() as u32);
+        }
+        Ok(ByteMap { offsets, blob })
+    }
+
+    pub fn vocab_size(&self) -> u32 {
+        (self.offsets.len() - 1) as u32
+    }
+
+    /// How many ids have an entry.
+    pub fn mapped(&self) -> u32 {
+        self.offsets.windows(2).filter(|w| w[1] > w[0]).count() as u32
+    }
+
+    pub fn get(&self, id: u32) -> Option<&[u8]> {
+        if id >= self.vocab_size() {
+            return None;
+        }
+        let i = id as usize;
+        let (start, end) = (self.offsets[i] as usize, self.offsets[i + 1] as usize);
+        if start == end {
+            return None;
+        }
+        Some(&self.blob[start..end])
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out =
+            Vec::with_capacity(TABLE_HEADER_LEN + self.offsets.len() * 4 + self.blob.len());
+        out.extend_from_slice(TABLE_MAGIC);
+        out.push(TABLE_VERSION);
+        out.push(KIND_MAP);
+        out.extend_from_slice(&[0u8, 0u8]); // reserved
+        out.extend_from_slice(&self.vocab_size().to_le_bytes());
+        debug_assert_eq!(out.len(), TABLE_HEADER_LEN);
+        for &o in &self.offsets {
+            out.extend_from_slice(&o.to_le_bytes());
+        }
+        out.extend_from_slice(&self.blob);
+        out
+    }
+
+    pub fn from_bytes(buf: &[u8]) -> Result<Self, TableError> {
+        if buf.len() < TABLE_HEADER_LEN {
+            return Err(TableError::TooShort(buf.len()));
+        }
+        if &buf[0..4] != TABLE_MAGIC {
+            return Err(TableError::BadMagic);
+        }
+        if buf[4] != TABLE_VERSION {
+            return Err(TableError::UnsupportedVersion(buf[4]));
+        }
+        if buf[5] != KIND_MAP {
+            return Err(TableError::UnknownKind(buf[5]));
+        }
+        if buf[6] != 0 || buf[7] != 0 {
+            return Err(TableError::ReservedNotZero);
+        }
+        let vocab_size = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]) as usize;
+        let off_bytes = (vocab_size + 1) * 4;
+        let payload = &buf[TABLE_HEADER_LEN..];
+        if payload.len() < off_bytes {
+            return Err(TableError::PayloadLen {
+                want: off_bytes,
+                got: payload.len(),
+            });
+        }
+        let offsets: Vec<u32> = payload[..off_bytes]
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let blob = payload[off_bytes..].to_vec();
+
+        // Validate rather than trust: a reversed or overrunning offset would panic on slice, and
+        // this buffer came off disk.
+        if offsets[0] != 0 {
+            return Err(TableError::BadOffsets);
+        }
+        for w in offsets.windows(2) {
+            if w[1] < w[0] {
+                return Err(TableError::BadOffsets);
+            }
+        }
+        if *offsets.last().unwrap() as usize != blob.len() {
+            return Err(TableError::BadOffsets);
+        }
+
+        Ok(ByteMap { offsets, blob })
     }
 }
 
@@ -392,5 +559,82 @@ mod tests {
         let bytes = RankTable::train(&corpus(), None).unwrap().to_bytes();
         assert_eq!(table_digest(&bytes), table_digest(&bytes));
         assert_eq!(digest_hex(&table_digest(&bytes)).len(), 64);
+    }
+
+    fn pairs() -> Vec<(u32, Vec<u8>)> {
+        vec![
+            (0, b"!".to_vec()),
+            (1, b" the".to_vec()),
+            (3, b"Hello".to_vec()),
+        ]
+    }
+
+    #[test]
+    fn byte_map_roundtrips_through_bytes() {
+        let m = ByteMap::build(&pairs(), 5).expect("build");
+        let back = ByteMap::from_bytes(&m.to_bytes()).expect("from_bytes");
+        assert_eq!(back.get(0), Some(&b"!"[..]));
+        assert_eq!(back.get(1), Some(&b" the"[..]));
+        assert_eq!(back.get(3), Some(&b"Hello"[..]));
+        assert_eq!(back.vocab_size(), 5);
+    }
+
+    #[test]
+    fn byte_map_distinguishes_absent_from_empty() {
+        // id 2 was never supplied. No real tokenizer decodes a token to zero bytes, so `build`
+        // refuses a zero-length entry outright -- that keeps "empty range" an unambiguous
+        // synonym for "absent" once the mapping has round-tripped through bytes.
+        let mut p = pairs();
+        p.push((4, Vec::new()));
+        let err = ByteMap::build(&p, 5);
+        assert!(err.is_err(), "a zero-length entry must be rejected");
+
+        let m = ByteMap::build(&pairs(), 5).expect("build");
+        assert_eq!(m.get(2), None, "never supplied");
+    }
+
+    #[test]
+    fn byte_map_reports_how_many_ids_it_covers() {
+        let m = ByteMap::build(&pairs(), 5).expect("build");
+        assert_eq!(m.mapped(), 3);
+        assert_eq!(m.vocab_size(), 5);
+    }
+
+    #[test]
+    fn byte_map_rejects_an_id_outside_the_declared_space() {
+        let err = ByteMap::build(&[(9, b"x".to_vec())], 5);
+        assert!(err.is_err(), "id 9 is outside vocab_size 5");
+    }
+
+    #[test]
+    fn byte_map_rejects_a_duplicate_id() {
+        let err = ByteMap::build(&[(1, b"a".to_vec()), (1, b"b".to_vec())], 5);
+        assert!(err.is_err(), "one id cannot have two byte strings");
+    }
+
+    #[test]
+    fn byte_map_refuses_a_rank_table_file() {
+        // The kind byte exists so the wrong artefact cannot be parsed as this one.
+        let rank = RankTable::train(&[1, 1, 2], None).unwrap().to_bytes();
+        assert_eq!(ByteMap::from_bytes(&rank), Err(TableError::UnknownKind(1)));
+    }
+
+    #[test]
+    fn byte_map_rejects_non_monotonic_offsets() {
+        // A hand-corrupted file must not produce a reversed slice range and panic.
+        let mut b = ByteMap::build(&pairs(), 5).unwrap().to_bytes();
+        let off1 = TABLE_HEADER_LEN + 4;
+        b[off1..off1 + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            ByteMap::from_bytes(&b).is_err(),
+            "offsets must be validated"
+        );
+    }
+
+    #[test]
+    fn byte_map_handles_an_empty_mapping() {
+        let m = ByteMap::build(&[], 3).expect("build");
+        assert_eq!(m.mapped(), 0);
+        assert_eq!(m.get(0), None);
     }
 }

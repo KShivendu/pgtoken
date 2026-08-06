@@ -19,5 +19,5 @@ pub mod tables;
 pub mod value;
 
 pub use header::{Codec, Header, HeaderError, HEADER_LEN, MAGIC, VERSION};
-pub use tables::{RankTable, TableError};
+pub use tables::{ByteMap, RankTable, TableError, KIND_MAP};
 pub use value::{decode, describe, encode, recode, ValueError};
