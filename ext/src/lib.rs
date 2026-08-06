@@ -350,6 +350,10 @@ mod tests {
                                               id => 61005)",
         )
         .expect("create");
+        // pgrx does not guarantee test order, so this cannot assume some `train` test already
+        // created the directory via `registry::write_table`'s `create_dir_all` -- it has to create
+        // it itself, the same way, to be independent of what ran before it in this run.
+        std::fs::create_dir_all("/tmp/pgtoken-pgrx-test-tables").expect("create the table dir");
         std::fs::write(
             "/tmp/pgtoken-pgrx-test-tables/61005.tntt",
             b"not a real coding table, just junk bytes",
