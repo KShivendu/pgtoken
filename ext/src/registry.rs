@@ -3,9 +3,10 @@
 //! A value's header names its coding table by a small `vocabulary_id`, which this module
 //! resolves to `$pgtoken.table_dir/<vocabulary_id>.tntt`. Resolution is by filesystem
 //! convention rather than through a SQL catalog on purpose: a catalog lookup would need SPI on
-//! every decode, which would make `pgtoken.decode` neither `IMMUTABLE` nor `PARALLEL SAFE`. As
-//! it stands, decoding depends only on the value's bytes and an append-only file, so declaring
-//! it `IMMUTABLE` is honest.
+//! every read, which would make `pgtoken.tokens`'s read paths — `tokens_out`, `tokens_send`, and
+//! the `int[]`/`bytea` casts — neither `IMMUTABLE` nor `PARALLEL SAFE`. As it stands, reading a
+//! value depends only on its bytes and an append-only file, so declaring those functions
+//! `IMMUTABLE` is honest.
 //!
 //! Files are mmap'd read-only, so their pages are shared across every backend through the OS
 //! page cache instead of being duplicated per connection. The parsed form is cached per

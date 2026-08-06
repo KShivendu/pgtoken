@@ -15,9 +15,9 @@ Validated against the extension by `test_client.py`, which round-trips both dire
 off  size  field
   0     1  magic 0xA7
   1     1  version (1)
-  2     1  codec  0=raw16 1=raw24 2=freq
+  2     1  codec  0=raw16 1=raw24 2=freq 3=raw8
   3     1  reserved
-  4     2  table id (u16 LE)
+  4     2  vocabulary id (u16 LE)
   6     2  reserved
   8     4  token count (u32 LE)
  12     -  payload
@@ -44,8 +44,8 @@ MAGIC = 0xA7
 VERSION = 1
 HEADER_LEN = 12
 
-RAW16, RAW24, FREQ = 0, 1, 2
-CODEC_NAMES = {RAW16: "raw16", RAW24: "raw24", FREQ: "freq"}
+RAW16, RAW24, FREQ, RAW8 = 0, 1, 2, 3
+CODEC_NAMES = {RAW16: "raw16", RAW24: "raw24", FREQ: "freq", RAW8: "raw8"}
 CODEC_IDS = {v: k for k, v in CODEC_NAMES.items()}
 
 _POW256 = np.array([1, 256, 65536, 16777216], dtype=np.uint64)
@@ -150,7 +150,7 @@ def svb_decode(payload: bytes, n: int) -> np.ndarray:
 
 
 def parse_header(blob: bytes) -> tuple[int, int, int]:
-    """Return (codec, table_id, n_tokens). Validates like the extension does."""
+    """Return (codec, vocabulary_id, n_tokens). Validates like the extension does."""
     if len(blob) < HEADER_LEN:
         raise ValueError(f"value is {len(blob)} bytes, shorter than the {HEADER_LEN}-byte header")
     if blob[0] != MAGIC:
@@ -170,15 +170,22 @@ def token_count(blob: bytes) -> int:
     return parse_header(blob)[2]
 
 
-def encode(ids, codec: str = "raw", table_id: int = 0, table: RankTable | None = None) -> bytes:
+def encode(ids, codec: str, vocabulary_id: int = 0, table: RankTable | None = None) -> bytes:
+    """Encode `ids` under `codec`.
+
+    `codec` is never guessed here: a vocabulary's declared `vocab_size` is what picks a width on
+    the extension side, and this client only ever mirrors that choice, never makes its own.
+    """
     v = np.asarray(ids, dtype=np.uint32)
-    if codec == "raw":
-        codec = "raw16" if (len(v) == 0 or v.max() <= 0xFFFF) else "raw24"
     cid = CODEC_IDS[codec]
 
-    head = bytes([MAGIC, VERSION, cid, 0]) + table_id.to_bytes(2, "little") + b"\x00\x00"
+    head = bytes([MAGIC, VERSION, cid, 0]) + vocabulary_id.to_bytes(2, "little") + b"\x00\x00"
     head += len(v).to_bytes(4, "little")
 
+    if cid == RAW8:
+        if len(v) and v.max() > 0xFF:
+            raise ValueError(f"token id {v.max()} does not fit raw8")
+        return head + v.astype(np.uint8).tobytes()
     if cid == RAW16:
         if len(v) and v.max() > 0xFFFF:
             raise ValueError(f"token id {v.max()} does not fit raw16")
@@ -197,8 +204,10 @@ def encode(ids, codec: str = "raw", table_id: int = 0, table: RankTable | None =
 
 
 def decode(blob: bytes, table: RankTable | None = None) -> np.ndarray:
-    codec, _table_id, n = parse_header(blob)
+    codec, _vocabulary_id, n = parse_header(blob)
     payload = blob[HEADER_LEN:]
+    if codec == RAW8:
+        return np.frombuffer(payload, dtype=np.uint8, count=n).astype(np.uint32)
     if codec == RAW16:
         return np.frombuffer(payload, dtype="<u2", count=n).astype(np.uint32)
     if codec == RAW24:

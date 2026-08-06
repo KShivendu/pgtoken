@@ -39,18 +39,18 @@ use registry::bail;
 
 pgrx::pg_module_magic!();
 
-/// Directory holding `<table_id>.tntt` coding tables.
+/// Directory holding `<vocabulary_id>.tntt` coding tables.
 static TABLE_DIR: GucSetting<Option<CString>> = GucSetting::<Option<CString>>::new(None);
 
 #[pg_guard]
 pub extern "C-unwind" fn _PG_init() {
     GucRegistry::define_string_guc(
         c"pgtoken.table_dir",
-        c"Directory holding <table_id>.tntt coding tables.",
-        c"Resolved by filesystem convention rather than a SQL catalog, so decoding a value \
-          needs no SPI and pgtoken.decode can honestly be IMMUTABLE and PARALLEL SAFE. \
-          SIGHUP-scoped for the same reason: if a session could repoint it, two sessions could \
-          decode one value differently.",
+        c"Directory holding <vocabulary_id>.tntt coding tables.",
+        c"Resolved by filesystem convention rather than a SQL catalog, so reading a value \
+          needs no SPI and pgtoken.tokens's read paths can honestly stay IMMUTABLE and \
+          PARALLEL SAFE. SIGHUP-scoped for the same reason: if a session could repoint it, two \
+          sessions could decode one value differently.",
         &TABLE_DIR,
         GucContext::Sighup,
         GucFlags::default(),
@@ -63,11 +63,6 @@ fn guc_str(g: &GucSetting<Option<CString>>, default: &str) -> String {
     g.get()
         .and_then(|c| c.into_string().ok())
         .unwrap_or_else(|| default.to_string())
-}
-
-fn vocabulary_id_u16(id: i32) -> u16 {
-    u16::try_from(id)
-        .unwrap_or_else(|_| bail(format!("vocabulary_id {id} is out of range (0..65535)")))
 }
 
 // ── inspect (header only, O(1), loads no table) ──────────────────────────────────────
@@ -123,20 +118,18 @@ CREATE FUNCTION pgtoken.describe(pgtoken.tokens)
 
 // ── coding tables ────────────────────────────────────────────────────────────────────
 
-/// Train a frequency table from a query returning `int[]` of token IDs, and store it as
-/// `table_id`.
+/// Train a frequency ranking from a query returning `int[]`, and attach it to a vocabulary.
 ///
-/// The table holds only the tokens the query actually contained, so nothing needs to declare a
-/// vocabulary size. Tokens it never saw still encode losslessly, just a little wider.
-#[pg_extern(strict)]
-fn train(table_id: i32, query: &str) -> String {
-    train_capped(table_id, query, -1)
-}
-
-/// As [`train`], with a cap on how many tokens get ranked. `-1` means no cap.
+/// The ranking holds only the tokens the query actually contained, so unseen IDs still encode
+/// losslessly, just a little wider. Write-once: stored payloads reference ranks and `decode` is
+/// `IMMUTABLE`, so replacing one would change what existing rows mean.
 #[pg_extern(strict, name = "train")]
-fn train_capped(table_id: i32, query: &str, max_ranks: i32) -> String {
-    let tid = vocabulary_id_u16(table_id);
+fn train(name: &str, query: &str, max_ranks: default!(i32, -1)) -> String {
+    let v = vocabulary::lookup_by_name(name)
+        .unwrap_or_else(|| bail(format!("vocabulary {name:?} does not exist")));
+    if registry::table_path(v.id).exists() {
+        bail(format!("vocabulary {name} already has a ranking"));
+    }
     let cap = if max_ranks < 0 {
         None
     } else {
@@ -153,8 +146,8 @@ fn train_capped(table_id: i32, query: &str, max_ranks: i32) -> String {
                 ids.extend(
                     arr.into_iter()
                         .flatten()
-                        .filter(|&v| v >= 0)
-                        .map(|v| v as u32),
+                        .filter(|&x| x >= 0)
+                        .map(|x| x as u32),
                 );
                 rows += 1;
             }
@@ -166,52 +159,17 @@ fn train_capped(table_id: i32, query: &str, max_ranks: i32) -> String {
 
     let table = RankTable::train(&ids, cap).unwrap_or_else(|e| bail(e));
     let k = table.k();
-    let path = registry::write_table(tid, &table.to_bytes()).unwrap_or_else(|e| bail(e));
+    registry::write_table(v.id, &table.to_bytes()).unwrap_or_else(|e| bail(e));
     format!(
-        "trained table {tid} on {rows} rows / {} tokens, {k} ranked -> {}",
-        ids.len(),
-        path.display()
+        "trained vocabulary {name} on {rows} rows / {} tokens, {k} ranked",
+        ids.len()
     )
-}
-
-/// Report what a coding table contains.
-#[pg_extern(strict)]
-fn table_info(
-    table_id: i32,
-) -> TableIterator<
-    'static,
-    (
-        name!(ranked_tokens, i32),
-        name!(sha256, String),
-        name!(file_bytes, i64),
-    ),
-> {
-    let (k, digest, len) =
-        registry::describe_table(vocabulary_id_u16(table_id)).unwrap_or_else(|e| bail(e));
-    TableIterator::once((k as i32, digest, len as i64))
 }
 
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
     use pgrx::prelude::*;
-
-    /// Train a coding table if it is not already there.
-    ///
-    /// Coding tables are files and `train` deliberately refuses to overwrite one, so a test
-    /// that trains unconditionally passes once and fails on every re-run. Each test below owns
-    /// a fixed id with fixed training data, so the file's contents are the same either way;
-    /// this just makes getting there idempotent. The PL/pgSQL block's subtransaction is what
-    /// lets the error be swallowed without poisoning the test's transaction.
-    fn ensure_table(table_id: i32, corpus_sql: &str) {
-        Spi::run(&format!(
-            "DO $ensure$ BEGIN \
-               PERFORM pgtoken.train({table_id}, $corpus${corpus_sql}$corpus$); \
-             EXCEPTION WHEN OTHERS THEN NULL; \
-             END $ensure$"
-        ))
-        .expect("ensure_table");
-    }
 
     #[pg_test]
     fn the_storage_policy_gucs_are_gone() {
@@ -244,37 +202,162 @@ mod tests {
     }
 
     #[pg_test]
-    fn train_refuses_to_overwrite() {
-        // Stored values reference table ids and `decode` is IMMUTABLE, so replacing a table
-        // would change what existing rows mean. Deliberately not idempotent.
-        //
-        // Checked through a PL/pgSQL exception block rather than `#[pg_test(error = ...)]`:
-        // the message names a path that differs per machine, and the block's subtransaction
-        // lets the test survive the error and carry on asserting.
-        const TID: i32 = 1005;
-        ensure_table(TID, "SELECT ARRAY[1,2]::int[]");
+    fn train_takes_a_vocabulary_name() {
+        // A pinned id, not the default auto-assignment: every test in this module that trains
+        // shares one Postgres cluster and one `pgtoken.table_dir`, and each test's catalog insert
+        // rolls back while the `.tntt` file it wrote does not. Two tests that both auto-assigned
+        // id 1 would silently race for the same file, so every trained vocabulary here gets its
+        // own id, disjoint from the others and from `tokens.rs`'s reserved 60001/60002.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('tr1', 200019, compression => 'freq', \
+                                              id => 61001)",
+        )
+        .expect("create");
+        Spi::run(
+            "SELECT pgtoken.train('tr1', \
+               $$SELECT ARRAY[7,7,7,7,3,3,199999]::int[] FROM generate_series(1,40)$$)",
+        )
+        .expect("train");
+        let ranked = Spi::get_one::<i32>("SELECT ranked FROM pgtoken.vocabulary_info('tr1')")
+            .expect("query failed");
+        assert_eq!(ranked, Some(3), "only the three distinct tokens are ranked");
 
         Spi::run(
-            "CREATE FUNCTION train_is_refused(tid int, q text) RETURNS bool AS $fn$
-             BEGIN
-               PERFORM pgtoken.train(tid, q);
-               RETURN false;
-             EXCEPTION WHEN OTHERS THEN
-               RETURN true;
-             END
-             $fn$ LANGUAGE plpgsql",
+            "CREATE TABLE tr1_docs (body tokens.tr1); \
+             INSERT INTO tr1_docs (body) VALUES ('{7,3,199999}');",
         )
-        .expect("helper");
+        .expect("insert");
+        let got =
+            Spi::get_one::<Vec<i32>>("SELECT body::int[] FROM tr1_docs").expect("query failed");
+        assert_eq!(got, Some(vec![7, 3, 199999]));
+    }
 
-        let refused = Spi::get_one::<bool>(&format!(
-            "SELECT train_is_refused({TID}, $$SELECT ARRAY[1,2]::int[]$$)"
-        ))
+    #[pg_test]
+    fn freq_roundtrips_ids_the_ranking_never_saw() {
+        // The sparse ranking's whole point: an unseen id must still come back exactly.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('tr2', 200019, compression => 'freq', \
+                                              id => 61002); \
+             SELECT pgtoken.train('tr2', \
+               $$SELECT ARRAY[1,1,1,2]::int[] FROM generate_series(1,20)$$);",
+        )
+        .expect("setup");
+        let got = Spi::get_one::<Vec<i32>>("SELECT '{1,2,199999,0}'::pgtoken.tokens('tr2')::int[]")
+            .expect("query failed");
+        assert_eq!(got, Some(vec![1, 2, 199999, 0]));
+    }
+
+    #[pg_test]
+    fn freq_beats_raw_on_a_skewed_stream() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('sk_raw', 200019); \
+             SELECT pgtoken.create_vocabulary('sk_freq', 200019, compression => 'freq', \
+                                              id => 61003); \
+             SELECT pgtoken.train('sk_freq', \
+               $$SELECT array_agg(199999)::int[] FROM generate_series(1,64)$$);",
+        )
+        .expect("setup");
+        let (raw, freq) = Spi::get_two::<i32, i32>(
+            "SELECT length(a::pgtoken.tokens('sk_raw')::bytea), \
+                    length(a::pgtoken.tokens('sk_freq')::bytea) \
+             FROM (SELECT array_agg(199999)::int[] AS a FROM generate_series(1,512)) s",
+        )
         .expect("query failed");
-        assert_eq!(
-            refused,
-            Some(true),
-            "a second train on the same id must be refused"
+        let (raw, freq) = (raw.unwrap(), freq.unwrap());
+        assert!(
+            freq < raw,
+            "freq ({freq} B) should beat raw ({raw} B) on a skewed stream"
         );
+    }
+
+    #[pg_test]
+    fn describe_reports_the_width_the_vocabulary_chose() {
+        Spi::run("SELECT pgtoken.create_vocabulary('d_small', 256)").expect("create");
+        let codec = Spi::get_one::<String>(
+            "SELECT codec FROM pgtoken.describe('{1,2,3}'::pgtoken.tokens('d_small'))",
+        )
+        .expect("query failed");
+        assert_eq!(codec, Some("raw8".to_string()));
+    }
+
+    #[pg_test]
+    fn token_count_reads_only_the_header() {
+        Spi::run("SELECT pgtoken.create_vocabulary('tc', 60000)").expect("create");
+        let (n, total) = Spi::get_two::<i32, i32>(
+            "SELECT pgtoken.token_count(v), length(v::bytea) \
+             FROM (SELECT '{1,2,3}'::pgtoken.tokens('tc') AS v) s",
+        )
+        .expect("query failed");
+        assert_eq!(n, Some(3));
+        assert_eq!(total, Some(12 + 6), "12-byte header plus 2 bytes per token");
+    }
+
+    #[pg_test]
+    fn encoding_is_canonical_in_sql() {
+        // Equality, GROUP BY and hash joins on a tokens column are only correct if identical input
+        // gives identical bytes.
+        //
+        // `pgtoken.tokens_eq` and its `=` operator live in the `pgtoken` schema, like every
+        // other object here, and this suite deliberately never puts `pgtoken` on search_path
+        // (see e.g. `column_type_shows_the_vocabulary_name`, which pins `format_type` rendering
+        // the schema prefix). `OPERATOR(pgtoken.=)` reaches the operator by schema regardless of
+        // search_path, the same way every function call here is schema-qualified.
+        Spi::run("SELECT pgtoken.create_vocabulary('canon', 60000)").expect("create");
+        let same = Spi::get_one::<bool>(
+            "SELECT '{5,9,5,1}'::pgtoken.tokens('canon') \
+               OPERATOR(pgtoken.=) '{5,9,5,1}'::pgtoken.tokens('canon')",
+        )
+        .expect("query failed");
+        assert_eq!(same, Some(true));
+    }
+
+    #[pg_test]
+    fn text_output_round_trips_to_identical_bytes() {
+        // The property that makes rendering token IDs rather than hex safe for pg_dump.
+        Spi::run("SELECT pgtoken.create_vocabulary('dump', 60000)").expect("create");
+        let same = Spi::get_one::<bool>(
+            "SELECT v::bytea = (v::text)::pgtoken.tokens('dump')::bytea \
+             FROM (SELECT ('{' || string_agg((i % 60000)::text, ',') || '}') \
+                            ::pgtoken.tokens('dump') AS v \
+                   FROM generate_series(1,512) i) s",
+        )
+        .expect("query failed");
+        assert_eq!(same, Some(true));
+    }
+
+    #[pg_test]
+    fn vocabulary_info_reports_an_unfilled_ranking_as_null() {
+        Spi::run("SELECT pgtoken.create_vocabulary('vi_bare', 300, compression => 'freq')")
+            .expect("create");
+        let ranked = Spi::get_one::<i32>("SELECT ranked FROM pgtoken.vocabulary_info('vi_bare')")
+            .expect("query failed");
+        assert_eq!(ranked, None, "an unfilled part is NULL, not an error");
+    }
+
+    #[pg_test(error = "value is 1 bytes, shorter than the 12-byte header")]
+    fn rejects_a_truncated_value() {
+        Spi::get_one::<Vec<i32>>("SELECT '\\x00'::bytea::pgtoken.tokens::int[]").unwrap();
+    }
+
+    #[pg_test(error = "vocabulary tr_untrained has no ranking; run pgtoken.train first")]
+    fn freq_errors_before_train() {
+        Spi::run("SELECT pgtoken.create_vocabulary('tr_untrained', 300, compression => 'freq')")
+            .expect("create");
+        Spi::get_one::<Vec<i32>>("SELECT '{1,2}'::pgtoken.tokens('tr_untrained')::int[]").unwrap();
+    }
+
+    #[pg_test(error = "vocabulary tr_once already has a ranking")]
+    fn train_refuses_to_replace_a_ranking() {
+        // Stored payloads reference ranks and decode is IMMUTABLE, so replacing a ranking would
+        // change what existing rows mean.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('tr_once', 300, compression => 'freq', \
+                                              id => 61004); \
+             SELECT pgtoken.train('tr_once', $$SELECT ARRAY[1,2]::int[]$$);",
+        )
+        .expect("setup");
+        Spi::get_one::<String>("SELECT pgtoken.train('tr_once', $$SELECT ARRAY[1,2]::int[]$$)")
+            .unwrap();
     }
 }
 

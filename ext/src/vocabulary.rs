@@ -69,9 +69,8 @@ fn compression_code(name: &str) -> u8 {
     }
 }
 
-// Task 8's `vocabulary_info` is the only caller; kept here beside `compression_code` so the two
-// directions of the mapping stay adjacent and cannot drift apart.
-#[allow(dead_code)]
+// `vocabulary_info`'s only caller; kept here beside `compression_code` so the two directions of
+// the mapping stay adjacent and cannot drift apart.
 fn compression_name(code: u8) -> &'static str {
     if code == COMPRESSION_FREQ {
         "freq"
@@ -277,6 +276,46 @@ pub fn vocab_size_for(id: u16) -> Option<u32> {
             .ok()?
             .map(|v| v as u32)
     })
+}
+
+/// Report what a vocabulary declares and which optional parts are filled.
+#[pg_extern]
+#[allow(clippy::type_complexity)] // A 7-column TableIterator tuple; a type alias would just move the noise.
+fn vocabulary_info(
+    name: &str,
+) -> TableIterator<
+    'static,
+    (
+        name!(id, i32),
+        name!(vocab_size, i32),
+        name!(compression, String),
+        name!(width, i32),
+        name!(ranked, Option<i32>),
+        name!(sha256, Option<String>),
+        name!(file_bytes, Option<i64>),
+    ),
+> {
+    let v =
+        lookup_by_name(name).unwrap_or_else(|| bail(format!("vocabulary {name:?} does not exist")));
+    let size = vocab_size_for(v.id)
+        .unwrap_or_else(|| bail(format!("vocabulary {name:?} has no catalog row")));
+
+    // An unfilled ranking is a normal state, not a fault, so a missing file becomes NULLs
+    // rather than an error.
+    let (ranked, sha256, file_bytes) = match crate::registry::describe_table(v.id) {
+        Ok((k, digest, len)) => (Some(k as i32), Some(digest), Some(len as i64)),
+        Err(_) => (None, None, None),
+    };
+
+    TableIterator::once((
+        v.id as i32,
+        size as i32,
+        compression_name(v.compression).to_string(),
+        v.width as i32,
+        ranked,
+        sha256,
+        file_bytes,
+    ))
 }
 
 #[cfg(any(test, feature = "pg_test"))]
