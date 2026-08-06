@@ -56,6 +56,19 @@ pub fn encode24(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     Ok(())
 }
 
+/// 1 byte/id. IDs must fit in `u8`.
+pub fn encode8(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
+    out.reserve(ids.len());
+    for &id in ids {
+        let b = u8::try_from(id).map_err(|_| RawError::IdTooWide {
+            id,
+            codec: Codec::Raw8,
+        })?;
+        out.push(b);
+    }
+    Ok(())
+}
+
 /// Decode a `raw16` payload. `Header::parse` has already checked the length.
 pub fn decode16(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
     if payload.len() != n * 2 {
@@ -68,6 +81,17 @@ pub fn decode16(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
         .chunks_exact(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]) as u32)
         .collect())
+}
+
+/// Decode a `raw8` payload.
+pub fn decode8(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
+    if payload.len() != n {
+        return Err(HeaderError::PayloadLen {
+            want: n,
+            got: payload.len(),
+        });
+    }
+    Ok(payload.iter().map(|&b| b as u32).collect())
 }
 
 /// Decode a `raw24` payload.
@@ -152,5 +176,34 @@ mod tests {
     fn decode_rejects_wrong_length() {
         assert!(decode16(&[0, 0, 0], 1).is_err());
         assert!(decode24(&[0, 0], 1).is_err());
+    }
+
+    #[test]
+    fn raw8_roundtrips() {
+        let ids: Vec<u32> = vec![0, 1, 127, 255];
+        let mut out = Vec::new();
+        encode8(&ids, &mut out).expect("encode8");
+        assert_eq!(out.len(), 4, "one byte per token");
+        assert_eq!(decode8(&out, ids.len()).expect("decode8"), ids);
+    }
+
+    #[test]
+    fn raw8_rejects_ids_it_cannot_represent() {
+        let mut out = Vec::new();
+        assert_eq!(
+            encode8(&[256], &mut out),
+            Err(RawError::IdTooWide {
+                id: 256,
+                codec: Codec::Raw8
+            })
+        );
+    }
+
+    #[test]
+    fn raw8_handles_the_empty_sequence() {
+        let mut out = Vec::new();
+        encode8(&[], &mut out).expect("encode8 empty");
+        assert!(out.is_empty());
+        assert_eq!(decode8(&out, 0).expect("decode8 empty"), Vec::<u32>::new());
     }
 }

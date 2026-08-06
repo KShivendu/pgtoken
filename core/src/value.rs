@@ -73,6 +73,7 @@ pub fn encode(
     Header::new(codec, vocabulary_id, n_tokens).write_to(&mut out);
 
     match codec {
+        Codec::Raw8 => raw::encode8(ids, &mut out)?,
         Codec::Raw16 => raw::encode16(ids, &mut out)?,
         Codec::Raw24 => raw::encode24(ids, &mut out)?,
         Codec::Freq => {
@@ -88,6 +89,7 @@ pub fn decode(value: &[u8], table: Option<&RankTable>) -> Result<Vec<u32>, Value
     let (h, payload) = Header::parse(value)?;
     let n = h.n_tokens as usize;
     Ok(match h.codec {
+        Codec::Raw8 => raw::decode8(payload, n)?,
         Codec::Raw16 => raw::decode16(payload, n)?,
         Codec::Raw24 => raw::decode24(payload, n)?,
         Codec::Freq => {
@@ -139,6 +141,9 @@ mod tests {
         let mut v = vec![Codec::Raw24, Codec::Freq];
         if ids.iter().all(|&i| i <= u16::MAX as u32) {
             v.push(Codec::Raw16);
+        }
+        if ids.iter().all(|&i| i <= u8::MAX as u32) {
+            v.push(Codec::Raw8);
         }
         v
     }
@@ -228,6 +233,13 @@ mod tests {
         let v = encode(&[], Codec::Raw24, 0, None).unwrap();
         assert_eq!(v.len(), HEADER_LEN);
         assert_eq!(decode(&v, None).unwrap(), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn raw8_roundtrips_through_a_value() {
+        let v = encode(&[0, 7, 255], Codec::Raw8, 0, None).expect("encode");
+        assert_eq!(v.len(), HEADER_LEN + 3);
+        assert_eq!(decode(&v, None).unwrap(), vec![0, 7, 255]);
     }
 
     #[test]

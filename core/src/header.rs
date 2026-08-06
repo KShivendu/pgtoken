@@ -9,7 +9,7 @@
 //! off  size  field
 //!   0     1  magic 0xA7
 //!   1     1  format version (1)
-//!   2     1  codec id  0=raw16 1=raw24 2=freq
+//!   2     1  codec id  0=raw16 1=raw24 2=freq 3=raw8
 //!   3     1  reserved, must be zero
 //!   4     2  vocabulary id (u16 LE; 0 = none)
 //!   6     2  reserved, must be zero
@@ -36,6 +36,8 @@ pub enum Codec {
     Raw24 = 1,
     /// Frequency-rank remap, then streamvbyte.
     Freq = 2,
+    /// 1 byte/id. IDs must fit in `u8`.
+    Raw8 = 3,
 }
 
 impl Codec {
@@ -44,6 +46,7 @@ impl Codec {
             0 => Ok(Codec::Raw16),
             1 => Ok(Codec::Raw24),
             2 => Ok(Codec::Freq),
+            3 => Ok(Codec::Raw8),
             _ => Err(HeaderError::UnknownCodec(v)),
         }
     }
@@ -60,6 +63,7 @@ impl Codec {
             Codec::Raw16 => Some(u16::MAX as u32),
             Codec::Raw24 => Some(0x00FF_FFFF),
             Codec::Freq => None,
+            Codec::Raw8 => Some(u8::MAX as u32),
         }
     }
 
@@ -68,6 +72,7 @@ impl Codec {
             Codec::Raw16 => "raw16",
             Codec::Raw24 => "raw24",
             Codec::Freq => "freq",
+            Codec::Raw8 => "raw8",
         }
     }
 
@@ -78,6 +83,7 @@ impl Codec {
             "raw16" => Ok(Codec::Raw16),
             "raw24" => Ok(Codec::Raw24),
             "freq" => Ok(Codec::Freq),
+            "raw8" => Ok(Codec::Raw8),
             _ => Err(HeaderError::UnknownCodecName(s.to_owned())),
         }
     }
@@ -155,6 +161,7 @@ impl Header {
         // The raw codecs have an exact expected length, so a truncated or padded payload is
         // caught here rather than producing a short read downstream.
         let expected = match codec {
+            Codec::Raw8 => Some(n_tokens as usize),
             Codec::Raw16 => Some(n_tokens as usize * 2),
             Codec::Raw24 => Some(n_tokens as usize * 3),
             Codec::Freq => None,
@@ -370,10 +377,7 @@ mod tests {
         assert_eq!(Codec::Raw16.max_id(), Some(65_535));
         assert_eq!(Codec::Raw24.max_id(), Some(16_777_215));
         assert_eq!(Codec::Freq.max_id(), None);
-        assert_eq!(
-            Codec::from_u8(3),
-            Err(HeaderError::UnknownCodec(3)),
-            "ANS was removed"
-        );
+        assert_eq!(Codec::Raw8.max_id(), Some(255));
+        assert_eq!(Codec::from_u8(4), Err(HeaderError::UnknownCodec(4)));
     }
 }
