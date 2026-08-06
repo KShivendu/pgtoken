@@ -78,9 +78,7 @@ pub fn rank_table(vocabulary_id: u16) -> Result<Rc<RankTable>, String> {
 /// Cached and never invalidated, on the same contract as the ranking: the file is write-once, so
 /// a changed mapping is a new vocabulary.
 ///
-/// Unused for now: this task only loads and stores mappings. `pgtoken.text`, the follow-up task
-/// that reads them back, is `byte_map`'s only caller.
-#[allow(dead_code)]
+/// `pgtoken.text` is the only caller: it reads a mapping back to detokenize a stored value.
 pub fn byte_map(vocabulary_id: u16) -> Result<Rc<ByteMap>, String> {
     if let Some(hit) = MAP_CACHE.with(|c| c.borrow().get(&vocabulary_id).cloned()) {
         return Ok(hit);

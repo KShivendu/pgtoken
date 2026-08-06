@@ -69,7 +69,7 @@ use pgrx::prelude::*;
 use pgtoken_core::header::Codec;
 use pgtoken_core::value;
 
-use crate::registry::{bail, rank_table, table_path};
+use crate::registry::{bail, byte_map, map_path, rank_table, table_path};
 use crate::typmod::{codec_for, unpack};
 use crate::vocabulary::{name_for_id, vocab_size_for, MAX_VOCAB_SIZE};
 
@@ -238,9 +238,9 @@ fn encode_unresolved(ids: &[u32]) -> Vec<u8> {
 /// The four value-returning paths — text output, binary output (`SEND`) and both receive paths
 /// (`RECEIVE`, `tokens_recv_bytes`) — call this, directly or via [`validate`], so an unresolved
 /// value can be written but never read back through them. The `int[]` and `bytea` output casts in
-/// `casts.rs` call it too, for the same reason. `pgtoken.token_count` and `pgtoken.describe`
-/// deliberately do not: they are diagnostics, and refusing to describe an unresolved value would
-/// remove the only way to see that it *is* unresolved.
+/// `casts.rs`, and `pgtoken.text` below, call it too, for the same reason. `pgtoken.token_count`
+/// and `pgtoken.describe` deliberately do not: they are diagnostics, and refusing to describe an
+/// unresolved value would remove the only way to see that it *is* unresolved.
 ///
 /// Reads the 12-byte header and nothing else, which is what makes it affordable on `SEND`.
 pub fn require_vocabulary(v: &[u8]) {
@@ -495,6 +495,31 @@ fn tokens_recv_bytes(value: &[u8]) -> Vec<u8> {
     validate(value)
 }
 
+/// Detokenize a stored value, for serving an interface that knows nothing about token IDs.
+///
+/// `IMMUTABLE` on the same grounds as the read paths: it depends only on the value's bytes and a
+/// write-once file. That is what lets it back a full-text index.
+///
+/// `decode_value` does not itself refuse an unresolved value — the raw codecs decode a
+/// `vocabulary_id` of 0 the same as any other, and only `freq`'s header check cares about it — so
+/// this calls [`require_vocabulary`] first, the same guard `tokens_out_impl` and
+/// `tokens_send_impl` use, rather than let an unresolved value fall through to a confusing
+/// "vocabulary 0 has no mapping" instead of the standard unresolved-value error.
+#[pg_extern(immutable, parallel_safe, strict)]
+fn text_impl(value: &[u8]) -> String {
+    require_vocabulary(value);
+    let ids = decode_value(value);
+    let (h, _) = value::describe(value).unwrap_or_else(|e| bail(e));
+    if !map_path(h.vocabulary_id).exists() {
+        let name = name_for_id(h.vocabulary_id).unwrap_or_else(|| h.vocabulary_id.to_string());
+        bail(format!(
+            "vocabulary {name} has no mapping; run pgtoken.load_mapping first"
+        ));
+    }
+    let map = byte_map(h.vocabulary_id).unwrap_or_else(|e| bail(e));
+    pgtoken_core::detok::to_text(&ids, &map).unwrap_or_else(|e| bail(e))
+}
+
 // ── the type ─────────────────────────────────────────────────────────────────────────
 
 extension_sql!(
@@ -544,6 +569,12 @@ DROP FUNCTION pgtoken.tokens_recv_bytes(bytea);
 CREATE FUNCTION pgtoken.tokens_recv_bytes(bytea) RETURNS pgtoken.tokens
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_recv_bytes_wrapper';
+
+-- `IMMUTABLE` is the point: it depends only on the value's bytes and a write-once mapping file,
+-- which is what lets it back a GIN index over `to_tsvector`.
+CREATE FUNCTION pgtoken.text(pgtoken.tokens) RETURNS text
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'text_impl_wrapper';
 "#,
     name = "tokens_type",
     // Item order in the generated SQL is not stable, so everything this block references has to
@@ -559,6 +590,7 @@ CREATE FUNCTION pgtoken.tokens_recv_bytes(bytea) RETURNS pgtoken.tokens
         tokens_recv_impl,
         tokens_recv_bytes,
         tokens_typmod_apply_impl,
+        text_impl,
         typmod::tokens_typmod_in,
         typmod::tokens_typmod_out
     ],
@@ -1022,5 +1054,91 @@ mod tests {
             "SELECT pgtoken.tokens_recv_bytes('\\x000000000000000000000000'::bytea)::text",
         )
         .unwrap();
+    }
+
+    /// A vocabulary with a mapping, at a pinned id — mapping files survive rollback.
+    fn mapped_vocab(name: &str, id: i32) {
+        Spi::run(&format!(
+            "SELECT pgtoken.create_vocabulary('{name}', 8, id => {id})"
+        ))
+        .expect("create_vocabulary");
+        Spi::run(&format!(
+            "CREATE TEMP TABLE stage_{id} (id int, bytes bytea);
+             INSERT INTO stage_{id} VALUES
+               (0, 'Hello'), (1, ', '), (2, 'world'), (3, '!'),
+               (4, '\\xc3'::bytea), (5, '\\xa9'::bytea);"
+        ))
+        .expect("stage");
+        Spi::run(&format!(
+            "SELECT pgtoken.load_mapping('{name}', 'SELECT id, bytes FROM stage_{id}')"
+        ))
+        .expect("load_mapping");
+    }
+
+    #[pg_test]
+    fn text_detokenizes() {
+        mapped_vocab("t_txt", 62101);
+        let got =
+            Spi::get_one::<String>("SELECT pgtoken.text('{0,1,2,3}'::pgtoken.tokens('t_txt'))")
+                .expect("query failed");
+        assert_eq!(got, Some("Hello, world!".to_string()));
+    }
+
+    #[pg_test]
+    fn text_joins_a_character_split_across_tokens() {
+        mapped_vocab("t_split", 62102);
+        let got = Spi::get_one::<String>("SELECT pgtoken.text('{4,5}'::pgtoken.tokens('t_split'))")
+            .expect("query failed");
+        assert_eq!(got, Some("é".to_string()), "id -> bytes, interpreted once");
+    }
+
+    #[pg_test]
+    fn text_drops_a_chunk_cut_mid_character() {
+        // An artefact of chunking by token count, not a fault: return what is readable.
+        mapped_vocab("t_cut", 62103);
+        let got = Spi::get_one::<String>("SELECT pgtoken.text('{0,4}'::pgtoken.tokens('t_cut'))")
+            .expect("query failed");
+        assert_eq!(got, Some("Hello".to_string()));
+    }
+
+    #[pg_test]
+    fn text_is_immutable_so_it_can_back_an_index() {
+        // The whole reason the mapping is write-once.
+        let vol = Spi::get_one::<String>(
+            "SELECT provolatile::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+             WHERE n.nspname = 'pgtoken' AND p.proname = 'text'",
+        )
+        .expect("query failed");
+        assert_eq!(vol, Some("i".to_string()));
+    }
+
+    #[pg_test]
+    fn text_backs_a_full_text_index() {
+        mapped_vocab("t_idx", 62104);
+        Spi::run(
+            "CREATE TABLE idx_docs (body tokens.t_idx);
+             INSERT INTO idx_docs VALUES ('{0,1,2,3}');
+             CREATE INDEX ON idx_docs USING gin (to_tsvector('english', pgtoken.text(body)));",
+        )
+        .expect("index creation must be legal");
+        let hits = Spi::get_one::<i64>(
+            "SELECT count(*) FROM idx_docs \
+             WHERE to_tsvector('english', pgtoken.text(body)) @@ to_tsquery('english', 'world')",
+        )
+        .expect("query failed");
+        assert_eq!(hits, Some(1));
+    }
+
+    #[pg_test(error = "vocabulary t_nomap has no mapping; run pgtoken.load_mapping first")]
+    fn text_without_a_mapping_says_so() {
+        Spi::run("SELECT pgtoken.create_vocabulary('t_nomap', 8, id => 62105)").expect("create");
+        Spi::get_one::<String>("SELECT pgtoken.text('{0}'::pgtoken.tokens('t_nomap'))").unwrap();
+    }
+
+    #[pg_test(error = "token id 6 has no entry in the mapping")]
+    fn text_errors_on_an_unmapped_id() {
+        // The mapping and the ids disagree about their tokenizer — a fault, not an empty string.
+        mapped_vocab("t_gap", 62106);
+        Spi::get_one::<String>("SELECT pgtoken.text('{6}'::pgtoken.tokens('t_gap'))").unwrap();
     }
 }

@@ -62,6 +62,21 @@ fallback for drivers that make binary mode awkward, at hex's 2× expansion but s
 server-side work. `body::int[]` is for SQL-side use; it costs 4 bytes per token on the wire, more
 than the blob it came from.
 
+**For a human-facing reader**, load a `token_id -> bytes` mapping once — export it from your
+tokenizer, the same way you already export the vocabulary size:
+
+```python
+import tiktoken
+enc = tiktoken.get_encoding("o200k_base")
+rows = [(i, enc.decode_single_token_bytes(i)) for i in range(enc.n_vocab)]
+# COPY rows into vocab_staging(id int, bytes bytea)
+```
+
+```sql
+SELECT pgtoken.load_mapping('o200k', 'SELECT id, bytes FROM vocab_staging');
+SELECT pgtoken.text(body) FROM documents;   -- 'hello world'
+```
+
 ## Compression
 
 | method | size | decode | needs training |
@@ -130,12 +145,12 @@ figures above understate it, because the Python client pays numpy overhead on 51
 
 ## Limitations
 
-- **Reads give you token IDs, not text.** Detokenizing is yours to do. `psql` shows integers, and
-  there is no full-text search over the column — keep a separate `text` or `tsvector` column if
-  you need it.
-- **No `=`, `ORDER BY`, `LIKE` or `pg_trgm`** on the column. Byte order of a compressed value is
-  meaningless, and there is no equality operator yet, so `GROUP BY` and `DISTINCT` do not work
-  either.
+- **Reads give you token IDs, not text**, unless you load a mapping. `pgtoken.text(body)`
+  detokenizes once `pgtoken.load_mapping` has loaded a `token_id -> bytes` mapping for the
+  vocabulary, and because that mapping is write-once, the function is `IMMUTABLE` and can back a
+  GIN index over `to_tsvector` — full-text search and `LIKE` both work through it.
+- **No `=`, `ORDER BY`, `GROUP BY` or `DISTINCT`** on the column itself. Byte order of a
+  compressed value is meaningless, and there is no equality operator yet.
 - **A column must name a vocabulary.** A bare `pgtoken.tokens` column accepts inserts and then
   fails on read, because PostgreSQL applies a type modifier after the input function runs, so
   there is nowhere earlier to refuse. The rows are recoverable in place with
@@ -156,10 +171,12 @@ the extension in both directions (`benchmarks/test_client.py` asserts it).
 | --- | --- | --- |
 | `create_vocabulary(name, vocab_size [, compression] [, id])` | `int` | also creates `tokens.<name>` |
 | `train(name, query [, max_ranks])` | `text` | ranking for `freq`, write-once |
+| `load_mapping(name, query)` | `text` | `token_id -> bytes` mapping for `text`, write-once |
 | `vocabulary_info(name)` | record | size, compression, width, ranking, sha256 |
 | `drop_vocabulary(name)` | | drops the domain; the id stays reserved |
 | `token_count(tokens)` | `int` | header only, no decode |
 | `describe(tokens)` | record | codec, vocabulary, sizes |
+| `text(tokens)` | `text` | detokenize; needs a mapping; `IMMUTABLE` |
 
 Casts: `int[] → tokens` (assignment), and `tokens → int[]`, `tokens → bytea`, `bytea → tokens`
 (explicit).
