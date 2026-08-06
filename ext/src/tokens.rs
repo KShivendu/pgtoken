@@ -160,7 +160,10 @@ fn encode_unresolved(ids: &[u32]) -> Vec<u8> {
 }
 
 /// Raise if `v` never had a typmod applied. Every path that hands a value back to a caller goes
-/// through this, so an unresolved value can be written but never read.
+/// through this — text output, binary output and both receive paths — so an unresolved value can
+/// be written but never read, by any route.
+///
+/// Reads the 12-byte header and nothing else, which is what makes it affordable on `SEND`.
 fn require_vocabulary(v: &[u8]) {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
     if h.vocabulary_id == UNRESOLVED {
@@ -305,8 +308,19 @@ fn tokens_out_impl(value: &[u8]) -> CString {
     CString::new(rendered).unwrap_or_else(|_| bail("rendered token ids contained a NUL"))
 }
 
+/// `SEND`: hand the stored bytes over unchanged.
+///
+/// The header check is not a conversion — nothing is decoded, nothing is re-encoded, and the
+/// bytes still leave verbatim, which is the whole claim. It is here because text output refuses an
+/// unresolved value and binary output must refuse it too: one read path accepting what the others
+/// refuse would leave a bare-column table unreadable in `psql` but readable over the wire, and the
+/// error would stop being the thing that makes someone fix their column declaration.
+///
+/// Deliberately `require_vocabulary` and not `decode_value`: this parses 12 bytes, where a decode
+/// would put the whole payload through the codec on every binary read.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_send_impl(value: &[u8]) -> Vec<u8> {
+    require_vocabulary(value);
     value.to_vec()
 }
 
@@ -617,6 +631,14 @@ mod tests {
         // No typmod means no length coercion, so this value stays unresolved. There is no auto
         // width to fall back to, so reading it is an error rather than a guess.
         Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens::text").unwrap();
+    }
+
+    #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
+    fn send_refuses_a_value_without_a_vocabulary() {
+        // Binary output has to refuse what text output refuses. Otherwise a bare-column table is
+        // unreadable in psql but readable over the wire, and the error stops being what forces
+        // someone to fix the column declaration.
+        Spi::get_one::<Vec<u8>>("SELECT pgtoken.tokens_send('{1,2,3}'::pgtoken.tokens)").unwrap();
     }
 
     #[pg_test(error = "pgtoken.tokens requires a vocabulary")]
