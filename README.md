@@ -77,6 +77,9 @@ SELECT pgtoken.load_mapping('o200k', 'SELECT id, bytes FROM vocab_staging');
 SELECT pgtoken.text(body) FROM documents;   -- 'hello world'
 ```
 
+Call it schema-qualified: a bare `text(body)` is PostgreSQL's cast syntax for the `text` type, not
+a call to this function, and it silently returns the id list instead of erroring.
+
 ## Compression
 
 | method | size | decode | needs training |

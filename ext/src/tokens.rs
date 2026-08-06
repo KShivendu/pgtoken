@@ -504,7 +504,16 @@ fn tokens_recv_bytes(value: &[u8]) -> Vec<u8> {
 /// `vocabulary_id` of 0 the same as any other, and only `freq`'s header check cares about it — so
 /// this calls [`require_vocabulary`] first, the same guard `tokens_out_impl` and
 /// `tokens_send_impl` use, rather than let an unresolved value fall through to a confusing
-/// "vocabulary 0 has no mapping" instead of the standard unresolved-value error.
+/// "vocabulary 0 has no mapping" instead of the standard unresolved-value error. Pinned by
+/// `tests::text_refuses_a_value_without_a_vocabulary` — delete the call above and only that test
+/// fails, with the nonsense message this guard exists to prevent.
+///
+/// **Call this schema-qualified.** `pgtoken.text` shares a name with the built-in `text` type,
+/// and PostgreSQL's function-call cast syntax (`typename(expr)` for a single argument) wins over
+/// an in-scope function of the same name even when `pgtoken` is on `search_path`. A bare
+/// `text(body)` therefore silently resolves to `body::text` — the type's own `OUTPUT` function,
+/// i.e. the rendered id list `{1,2,3}` — with no error, not this function. Always write
+/// `pgtoken.text(body)`.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn text_impl(value: &[u8]) -> String {
     require_vocabulary(value);
@@ -572,6 +581,10 @@ CREATE FUNCTION pgtoken.tokens_recv_bytes(bytea) RETURNS pgtoken.tokens
 
 -- `IMMUTABLE` is the point: it depends only on the value's bytes and a write-once mapping file,
 -- which is what lets it back a GIN index over `to_tsvector`.
+--
+-- Always call this schema-qualified: an unqualified `text(body)` is PostgreSQL's function-call
+-- cast syntax for the `text` *type*, not a call to this function, so it silently returns the
+-- rendered id list (`{1,2,3}`) instead of prose — see `text_impl`'s doc comment.
 CREATE FUNCTION pgtoken.text(pgtoken.tokens) RETURNS text
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'text_impl_wrapper';
@@ -1140,5 +1153,15 @@ mod tests {
         // The mapping and the ids disagree about their tokenizer — a fault, not an empty string.
         mapped_vocab("t_gap", 62106);
         Spi::get_one::<String>("SELECT pgtoken.text('{6}'::pgtoken.tokens('t_gap'))").unwrap();
+    }
+
+    #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
+    fn text_refuses_a_value_without_a_vocabulary() {
+        // `decode_value` alone would happily decode this — a raw codec's vocabulary_id of 0 is
+        // not special to it, only `freq`'s header check cares — so without its own
+        // `require_vocabulary` call, `text_impl` would fall through to a nonsense "vocabulary 0
+        // has no mapping" instead of the standard unresolved-value error every other read path
+        // gives. No vocabulary means no mapping file to pin, so no vocabulary id here.
+        Spi::get_one::<String>("SELECT pgtoken.text('{1,2,3}'::pgtoken.tokens)").unwrap();
     }
 }
