@@ -126,6 +126,42 @@ GRANT USAGE ON SCHEMA tokens TO PUBLIC;
     name = "vocabulary_catalog",
 );
 
+extension_sql!(
+    r#"
+-- Reading the catalog is not optional, so PUBLIC has to be able to do it. Every write through a
+-- typmod'd column consults `pgtoken.vocabulary` from inside the extension's own C functions --
+-- `vocab_size_for` on the encode path, `lookup_by_name` from `typmod_in` -- and SPI runs those
+-- queries as the *invoking* role, not the owner. Under the default ACLs the extension is usable
+-- by nobody but its owner: a plain `INSERT`, and even `'{0}'::pgtoken.tokens('v')`, fails with a
+-- permission error naming a query the user never wrote. Both grants are needed; the table grant
+-- alone leaves "permission denied for schema pgtoken", which fires first.
+--
+-- What is being exposed is metadata, not data: vocabulary names, declared sizes, compression and
+-- widths, describing columns the role can already see.
+GRANT USAGE ON SCHEMA pgtoken TO PUBLIC;
+GRANT SELECT ON pgtoken.vocabulary TO PUBLIC;
+
+-- Schema USAGE reaches the functions too, and PUBLIC holds EXECUTE on a function by default, so
+-- the four that mutate a vocabulary are taken back explicitly. Two of them are already stopped by
+-- ordinary object permissions -- `create_vocabulary` needs INSERT on the catalog (not granted)
+-- and CREATE on schema tokens, `drop_vocabulary` needs to own the domain -- but `train` and
+-- `load_mapping` are not: they write artefact files through the filesystem as the server's OS
+-- user, and neither the catalog nor the domain is consulted first. Left to PUBLIC, any role could
+-- seal a wrong `<id>.tnmap` for someone else's vocabulary and, the file being write-once, leave
+-- the owner no way to load the right one -- the same harm `create_vocabulary`'s orphan check
+-- exists to prevent, reached from the other side. Grant EXECUTE back to whoever administers
+-- vocabularies.
+REVOKE EXECUTE ON FUNCTION pgtoken.create_vocabulary(text, int, text, int) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION pgtoken.drop_vocabulary(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION pgtoken.train(text, text, int) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION pgtoken.load_mapping(text, text) FROM PUBLIC;
+"#,
+    name = "privileges",
+    // Emitted last, after every function it names exists. The alternative -- a `requires` list --
+    // would have to reach private items in three other modules.
+    finalize,
+);
+
 #[pg_extern]
 fn create_vocabulary(
     name: &str,
@@ -165,14 +201,26 @@ fn create_vocabulary(
         ));
     }
 
+    // The only place an id is ever assigned, and therefore the only place the orphaned-artefact
+    // check belongs. See `next_free_id` for what an orphan is and why the catalog cannot see one.
     let assigned = match id {
         Some(v) if v < 1 || v > u16::MAX as i32 => {
             bail(format!("vocabulary id {v} is out of range (1..65535)"))
         }
-        Some(v) => v,
-        None => Spi::get_one::<i32>("SELECT coalesce(max(id), 0)::int + 1 FROM pgtoken.vocabulary")
-            .unwrap_or_else(|e| bail(e))
-            .unwrap_or(1),
+        Some(v) => {
+            if let Some(path) = crate::registry::existing_artefact(v as u16) {
+                bail(format!(
+                    "vocabulary id {v} already has an artefact file at {}, left over from a \
+                     vocabulary that was rolled back or dropped: artefact files are written \
+                     outside the transaction, so they outlive the catalog row that ordered them. \
+                     A vocabulary created here would inherit it; remove the file if nothing \
+                     references it, or pick another id",
+                    path.display()
+                ))
+            }
+            v
+        }
+        None => next_free_id(),
     };
 
     Spi::run_with_args(
@@ -199,6 +247,36 @@ fn create_vocabulary(
     .unwrap_or_else(|e| bail(e));
 
     assigned
+}
+
+/// The lowest id no vocabulary has ever used — counting artefact files as use.
+///
+/// `max(id) + 1` over the catalog is not sufficient, because an artefact file outlives the row
+/// that ordered it. `train` and `load_mapping` write `<id>.tntt` and `<id>.tnmap` through the
+/// filesystem, outside the transaction, so a `ROLLBACK` (or a `DROP` of the whole extension)
+/// removes the catalog row and leaves the file. The next `max(id) + 1` then lands back on that id
+/// and the new vocabulary silently adopts an artefact it never created.
+///
+/// For a ranking the damage is bounded — a `RankTable` is a lossless bijection, so a wrong
+/// ranking still round-trips and no id is misread. For a mapping it is not: `pgtoken.text` would
+/// return another vocabulary's prose, and `load_mapping` would then refuse to load the real one,
+/// the file being write-once. So skip both, and skip them here, where the id is chosen.
+fn next_free_id() -> i32 {
+    let start = Spi::get_one::<i32>("SELECT coalesce(max(id), 0)::int + 1 FROM pgtoken.vocabulary")
+        .unwrap_or_else(|e| bail(e))
+        .unwrap_or(1);
+    let mut candidate = start;
+    while candidate <= u16::MAX as i32 {
+        if crate::registry::existing_artefact(candidate as u16).is_none() {
+            return candidate;
+        }
+        candidate += 1;
+    }
+    bail(format!(
+        "no vocabulary id is free: every id from {start} to {} already has an artefact file in {}",
+        u16::MAX,
+        crate::registry::table_dir().display()
+    ))
 }
 
 /// Remove a vocabulary's domain.
@@ -280,8 +358,14 @@ pub fn vocab_size_for(id: u16) -> Option<u32> {
 }
 
 /// Report what a vocabulary declares and which optional parts are filled.
+///
+/// Both artefacts get a digest and a length, not just the ranking. The digest is sold as the way
+/// two machines check they hold the same vocabulary, and a vocabulary is the pair: identical
+/// rankings with different mappings are different vocabularies, and reporting one hash for the
+/// two of them would let them compare equal. `describe_map` computes the mapping's digest
+/// anyway, so the second pair of columns costs nothing that was not already being paid.
 #[pg_extern]
-#[allow(clippy::type_complexity)] // An 8-column TableIterator tuple; a type alias would just move the noise.
+#[allow(clippy::type_complexity)] // A 10-column TableIterator tuple; a type alias would just move the noise.
 fn vocabulary_info(
     name: &str,
 ) -> TableIterator<
@@ -292,9 +376,11 @@ fn vocabulary_info(
         name!(compression, String),
         name!(width, i32),
         name!(ranked, Option<i32>),
+        name!(rank_sha256, Option<String>),
+        name!(rank_bytes, Option<i64>),
         name!(mapped, Option<i32>),
-        name!(sha256, Option<String>),
-        name!(file_bytes, Option<i64>),
+        name!(map_sha256, Option<String>),
+        name!(map_bytes, Option<i64>),
     ),
 > {
     let v =
@@ -302,39 +388,29 @@ fn vocabulary_info(
     let size = vocab_size_for(v.id)
         .unwrap_or_else(|| bail(format!("vocabulary {name:?} has no catalog row")));
 
-    // An unfilled ranking is a normal state, not a fault, so a genuinely absent file becomes
+    // An unfilled artefact is a normal state, not a fault, so a genuinely absent file becomes
     // NULLs rather than an error. Anything else — `table_dir` unset so the question cannot even
     // be asked, or a file that is there but unreadable/corrupt — is a real fault and must say so
-    // rather than collapsing into the same NULLs, which would silently read as "never trained".
-    if crate::registry::table_dir().as_os_str().is_empty() {
-        bail("pgtoken.table_dir is not set; cannot tell whether any vocabulary has a ranking");
-    }
-    let path = crate::registry::table_path(v.id);
-    let (ranked, sha256, file_bytes) = if !path.exists() {
-        (None, None, None)
-    } else {
-        match crate::registry::describe_table(v.id) {
-            Ok((k, digest, len)) => (Some(k as i32), Some(digest), Some(len as i64)),
-            Err(e) => bail(format!(
-                "vocabulary {name:?} has a ranking file at {} but it could not be read: {e}",
-                path.display()
-            )),
-        }
+    // rather than collapsing into the same NULLs, which would silently read as "never filled".
+    crate::registry::require_dir("tell whether any vocabulary has a ranking or a mapping")
+        .unwrap_or_else(|e| bail(e));
+
+    let (ranked, rank_sha256, rank_bytes) = match crate::registry::describe_table(v.id) {
+        Ok(None) => (None, None, None),
+        Ok(Some((k, digest, len))) => (Some(k as i32), Some(digest), Some(len as i64)),
+        Err(e) => bail(format!(
+            "vocabulary {name:?} has a ranking file at {} but it could not be read: {e}",
+            crate::registry::table_path(v.id).display()
+        )),
     };
 
-    // Same rule as the ranking above: unmapped is normal and reports NULL, but a mapping file
-    // that is present and unreadable is a fault, not "never loaded".
-    let map_path = crate::registry::map_path(v.id);
-    let mapped = if !map_path.exists() {
-        None
-    } else {
-        match crate::registry::describe_map(v.id) {
-            Ok((n, _digest, _len)) => Some(n as i32),
-            Err(e) => bail(format!(
-                "vocabulary {name:?} has a mapping file at {} but it could not be read: {e}",
-                map_path.display()
-            )),
-        }
+    let (mapped, map_sha256, map_bytes) = match crate::registry::describe_map(v.id) {
+        Ok(None) => (None, None, None),
+        Ok(Some((n, digest, len))) => (Some(n as i32), Some(digest), Some(len as i64)),
+        Err(e) => bail(format!(
+            "vocabulary {name:?} has a mapping file at {} but it could not be read: {e}",
+            crate::registry::map_path(v.id).display()
+        )),
     };
 
     TableIterator::once((
@@ -343,9 +419,11 @@ fn vocabulary_info(
         compression_name(v.compression).to_string(),
         v.width as i32,
         ranked,
+        rank_sha256,
+        rank_bytes,
         mapped,
-        sha256,
-        file_bytes,
+        map_sha256,
+        map_bytes,
     ))
 }
 
@@ -581,6 +659,114 @@ mod tests {
         Spi::run("SELECT pgtoken.create_vocabulary('dom_double', 300)").expect("create");
         Spi::run("SELECT pgtoken.drop_vocabulary('dom_double')").expect("first drop");
         Spi::run("SELECT pgtoken.drop_vocabulary('dom_double')").unwrap();
+    }
+
+    /// Where the test cluster's `pgtoken.table_dir` points; see `crate::pg_test`.
+    const DIR: &str = "/tmp/pgtoken-pgrx-test-tables";
+
+    /// Put an artefact file at `<id>.<suffix>` with no catalog row behind it — exactly what a
+    /// `ROLLBACK` after `load_mapping` or `train` leaves on disk, since the write goes through
+    /// the filesystem and never sees the transaction.
+    fn orphan(id: i32, suffix: &str) {
+        std::fs::create_dir_all(DIR).expect("create the table dir");
+        std::fs::write(format!("{DIR}/{id}.{suffix}"), b"orphaned artefact")
+            .expect("write an orphaned artefact");
+    }
+
+    #[pg_test]
+    fn auto_assignment_skips_ids_with_an_orphaned_artefact() {
+        // `max(id) + 1` alone would hand out 62202, whose mapping file is still on disk from a
+        // vocabulary that no longer exists — and the new vocabulary would answer
+        // `pgtoken.text` out of a mapping it never loaded, with `load_mapping` refusing to
+        // replace it. 62203 covers the ranking's identical exposure: the file is a different
+        // shape of wrong, but the id is spoken for either way.
+        Spi::run("SELECT pgtoken.create_vocabulary('orph_base', 8, id => 62201)").expect("create");
+        orphan(62202, "tnmap");
+        orphan(62203, "tntt");
+        let assigned = create("'orph_next', 8");
+        assert_eq!(
+            assigned, 62204,
+            "auto-assignment must skip every id that already has an artefact file"
+        );
+    }
+
+    #[pg_test(error = "vocabulary id 62205 already has an artefact file at \
+                 /tmp/pgtoken-pgrx-test-tables/62205.tnmap, left over from a vocabulary that was \
+                 rolled back or dropped: artefact files are written outside the transaction, so \
+                 they outlive the catalog row that ordered them. A vocabulary created here would \
+                 inherit it; remove the file if nothing references it, or pick another id")]
+    fn an_explicit_id_with_an_orphaned_artefact_is_refused() {
+        // Skipping is only available to auto-assignment. An explicit id has to be refused, and
+        // the message has to name the file — it is the only thing that can be acted on, and
+        // there is no SQL that will do it.
+        orphan(62205, "tnmap");
+        Spi::run("SELECT pgtoken.create_vocabulary('orph_pinned', 8, id => 62205)").unwrap();
+    }
+
+    #[pg_test]
+    fn vocabulary_info_digests_each_artefact_separately() {
+        // Two vocabularies trained on the same corpus and mapped differently. One digest over
+        // the ranking alone would call them equal, which is exactly the check the column is sold
+        // for — "two machines verify they hold the same vocabulary".
+        for (name, id, bytes) in [("vi_da", 62211, "alpha"), ("vi_db", 62212, "beta")] {
+            Spi::run(&format!(
+                "SELECT pgtoken.create_vocabulary('{name}', 8, compression => 'freq', id => {id}); \
+                 SELECT pgtoken.train('{name}', $$SELECT ARRAY[1,1,2]::int[]$$); \
+                 SELECT pgtoken.load_mapping('{name}', $$SELECT 1::int, '{bytes}'::bytea$$);"
+            ))
+            .expect("setup");
+        }
+        let (ra, rb) = Spi::get_two::<String, String>(
+            "SELECT (SELECT rank_sha256 FROM pgtoken.vocabulary_info('vi_da')), \
+                    (SELECT rank_sha256 FROM pgtoken.vocabulary_info('vi_db'))",
+        )
+        .expect("query failed");
+        assert_eq!(ra, rb, "the same corpus must produce the same ranking");
+        let (ma, mb) = Spi::get_two::<String, String>(
+            "SELECT (SELECT map_sha256 FROM pgtoken.vocabulary_info('vi_da')), \
+                    (SELECT map_sha256 FROM pgtoken.vocabulary_info('vi_db'))",
+        )
+        .expect("query failed");
+        assert_eq!(
+            ma.as_ref().map(|s| s.len()),
+            Some(64),
+            "a sha256 hex digest"
+        );
+        assert_ne!(ma, mb, "different mappings are different vocabularies");
+
+        let (rank_bytes, map_bytes) = Spi::get_two::<i64, i64>(
+            "SELECT rank_bytes, map_bytes FROM pgtoken.vocabulary_info('vi_da')",
+        )
+        .expect("query failed");
+        assert!(rank_bytes.unwrap() > 0 && map_bytes.unwrap() > 0);
+    }
+
+    #[pg_test]
+    fn a_non_owner_can_read_a_column_and_detokenize() {
+        // Without a grant on `pgtoken.vocabulary` the extension is unusable by anyone but its
+        // owner: SPI inside the type's own C functions runs as the invoking role, so even a
+        // literal cast fails on a catalog the user never named.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('grantee', 8, id => 62213); \
+             CREATE TEMP TABLE g_stage (id int, bytes bytea); \
+             INSERT INTO g_stage VALUES (0, 'Hello'), (1, ', '), (2, 'world'), (3, '!'); \
+             SELECT pgtoken.load_mapping('grantee', 'SELECT id, bytes FROM g_stage'); \
+             CREATE TABLE g_docs (body tokens.grantee); \
+             INSERT INTO g_docs VALUES ('{0,1,2,3}'); \
+             GRANT SELECT ON g_docs TO PUBLIC; \
+             CREATE ROLE pgtoken_reader;",
+        )
+        .expect("setup");
+
+        Spi::run("SET ROLE pgtoken_reader").expect("set role");
+        let size =
+            Spi::get_one::<i32>("SELECT vocab_size FROM pgtoken.vocabulary WHERE name = 'grantee'")
+                .expect("a non-owner must be able to read the catalog");
+        assert_eq!(size, Some(8));
+        let text = Spi::get_one::<String>("SELECT pgtoken.text(body) FROM g_docs")
+            .expect("a non-owner must be able to detokenize");
+        assert_eq!(text, Some("Hello, world!".to_string()));
+        Spi::run("RESET ROLE").expect("reset role");
     }
 
     #[pg_test(

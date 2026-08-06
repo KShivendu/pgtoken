@@ -24,6 +24,12 @@ use crate::vocabulary;
 fn load_mapping(name: &str, query: &str) -> String {
     let v = vocabulary::lookup_by_name(name)
         .unwrap_or_else(|| bail(format!("vocabulary {name:?} does not exist")));
+    // Ask the directory question before the file question. With `pgtoken.table_dir` unset,
+    // `map_path` yields the bare relative name and `.exists()` answers against the data
+    // directory — so this would read "no mapping yet", go on to build one, and only fail at the
+    // write. `registry::require_dir` is the single place that refuses instead.
+    registry::require_dir("tell whether a vocabulary already has a mapping")
+        .unwrap_or_else(|e| bail(e));
     if registry::map_path(v.id).exists() {
         bail(format!("vocabulary {name} already has a mapping"));
     }

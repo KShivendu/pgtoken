@@ -175,11 +175,11 @@ the extension in both directions (`benchmarks/test_client.py` asserts it).
 | `create_vocabulary(name, vocab_size [, compression] [, id])` | `int` | also creates `tokens.<name>` |
 | `train(name, query [, max_ranks])` | `text` | ranking for `freq`, write-once |
 | `load_mapping(name, query)` | `text` | `token_id -> bytes` mapping for `text`, write-once |
-| `vocabulary_info(name)` | record | size, compression, width, ranking, sha256 |
+| `vocabulary_info(name)` | record | size, compression, width, and for each of the ranking and the mapping: how much is filled, its sha256 and its size |
 | `drop_vocabulary(name)` | | drops the domain; the id stays reserved |
 | `token_count(tokens)` | `int` | header only, no decode |
 | `describe(tokens)` | record | codec, vocabulary, sizes |
-| `text(tokens)` | `text` | detokenize; needs a mapping; `IMMUTABLE` |
+| `pgtoken.text(tokens)` | `text` | detokenize; needs a mapping; `IMMUTABLE`; call it schema-qualified |
 
 Casts: `int[] → tokens` (assignment), and `tokens → int[]`, `tokens → bytea`, `bytea → tokens`
 (explicit).

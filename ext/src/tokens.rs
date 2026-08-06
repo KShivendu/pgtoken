@@ -69,7 +69,7 @@ use pgrx::prelude::*;
 use pgtoken_core::header::Codec;
 use pgtoken_core::value;
 
-use crate::registry::{bail, byte_map, map_path, rank_table, table_path};
+use crate::registry::{bail, byte_map, rank_table};
 use crate::typmod::{codec_for, unpack};
 use crate::vocabulary::{name_for_id, vocab_size_for, MAX_VOCAB_SIZE};
 
@@ -316,25 +316,36 @@ pub fn encode_for(ids: &[u32], typmod: i32) -> Vec<u8> {
 
     let codec = codec_for(v);
     if codec.needs_table() {
-        // Name the vocabulary rather than a path: the vocabulary is what the user typed.
-        if !table_path(v.id).exists() {
-            let name = vocabulary_label(v.id);
-            bail(format!(
-                "vocabulary {name} has no ranking; run pgtoken.train first"
-            ));
-        }
-        let t = rank_table(v.id).unwrap_or_else(|e| bail(e));
+        // No `table_path(...).exists()` first: `rank_table` reports absence through `Ok(None)`
+        // from the same `open` it needs anyway, so asking separately would spend a `stat()` per
+        // encoded row for an answer already in hand — and would answer it wrongly when
+        // `pgtoken.table_dir` is unset, since the bare relative path resolves against the data
+        // directory. Name the vocabulary rather than a path: the vocabulary is what the user typed.
+        let t = rank_table(v.id)
+            .unwrap_or_else(|e| bail(e))
+            .unwrap_or_else(|| missing_ranking(v.id));
         value::encode(ids, codec, v.id, Some(&t)).unwrap_or_else(|e| bail(e))
     } else {
         value::encode(ids, codec, v.id, None).unwrap_or_else(|e| bail(e))
     }
 }
 
+/// The one phrasing for "this vocabulary needs a ranking and has none", shared by the encode and
+/// decode paths so they cannot drift.
+fn missing_ranking(vocabulary_id: u16) -> ! {
+    let name = vocabulary_label(vocabulary_id);
+    bail(format!(
+        "vocabulary {name} has no ranking; run pgtoken.train first"
+    ))
+}
+
 /// Decode a stored value, loading its ranking if the codec needs one.
 pub fn decode_value(v: &[u8]) -> Vec<u32> {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
     if h.codec.needs_table() {
-        let t = rank_table(h.vocabulary_id).unwrap_or_else(|e| bail(e));
+        let t = rank_table(h.vocabulary_id)
+            .unwrap_or_else(|e| bail(e))
+            .unwrap_or_else(|| missing_ranking(h.vocabulary_id));
         value::decode(v, Some(&t)).unwrap_or_else(|e| bail(e))
     } else {
         value::decode(v, None).unwrap_or_else(|e| bail(e))
@@ -519,13 +530,23 @@ fn text_impl(value: &[u8]) -> String {
     require_vocabulary(value);
     let ids = decode_value(value);
     let (h, _) = value::describe(value).unwrap_or_else(|e| bail(e));
-    if !map_path(h.vocabulary_id).exists() {
-        let name = name_for_id(h.vocabulary_id).unwrap_or_else(|| h.vocabulary_id.to_string());
-        bail(format!(
-            "vocabulary {name} has no mapping; run pgtoken.load_mapping first"
-        ));
-    }
-    let map = byte_map(h.vocabulary_id).unwrap_or_else(|e| bail(e));
+    // `byte_map` distinguishes "no mapping" from "cannot look" itself, which is why there is no
+    // `map_path(...).exists()` here. Two reasons it must not come back. It cost a `stat()` per
+    // row even on a warm backend, where the answer is already cached — a million wasted syscalls
+    // on a large index build. And it was wrong: with `pgtoken.table_dir` unset the path is a bare
+    // relative name resolved against the data directory, so it answered "no mapping; run
+    // pgtoken.load_mapping first" for a vocabulary that has one — advice that, followed after
+    // pointing `table_dir` somewhere fresh, seals a second mapping and strands the real one.
+    let map = match byte_map(h.vocabulary_id) {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            let name = name_for_id(h.vocabulary_id).unwrap_or_else(|| h.vocabulary_id.to_string());
+            bail(format!(
+                "vocabulary {name} has no mapping; run pgtoken.load_mapping first"
+            ))
+        }
+        Err(e) => bail(e),
+    };
     pgtoken_core::detok::to_text(&ids, &map).unwrap_or_else(|e| bail(e))
 }
 
@@ -1153,6 +1174,93 @@ mod tests {
         // The mapping and the ids disagree about their tokenizer — a fault, not an empty string.
         mapped_vocab("t_gap", 62106);
         Spi::get_one::<String>("SELECT pgtoken.text('{6}'::pgtoken.tokens('t_gap'))").unwrap();
+    }
+
+    #[pg_test]
+    fn text_detokenizes_a_freq_encoded_value() {
+        // `pgtoken.text` over a `freq` value is the only call that needs both artefacts at once:
+        // `decode_value` loads the ranking to get the ids back, then the mapping turns them into
+        // bytes. Every other `text` test uses a `raw` vocabulary, where the ranking never comes
+        // into it.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('t_fq', 8, compression => 'freq', id => 62107); \
+             CREATE TEMP TABLE stage_fq (id int, bytes bytea); \
+             INSERT INTO stage_fq VALUES (0, 'Hello'), (1, ', '), (2, 'world'), (3, '!'); \
+             SELECT pgtoken.train('t_fq', $$SELECT ARRAY[2,2,2,0,0,1]::int[]$$); \
+             SELECT pgtoken.load_mapping('t_fq', 'SELECT id, bytes FROM stage_fq');",
+        )
+        .expect("setup");
+        let codec = Spi::get_one::<String>(
+            "SELECT codec FROM pgtoken.describe('{0,1,2,3}'::pgtoken.tokens('t_fq'))",
+        )
+        .expect("query failed");
+        assert_eq!(
+            codec,
+            Some("freq".to_string()),
+            "the ranking must be in use"
+        );
+        let got =
+            Spi::get_one::<String>("SELECT pgtoken.text('{0,1,2,3}'::pgtoken.tokens('t_fq'))")
+                .expect("query failed");
+        assert_eq!(got, Some("Hello, world!".to_string()));
+    }
+
+    #[pg_test]
+    fn load_mapping_leaves_no_temporary_file_behind() {
+        // The mapping is created atomically with its content — staged to a temp in the same
+        // directory, `sync_all`'d, then hard-linked into place — so the temp has to be unlinked
+        // on the success path too, or every load would litter the directory.
+        mapped_vocab("t_tmp", 62108);
+        let dir = std::path::Path::new("/tmp/pgtoken-pgrx-test-tables");
+        let strays: Vec<String> = std::fs::read_dir(dir)
+            .expect("read the table dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(strays.is_empty(), "temporary files left behind: {strays:?}");
+        assert!(
+            dir.join("62108.tnmap").exists(),
+            "the mapping must be there"
+        );
+    }
+
+    /// Clear `pgtoken.table_dir` for the rest of this test's transaction.
+    ///
+    /// The GUC is `SIGHUP`-scoped, so no SQL `SET` can reach it — which is part of why the hazard
+    /// below survived to be found in review rather than in a test. `set_config_option` with the
+    /// variable's own context is the same call a config-file reload makes, and
+    /// `GUC_ACTION_LOCAL` ties the change to this transaction, which pgrx aborts when the test
+    /// ends.
+    fn clear_table_dir() {
+        // Safety: an ordinary GUC assignment; both strings are NUL-terminated literals that
+        // outlive the call, and `set_config_option` copies what it keeps.
+        unsafe {
+            pg_sys::set_config_option(
+                c"pgtoken.table_dir".as_ptr(),
+                c"".as_ptr(),
+                pg_sys::GucContext::PGC_SIGHUP,
+                pg_sys::GucSource::PGC_S_SESSION,
+                pg_sys::GucAction::GUC_ACTION_LOCAL,
+                true,
+                // `ERROR`; bindgen renames the C macro, which collides with `errno`'s.
+                pg_sys::PGERROR as i32,
+                false,
+            );
+        }
+    }
+
+    #[pg_test(error = "pgtoken.table_dir is not set; cannot read vocabulary artefacts")]
+    fn text_with_an_unset_table_dir_blames_the_setting() {
+        // The message this replaces was "vocabulary t_nodir has no mapping; run
+        // pgtoken.load_mapping first" — advice that destroys data if followed. With `table_dir`
+        // unset, `map_path` produced the bare relative name `62109.tnmap`, `.exists()` answered
+        // it against the data directory and said no, and a user who then pointed `table_dir`
+        // somewhere fresh and re-ran `load_mapping` sealed a second, different mapping while the
+        // real one sat unreachable in the directory nobody was pointing at.
+        mapped_vocab("t_nodir", 62109);
+        clear_table_dir();
+        Spi::get_one::<String>("SELECT pgtoken.text('{0}'::pgtoken.tokens('t_nodir'))").unwrap();
     }
 
     #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]

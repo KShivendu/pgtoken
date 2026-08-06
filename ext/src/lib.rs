@@ -136,6 +136,11 @@ CREATE FUNCTION pgtoken.describe(pgtoken.tokens)
 fn train(name: &str, query: &str, max_ranks: default!(i32, -1)) -> String {
     let v = vocabulary::lookup_by_name(name)
         .unwrap_or_else(|| bail(format!("vocabulary {name:?} does not exist")));
+    // Directory question first: with `pgtoken.table_dir` unset, `table_path` yields a bare
+    // relative name whose `.exists()` is answered against the data directory, so this guard would
+    // report "no ranking yet" for a vocabulary that has one. See `registry::require_dir`.
+    registry::require_dir("tell whether a vocabulary already has a ranking")
+        .unwrap_or_else(|e| bail(e));
     if registry::table_path(v.id).exists() {
         bail(format!("vocabulary {name} already has a ranking"));
     }
