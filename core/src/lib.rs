@@ -7,12 +7,14 @@
 //! **This library has no tokenizer.** It takes `&[u32]` and gives back `&[u32]`. Turning text
 //! into IDs is the caller's job, with whatever tokenizer they already run — a database has no
 //! business holding an opinion about that, and staying out of it means any tokenizer works,
-//! including ones that do not exist yet. Nothing here needs a vocabulary size either; see
-//! [`tables::RankTable`] for how that is avoided.
+//! including ones that do not exist yet. No part of the compression path needs a vocabulary size;
+//! see [`tables::RankTable`] for how that is avoided. Detokenization is the one exception, since
+//! [`tables::ByteMap`] indexes its offsets by token id.
 //!
 //! Layering: [`header`] is the self-describing value envelope, [`codec`] the payload
-//! encodings, [`tables`] the trained frequency table, [`detok`] turns ids back into text,
-//! [`value`] the API most callers want.
+//! encodings, [`tables`] the two vocabulary artefacts — the trained frequency ranking and the
+//! `token_id -> bytes` mapping — [`detok`] turns ids back into text, [`value`] the API most
+//! callers want.
 
 pub mod codec;
 pub mod detok;

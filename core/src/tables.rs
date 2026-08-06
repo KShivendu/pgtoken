@@ -1,4 +1,5 @@
-//! The frequency-rank table behind the `freq` codec.
+//! The two vocabulary artefacts: the frequency-rank table behind the `freq` codec, and the
+//! `token_id -> bytes` mapping behind detokenization.
 //!
 //! BPE numbers its vocabulary in merge-discovery order, so a common token can sit at ID
 //! 40,000 while a rare one sits at 400. Remapping each ID to its descending-frequency rank
@@ -6,8 +7,10 @@
 //!
 //! The table is **sparse**: it holds only the tokens seen during training, in frequency
 //! order. Anything else maps to `k + id`, and decodes back by subtracting `k`. That single
-//! decision keeps this library free of any vocabulary size — nothing needs to know how large
-//! the tokenizer's vocabulary is, or which tokenizer it was.
+//! decision keeps [`RankTable`] free of any vocabulary size — ranking needs to know neither how
+//! large the tokenizer's vocabulary is nor which tokenizer it was. [`ByteMap`] is the exception,
+//! and deliberately so: its offset array is indexed by token id, so it is sized from the
+//! vocabulary's declared `vocab_size` and cannot be built without one.
 //!
 //! ```text
 //! encode:  r = rank_of(t)        if t was seen in training
@@ -22,17 +25,41 @@
 //!
 //! # On-disk format
 //!
+//! Both artefacts share one 12-byte envelope and are told apart by the `kind` byte, so handing
+//! one to the other's parser is an error rather than a misinterpretation.
+//!
 //! ```text
 //! off  size  field
 //!   0     4  magic "TNTT"
 //!   4     1  version (1)
-//!   5     1  kind (1 = rank)
+//!   5     1  kind (1 = rank, 2 = map)
 //!   6     2  reserved, must be zero
+//!   8     4  count, kind-dependent (u32 LE)
+//! ```
+//!
+//! **kind 1, the ranking** — written as `<vocabulary_id>.tntt`:
+//!
+//! ```text
+//! off  size  field
 //!   8     4  k, the number of ranked tokens (u32 LE)
-//!  12     -  token_of_rank: k x u32 LE
+//!  12    4k  token_of_rank: k x u32 LE
 //! ```
 //!
 //! `rank_of` is the inverse and is rebuilt on load rather than stored, which halves the file.
+//!
+//! **kind 2, the mapping** — written as `<vocabulary_id>.tnmap`:
+//!
+//! ```text
+//! off        size  field
+//!   8           4  vocab_size, the declared id space (u32 LE)
+//!  12  4(v_s + 1)  offsets: vocab_size + 1 x u32 LE, non-decreasing, offsets[0] = 0
+//!   *           -  blob: the concatenated token bytes, offsets[vocab_size] long
+//! ```
+//!
+//! Token `id`'s bytes are `blob[offsets[id]..offsets[id + 1]]`, so a lookup is two loads and a
+//! slice. The offsets are stored rather than rebuilt because they *are* the index; an empty
+//! range means that id has no entry. Being `u32`, they cap a mapping's blob at 4 GiB — enforced
+//! in [`ByteMap::build`], since a wrapped offset would write a file nothing could ever read.
 
 use std::collections::HashMap;
 
@@ -82,6 +109,10 @@ pub enum TableError {
     /// The header's declared `vocab_size` is large enough that computing the offsets array
     /// size would overflow `usize`. Only a corrupt header can claim this.
     VocabSizeOverflow(u32),
+    /// The supplied entries total more bytes than a `u32` offset can address. Caught at build
+    /// time: the cast would otherwise wrap silently, and `build` would return a file whose
+    /// offsets run backwards — permanently unreadable, with nothing to say why.
+    BlobTooLarge(usize),
 }
 
 impl std::fmt::Display for TableError {
@@ -125,6 +156,11 @@ impl std::fmt::Display for TableError {
             TableError::VocabSizeOverflow(v) => write!(
                 f,
                 "table header claims vocab_size {v}, which overflows the offsets array size"
+            ),
+            TableError::BlobTooLarge(n) => write!(
+                f,
+                "mapping entries total {n} bytes, more than the {} a 32-bit offset can address",
+                u32::MAX
             ),
         }
     }
@@ -315,13 +351,31 @@ impl ByteMap {
             *slot = Some(bytes.as_slice());
         }
 
+        // Offsets are `u32`, so the concatenated blob has to fit in one. Checked here, before a
+        // byte is copied, rather than left to the `as u32` below: that cast wraps silently, so a
+        // mapping over 4 GiB would build without complaint and write a file whose offsets run
+        // backwards — unreadable forever, with nothing on record to say why. Duplicates are
+        // already refused above, so this sum is exactly the blob's final length.
+        let summed = pairs
+            .iter()
+            .try_fold(0usize, |acc, (_, b)| acc.checked_add(b.len()));
+        let total = match summed {
+            Some(t) if t <= u32::MAX as usize => t,
+            Some(t) => return Err(TableError::BlobTooLarge(t)),
+            // The sum overflowed `usize` itself, which needs more bytes in memory than the
+            // address space holds. Report the saturated total rather than inventing a variant
+            // for a case only a corrupted `pairs` could reach.
+            None => return Err(TableError::BlobTooLarge(usize::MAX)),
+        };
+
         let mut offsets = Vec::with_capacity(n + 1);
-        let mut blob = Vec::new();
+        let mut blob = Vec::with_capacity(total);
         offsets.push(0u32);
         for slot in owned {
             if let Some(b) = slot {
                 blob.extend_from_slice(b);
             }
+            // Bounded by the check above.
             offsets.push(blob.len() as u32);
         }
         Ok(ByteMap { offsets, blob })
