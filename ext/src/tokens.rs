@@ -29,15 +29,38 @@
 //! value still wearing it cannot be read back.
 //!
 //! Reading an unresolved value is an error, so `'{1,2,3}'::pgtoken.tokens` (no typmod, hence no
-//! length coercion) fails rather than silently picking a width. The one asymmetry: an
-//! `INSERT` into a column declared as a bare `pgtoken.tokens` stores the unresolved value and
-//! fails on the way back out, not on the way in — see
-//! `a_typmodless_column_cannot_be_read_back`.
+//! length coercion) fails rather than silently picking a width. The one asymmetry, and it is only
+//! on the text path: an `INSERT` of a *literal* into a column declared as a bare `pgtoken.tokens`
+//! stores the unresolved value and fails on the way back out, not on the way in — see
+//! `a_typmodless_column_cannot_be_read_back`. The binary paths refuse it at write time, because
+//! `RECEIVE` calls `validate`.
 //!
 //! `RECEIVE` is the exception that has to police itself. It *does* get the real typmod, but
 //! nothing re-checks what it returns — `CopyFrom` calls `ReceiveFunctionCall` and stores the
 //! result, with no length coercion behind it — so `tokens_recv` compares the incoming value's
 //! vocabulary and codec against the column's typmod itself. See `check_against_typmod`.
+//!
+//! ## Which vocabulary a value may be stored under
+//!
+//! Token ids only mean something to the vocabulary that produced them, so moving a value between
+//! vocabularies has to be something the user asked for rather than something an assignment does
+//! quietly. The length coercion gets `is_explicit` for exactly that, and the three write paths
+//! now agree:
+//!
+//! | path | different vocabulary |
+//! | --- | --- |
+//! | explicit cast (`::`, `ALTER … USING`) | allowed, re-encoded at the new width |
+//! | assignment (`INSERT … SELECT`, bare `ALTER … TYPE`) | refused |
+//! | `RECEIVE` (`COPY … BINARY`) | refused |
+//!
+//! ## What is checked, and what is trusted
+//!
+//! Text input validates every id against the vocabulary's declared `vocab_size` (`encode_for`).
+//! The binary paths do not: they check the header — magic, version, codec, payload length,
+//! vocabulary — and hand the payload through untouched. Scanning ids there would put an O(n) pass
+//! on the operation this project exists to make fast, and the harm is bounded, since an
+//! out-of-vocabulary id decodes back to itself and a detokenizer that finds no mapping for it
+//! fails loudly. A client framing a binary value is already trusted to frame a sound header.
 
 use std::ffi::{CStr, CString};
 
@@ -48,7 +71,7 @@ use pgtoken_core::value;
 
 use crate::registry::{bail, rank_table, table_path};
 use crate::typmod::{codec_for, unpack};
-use crate::vocabulary::{name_for_id, vocab_size_for};
+use crate::vocabulary::{name_for_id, vocab_size_for, MAX_VOCAB_SIZE};
 
 /// `vocabulary_id` of a value whose typmod has not been applied yet. The header format already
 /// reserves 0 for "no vocabulary", and `create_vocabulary` never assigns it, so an unresolved
@@ -146,7 +169,28 @@ fn unresolved_value() -> ! {
         "Declare the column as tokens.<name> or pgtoken.tokens('<name>'), then re-insert the rows.",
     )
     .report(PgLogLevel::ERROR);
-    unreachable!()
+    unreachable!("unresolved_value must not return")
+}
+
+/// Asked to store a value under a vocabulary other than the one that produced its ids, by an
+/// assignment rather than an explicit cast. See [`tokens_typmod_apply_impl`].
+fn cross_vocabulary_assignment(from: u16, to: u16) -> ! {
+    let to = vocabulary_label(to);
+    pgrx::pg_sys::panic::ErrorReport::new(
+        PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+        format!(
+            "cannot store {} token ids in a tokens('{to}') column",
+            vocabulary_label(from)
+        ),
+        function_name!(),
+    )
+    .set_detail(
+        "An assignment will not reinterpret token ids under a different vocabulary. An explicit \
+         cast will, and says so at the call site.",
+    )
+    .set_hint("token ids are only meaningful to the vocabulary that produced them")
+    .report(PgLogLevel::ERROR);
+    unreachable!("cross_vocabulary_assignment must not return")
 }
 
 /// Encode token IDs with no vocabulary and therefore no width of their own.
@@ -156,6 +200,15 @@ fn unresolved_value() -> ! {
 /// has, used unconditionally so that any id the column may later accept fits — and the recorded
 /// vocabulary is [`UNRESOLVED`], which makes the value unreadable until a typmod is applied.
 fn encode_unresolved(ids: &[u32]) -> Vec<u8> {
+    // Bound the ids against the *format*, not against the carrier codec. Letting `raw24` refuse
+    // them would surface "does not fit codec raw24" from a codec the user never chose and cannot
+    // see, in the one place the project promises a width is never derived from the data.
+    let max_id = (MAX_VOCAB_SIZE - 1) as u32;
+    if let Some(&bad) = ids.iter().find(|&&id| id > max_id) {
+        bail(format!(
+            "token id {bad} exceeds the {max_id} this format can address"
+        ));
+    }
     value::encode(ids, Codec::Raw24, UNRESOLVED, None).unwrap_or_else(|e| bail(e))
 }
 
@@ -180,8 +233,10 @@ fn require_vocabulary(v: &[u8]) {
 /// column's, i.e. silently mean different text.
 fn check_against_typmod(v: &[u8], typmod: i32) {
     let Some(target) = unpack(typmod) else {
-        // No vocabulary to check against. A bare `pgtoken.tokens` column accepts an unresolved
-        // value here for the same reason `tokens_in` produces one; reading it back still fails.
+        // Nothing to check against. This is not a hole: `tokens_recv` also calls `validate`, which
+        // refuses an unresolved value outright, so a binary write into a bare `pgtoken.tokens`
+        // column fails here and now — unlike the text path, which stores the value and fails on
+        // the way back out.
         return;
     };
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
@@ -214,7 +269,14 @@ pub fn encode_for(ids: &[u32], typmod: i32) -> Vec<u8> {
         no_vocabulary_typmod()
     };
 
-    // The declared ID space is a cheap, exact check that these ids came from this tokenizer.
+    // A cheap, exact check that these ids came from this tokenizer — but only for the paths that
+    // arrive here, which is text input and (from Task 7) `int[]` input. The binary paths do not
+    // reach this: `RECEIVE` and `tokens_recv_bytes` compare the header's vocabulary and codec and
+    // then hand the payload through untouched. That is deliberate. Scanning every id would put an
+    // O(n) pass on precisely the operation this project exists to make fast, and the harm is
+    // bounded — an out-of-vocabulary id decodes back to itself, the stride stays uniform, and a
+    // detokenizer that later finds no mapping for it fails loudly. So: text and `int[]` input
+    // validate ids against `vocab_size`; the binary paths trust the client that framed the bytes.
     let size = vocab_size_for(v.id)
         .unwrap_or_else(|| bail(format!("vocabulary id {} is not registered", v.id)));
     if let Some(&bad) = ids.iter().find(|&&id| id >= size) {
@@ -251,9 +313,18 @@ pub fn decode_value(v: &[u8]) -> Vec<u32> {
     }
 }
 
-/// Validate a blob as a stored value and return it unchanged. Every path admitting outside bytes
-/// goes through this — failing loudly beats storing something that decodes to plausible-looking
-/// wrong IDs.
+/// Check a blob's **header** and return it unchanged.
+///
+/// What this guarantees: the magic, version, codec id and reserved bytes are sound, the raw
+/// codecs' payload length matches the token count exactly, and the value names a real vocabulary
+/// rather than being unresolved. Failing loudly on any of that beats storing something that
+/// decodes to plausible-looking wrong IDs.
+///
+/// What it deliberately does **not** check: the token ids in the payload. Reading them would cost
+/// an O(n) pass on the binary write path — see the note in [`encode_for`] on why the binary paths
+/// trust their client where text input does not. `RECEIVE` pairs this with
+/// [`check_against_typmod`], which compares the header against the column; neither looks at a
+/// single id.
 pub fn validate(v: &[u8]) -> Vec<u8> {
     require_vocabulary(v);
     v.to_vec()
@@ -282,8 +353,26 @@ fn tokens_in_impl(input: &CStr, _oid: pg_sys::Oid, typmod: i32) -> Vec<u8> {
 ///
 /// This, not `tokens_in`, is where a string literal acquires its vocabulary and its width. It has
 /// to re-encode rather than merely check, because the typmod picks the packing.
+///
+/// `is_explicit` is what PostgreSQL sets to `ccontext == COERCION_EXPLICIT` in
+/// `build_coercion_expression`, and it is the only thing distinguishing "the user asked for this
+/// reinterpretation" from "the user assigned one column to another and did not notice the
+/// vocabularies differ". Changing vocabulary is therefore allowed only on an explicit cast:
+///
+/// ```sql
+/// ALTER TABLE t ALTER COLUMN body TYPE pgtoken.tokens('o200k')             -- refused
+/// ALTER TABLE t ALTER COLUMN body TYPE pgtoken.tokens('o200k')
+///     USING body::pgtoken.tokens('o200k')                                  -- allowed
+/// INSERT INTO o200k_t SELECT body FROM cl100k_t                            -- refused
+/// INSERT INTO o200k_t SELECT body::pgtoken.tokens('o200k') FROM cl100k_t   -- allowed
+/// ```
+///
+/// Without the split, `INSERT … SELECT` would silently re-stamp every value's `vocabulary_id`
+/// while the byte-identical value arriving over `COPY … (FORMAT binary)` was refused by
+/// [`check_against_typmod`]. Two write paths disagreeing about the project's central hazard is
+/// worse than either policy alone.
 #[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_typmod_apply_impl(value: &[u8], typmod: i32, _is_explicit: bool) -> Vec<u8> {
+fn tokens_typmod_apply_impl(value: &[u8], typmod: i32, is_explicit: bool) -> Vec<u8> {
     let Some(target) = unpack(typmod) else {
         // Unreachable through the planner: `coerce_type_typmod` returns the value untouched for a
         // negative typmod rather than calling this. Reachable by calling the function by hand.
@@ -294,10 +383,14 @@ fn tokens_typmod_apply_impl(value: &[u8], typmod: i32, _is_explicit: bool) -> Ve
         // Already in the column's encoding, so re-encoding could only produce the same bytes.
         return value.to_vec();
     }
-    // A different vocabulary is deliberately allowed: `ALTER TABLE … ALTER COLUMN … TYPE
-    // tokens('other')` is the migration path the vocabulary catalog's immutability HINT points
-    // at. The ids survive; the width and the recorded vocabulary change, and `encode_for`'s
-    // bound check refuses ids the new vocabulary cannot address.
+    // [`UNRESOLVED`] is exempt: that is every string literal on its way to acquiring a vocabulary
+    // for the first time, and an INSERT of a literal is an assignment. It is not a
+    // reinterpretation, because the value never had a vocabulary to be reinterpreted from.
+    if h.vocabulary_id != UNRESOLVED && h.vocabulary_id != target.id && !is_explicit {
+        cross_vocabulary_assignment(h.vocabulary_id, target.id);
+    }
+    // Same vocabulary, different packing stays permissive in both contexts: a lossless recode
+    // within one ID space reinterprets nothing.
     encode_for(&decode_value(value), typmod)
 }
 
@@ -633,6 +726,33 @@ mod tests {
         Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens::text").unwrap();
     }
 
+    #[pg_test]
+    fn send_does_not_run_the_codec() {
+        // The only test standing between the hot path and a future "simplification" that decodes
+        // and re-encodes. Because encoding is canonical, such a rewrite would return identical
+        // bytes and every other test here would still pass.
+        //
+        // The value is hand-framed so its header names `freq` against vocabulary 60002, which no
+        // test trains: a7 magic, version 1, codec 2 (freq), reserved 0, id 60002 LE, reserved,
+        // n_tokens 3 LE, then one payload byte. A header-only check accepts it and hands the bytes
+        // back; anything that touches the codec must load a ranking file that does not exist, and
+        // dies with "cannot open coding table".
+        let same = Spi::get_one::<bool>(
+            "SELECT pgtoken.tokens_send(pgtoken.tokens_recv_bytes(v)) = v \
+             FROM (SELECT '\\xa701020062ea00000300000001'::bytea AS v) s",
+        )
+        .expect("query failed");
+        assert_eq!(same, Some(true), "send must copy, never decode");
+    }
+
+    #[pg_test(error = "token id 16777216 exceeds the 16777215 this format can address")]
+    fn input_rejects_an_id_the_format_cannot_address() {
+        // Caught before the carrier encode, so the message names the format rather than leaking
+        // `raw24` — a codec the user never chose and cannot see from the column definition.
+        vocab("t_huge", 200019);
+        Spi::get_one::<String>("SELECT '{16777216}'::pgtoken.tokens('t_huge')::text").unwrap();
+    }
+
     #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
     fn send_refuses_a_value_without_a_vocabulary() {
         // Binary output has to refuse what text output refuses. Otherwise a bare-column table is
@@ -666,9 +786,11 @@ mod tests {
     }
 
     #[pg_test]
-    fn altering_the_column_type_re_encodes_at_the_new_width() {
-        // The migration path the vocabulary catalog's immutability HINT points at, and the only
-        // other user of the length coercion.
+    fn an_explicit_cast_moves_a_value_to_another_vocabulary() {
+        // The migration path the vocabulary catalog's immutability HINT points at. `USING` is not
+        // decoration: the bare `ALTER TABLE … TYPE` form coerces in assignment context, which
+        // `assignment_refuses_a_value_from_another_vocabulary` shows is refused. The explicit cast
+        // inside `USING` is the user saying they meant it.
         vocab("t_from", 200019);
         vocab("t_to", 256);
         ensure_bytea_cast();
@@ -678,13 +800,42 @@ mod tests {
             Spi::get_one::<i32>("SELECT length(body::bytea) FROM moved").expect("query failed");
         assert_eq!(before, Some(12 + 9), "raw24 to start with");
 
-        Spi::run("ALTER TABLE moved ALTER COLUMN body TYPE pgtoken.tokens('t_to')")
-            .expect("alter type");
+        Spi::run(
+            "ALTER TABLE moved ALTER COLUMN body TYPE pgtoken.tokens('t_to') \
+             USING body::pgtoken.tokens('t_to')",
+        )
+        .expect("alter type");
         let (rendered, after) =
             Spi::get_two::<String, i32>("SELECT body::text, length(body::bytea) FROM moved")
                 .expect("query failed");
         assert_eq!(rendered, Some("{1,2,3}".to_string()), "ids must survive");
         assert_eq!(after, Some(12 + 3), "re-encoded to raw8");
+    }
+
+    #[pg_test]
+    fn an_explicit_cast_chain_changes_vocabulary() {
+        // The same permission, reached without ALTER TABLE's machinery: `::` is COERCION_EXPLICIT.
+        vocab("x_from", 200019);
+        vocab("x_to", 200019);
+        let got = Spi::get_one::<String>(
+            "SELECT ('{1,2,70000}'::pgtoken.tokens('x_from'))::pgtoken.tokens('x_to')::text",
+        )
+        .expect("query failed");
+        assert_eq!(got, Some("{1,2,70000}".to_string()));
+    }
+
+    #[pg_test(error = "cannot store a_from token ids in a tokens('a_to') column")]
+    fn assignment_refuses_a_value_from_another_vocabulary() {
+        // Without the is_explicit split this silently re-stamped every value's vocabulary_id,
+        // while the byte-identical value arriving over COPY BINARY was refused — two write paths
+        // disagreeing about the one hazard the project is built around. Both vocabularies are the
+        // same size, so nothing but the vocabulary differs.
+        vocab("a_from", 200019);
+        vocab("a_to", 200019);
+        Spi::run("CREATE TABLE a_from_t (body pgtoken.tokens('a_from'))").expect("src");
+        Spi::run("INSERT INTO a_from_t VALUES ('{1,2,70000}')").expect("insert");
+        Spi::run("CREATE TABLE a_to_t (body pgtoken.tokens('a_to'))").expect("dst");
+        Spi::run("INSERT INTO a_to_t SELECT body FROM a_from_t").unwrap();
     }
 
     #[pg_test(error = "token id 300 is outside vocabulary t_bound (size 256)")]
