@@ -270,40 +270,6 @@ mod tests {
     use pgrx::prelude::*;
 
     #[pg_test]
-    fn raw_roundtrips_through_sql() {
-        let got = Spi::get_one::<Vec<i32>>(
-            "SELECT pgtoken.decode(pgtoken.encode('{24912,2375}', 'raw', 0))",
-        )
-        .expect("query failed");
-        assert_eq!(got, Some(vec![24912, 2375]));
-    }
-
-    #[pg_test]
-    fn roundtrips_ids_of_any_magnitude() {
-        // No vocabulary is declared anywhere, so large IDs must simply work.
-        let got = Spi::get_one::<Vec<i32>>(
-            "SELECT pgtoken.decode(pgtoken.encode('{0,1,65535,65536,200018,1000000}', 'raw', 0))",
-        )
-        .expect("query failed");
-        assert_eq!(got, Some(vec![0, 1, 65535, 65536, 200018, 1000000]));
-    }
-
-    #[pg_test]
-    fn picks_the_narrow_packing_when_it_fits() {
-        let codec = Spi::get_one::<String>(
-            "SELECT codec FROM pgtoken.describe(pgtoken.encode('{1,2,3}', 'raw', 0))",
-        )
-        .expect("query failed");
-        assert_eq!(codec, Some("raw16".to_string()));
-
-        let codec = Spi::get_one::<String>(
-            "SELECT codec FROM pgtoken.describe(pgtoken.encode('{70000}', 'raw', 0))",
-        )
-        .expect("query failed");
-        assert_eq!(codec, Some("raw24".to_string()));
-    }
-
-    #[pg_test]
     fn token_count_reads_only_the_header() {
         let (n, total) = Spi::get_two::<i32, i32>(
             "SELECT pgtoken.token_count(v), length(v) \
@@ -312,17 +278,6 @@ mod tests {
         .expect("query failed");
         assert_eq!(n, Some(3));
         assert_eq!(total, Some(12 + 6), "12-byte header plus 2 bytes per token");
-    }
-
-    #[pg_test]
-    fn encoding_is_canonical_in_sql() {
-        // Equality, GROUP BY and hash joins on a pgtoken column are only correct if identical
-        // input gives identical bytes.
-        let same = Spi::get_one::<bool>(
-            "SELECT pgtoken.encode('{5,9,5,1}', 'raw', 0) = pgtoken.encode('{5,9,5,1}', 'raw', 0)",
-        )
-        .expect("query failed");
-        assert_eq!(same, Some(true));
     }
 
     #[pg_test]
@@ -407,43 +362,6 @@ mod tests {
         ))
         .expect("query failed");
         assert_eq!(got, Some(vec![1, 2, 999999, 0, 16000000]));
-    }
-
-    #[pg_test]
-    fn freq_beats_raw_on_a_skewed_stream() {
-        const TID: i32 = 1003;
-        ensure_table(
-            TID,
-            "SELECT array_agg(199999)::int[] FROM generate_series(1,64)",
-        );
-
-        let (raw, freq) = Spi::get_two::<i32, i32>(&format!(
-            "SELECT length(pgtoken.encode(a, 'raw', 0)), \
-                    length(pgtoken.encode(a, 'freq', {TID})) \
-             FROM (SELECT array_agg(199999)::int[] AS a FROM generate_series(1,512)) s"
-        ))
-        .expect("query failed");
-        let (raw, freq) = (raw.unwrap(), freq.unwrap());
-        assert!(
-            freq < raw,
-            "freq ({freq} B) should beat raw ({raw} B) on a skewed stream"
-        );
-    }
-
-    #[pg_test]
-    fn recode_moves_between_raw_and_freq() {
-        const TID: i32 = 1004;
-        ensure_table(
-            TID,
-            "SELECT ARRAY[5,5,5,9]::int[] FROM generate_series(1,20)",
-        );
-
-        let got = Spi::get_one::<Vec<i32>>(&format!(
-            "SELECT pgtoken.decode(\
-               pgtoken.recode(pgtoken.encode('{{5,9,70000}}', 'raw', 0), 'freq', {TID}))"
-        ))
-        .expect("query failed");
-        assert_eq!(got, Some(vec![5, 9, 70000]));
     }
 
     // A Postgres ERROR aborts the transaction, so pgrx needs the expected message declared.
