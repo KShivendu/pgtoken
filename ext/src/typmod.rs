@@ -46,8 +46,6 @@ pub fn unpack(typmod: i32) -> Option<Vocabulary> {
 /// from Postgres to compile or link, and pgrx's `#[pg_extern]` wrapper still catches it and
 /// reports it as a normal `ERROR` to any SQL caller, so the width-4 case (unreachable while
 /// `MAX_VOCAB_SIZE` stays at 3 bytes) is still not silently accepted.
-// Task 5's `tokens_in`/`tokens_out` are the first non-test callers.
-#[allow(dead_code)]
 pub fn codec_for(v: Vocabulary) -> Codec {
     if v.compression == COMPRESSION_FREQ {
         return Codec::Freq;

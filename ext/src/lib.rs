@@ -30,6 +30,7 @@ use pgtoken_core::tables::RankTable;
 use pgtoken_core::value;
 
 mod registry;
+mod tokens;
 mod typmod;
 mod vocabulary;
 

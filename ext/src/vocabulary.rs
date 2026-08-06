@@ -190,8 +190,6 @@ pub fn name_for_id(id: u16) -> Option<String> {
 }
 
 /// The declared ID space, for the out-of-vocabulary bound check on writes.
-// Task 5's `tokens_in` is the first caller.
-#[allow(dead_code)]
 pub fn vocab_size_for(id: u16) -> Option<u32> {
     Spi::connect(|client| {
         client
