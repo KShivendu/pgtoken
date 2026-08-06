@@ -174,8 +174,6 @@ pub fn lookup_by_name(name: &str) -> Option<Vocabulary> {
 
 /// Reverse lookup for `typmod_out`. Returns `None` rather than raising, because `typmod_out` can
 /// run while formatting an error message in an already-aborted transaction.
-// Task 4's `typmod_out` is the first caller.
-#[allow(dead_code)]
 pub fn name_for_id(id: u16) -> Option<String> {
     Spi::connect(|client| {
         client
