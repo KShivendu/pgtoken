@@ -300,11 +300,24 @@ fn vocabulary_info(
     let size = vocab_size_for(v.id)
         .unwrap_or_else(|| bail(format!("vocabulary {name:?} has no catalog row")));
 
-    // An unfilled ranking is a normal state, not a fault, so a missing file becomes NULLs
-    // rather than an error.
-    let (ranked, sha256, file_bytes) = match crate::registry::describe_table(v.id) {
-        Ok((k, digest, len)) => (Some(k as i32), Some(digest), Some(len as i64)),
-        Err(_) => (None, None, None),
+    // An unfilled ranking is a normal state, not a fault, so a genuinely absent file becomes
+    // NULLs rather than an error. Anything else — `table_dir` unset so the question cannot even
+    // be asked, or a file that is there but unreadable/corrupt — is a real fault and must say so
+    // rather than collapsing into the same NULLs, which would silently read as "never trained".
+    if crate::registry::table_dir().as_os_str().is_empty() {
+        bail("pgtoken.table_dir is not set; cannot tell whether any vocabulary has a ranking");
+    }
+    let path = crate::registry::table_path(v.id);
+    let (ranked, sha256, file_bytes) = if !path.exists() {
+        (None, None, None)
+    } else {
+        match crate::registry::describe_table(v.id) {
+            Ok((k, digest, len)) => (Some(k as i32), Some(digest), Some(len as i64)),
+            Err(e) => bail(format!(
+                "vocabulary {name:?} has a ranking file at {} but it could not be read: {e}",
+                path.display()
+            )),
+        }
     };
 
     TableIterator::once((

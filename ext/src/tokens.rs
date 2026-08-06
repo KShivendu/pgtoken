@@ -543,33 +543,6 @@ CREATE FUNCTION pgtoken.tokens_recv_bytes(bytea) RETURNS pgtoken.tokens
     ],
 );
 
-/// Byte-equality on two stored values.
-///
-/// Encoding is canonical (see `send_does_not_run_the_codec`), so identical token ids under the
-/// same vocabulary always produce identical bytes, and values from different vocabularies carry
-/// different headers and so are never equal. That is what makes plain byte comparison correct
-/// for `=`, and what `encoding_is_canonical_in_sql` pins down.
-#[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_eq_impl(a: &[u8], b: &[u8]) -> bool {
-    a == b
-}
-
-extension_sql!(
-    r#"
-CREATE FUNCTION pgtoken.tokens_eq(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
-    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
-    AS 'MODULE_PATHNAME', 'tokens_eq_impl_wrapper';
-
-CREATE OPERATOR = (
-    LEFTARG = pgtoken.tokens,
-    RIGHTARG = pgtoken.tokens,
-    PROCEDURE = pgtoken.tokens_eq
-);
-"#,
-    name = "tokens_operators",
-    requires = ["tokens_type", tokens_eq_impl],
-);
-
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {

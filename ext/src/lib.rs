@@ -294,18 +294,14 @@ mod tests {
 
     #[pg_test]
     fn encoding_is_canonical_in_sql() {
-        // Equality, GROUP BY and hash joins on a tokens column are only correct if identical input
-        // gives identical bytes.
-        //
-        // `pgtoken.tokens_eq` and its `=` operator live in the `pgtoken` schema, like every
-        // other object here, and this suite deliberately never puts `pgtoken` on search_path
-        // (see e.g. `column_type_shows_the_vocabulary_name`, which pins `format_type` rendering
-        // the schema prefix). `OPERATOR(pgtoken.=)` reaches the operator by schema regardless of
-        // search_path, the same way every function call here is schema-qualified.
+        // The property under test is byte equality, so comparing `::bytea` says that directly.
+        // `pgtoken.tokens` deliberately has no `=` operator of its own (adding one would need a
+        // hash opclass to back GROUP BY / DISTINCT / hash joins too, or it would ship half an
+        // equality story; that is a design pass of its own, not a side effect of this test).
         Spi::run("SELECT pgtoken.create_vocabulary('canon', 60000)").expect("create");
         let same = Spi::get_one::<bool>(
-            "SELECT '{5,9,5,1}'::pgtoken.tokens('canon') \
-               OPERATOR(pgtoken.=) '{5,9,5,1}'::pgtoken.tokens('canon')",
+            "SELECT '{5,9,5,1}'::pgtoken.tokens('canon')::bytea \
+               = '{5,9,5,1}'::pgtoken.tokens('canon')::bytea",
         )
         .expect("query failed");
         assert_eq!(same, Some(true));
@@ -332,6 +328,26 @@ mod tests {
         let ranked = Spi::get_one::<i32>("SELECT ranked FROM pgtoken.vocabulary_info('vi_bare')")
             .expect("query failed");
         assert_eq!(ranked, None, "an unfilled part is NULL, not an error");
+    }
+
+    #[pg_test(error = "vocabulary \"vi_corrupt\" has a ranking file at \
+                 /tmp/pgtoken-pgrx-test-tables/61005.tntt but it could not be read: coding table \
+                 61005 is not valid: table file has bad magic, expected TNTT")]
+    fn vocabulary_info_reports_a_corrupt_ranking_as_an_error() {
+        // A present-but-broken ranking is a fault, not the same "unfilled" NULL as never having
+        // trained -- collapsing the two would hide a real problem behind a normal-looking status
+        // row. A pinned id, disjoint from every other trained vocabulary in this module.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('vi_corrupt', 300, compression => 'freq', \
+                                              id => 61005)",
+        )
+        .expect("create");
+        std::fs::write(
+            "/tmp/pgtoken-pgrx-test-tables/61005.tntt",
+            b"not a real coding table, just junk bytes",
+        )
+        .expect("write a junk ranking file");
+        Spi::get_one::<i32>("SELECT ranked FROM pgtoken.vocabulary_info('vi_corrupt')").unwrap();
     }
 
     #[pg_test(error = "value is 1 bytes, shorter than the 12-byte header")]
