@@ -36,6 +36,13 @@ pub fn width_for(vocab_size: i32) -> i32 {
     bits.div_ceil(8) as i32
 }
 
+/// Quote an identifier the way PostgreSQL would, so a name needing quotes cannot break the DDL.
+fn quote_ident(name: &str) -> String {
+    Spi::get_one_with_args::<String>("SELECT quote_ident($1)", &[name.into()])
+        .unwrap_or_else(|e| bail(e))
+        .unwrap_or_else(|| bail("quote_ident returned NULL"))
+}
+
 fn compression_code(name: &str) -> u8 {
     match name {
         "raw" => COMPRESSION_RAW,
@@ -154,7 +161,30 @@ fn create_vocabulary(
     )
     .unwrap_or_else(|e| bail(e));
 
+    // The domain is what users write. It carries the packed typmod, so the base type name never
+    // has to appear in a schema definition — and two vocabularies become two distinct types,
+    // which makes mixing tokenizers a type error rather than a silent recode.
+    Spi::run(&format!(
+        "CREATE DOMAIN tokens.{} AS pgtoken.tokens('{}')",
+        quote_ident(name),
+        name
+    ))
+    .unwrap_or_else(|e| bail(e));
+
     assigned
+}
+
+/// Remove a vocabulary's domain.
+///
+/// The catalog row and its id stay forever — stored values may still reference the id, and
+/// reusing one would change what those rows mean. The immutability trigger enforces that even
+/// against a deliberate `DELETE`.
+#[pg_extern]
+fn drop_vocabulary(name: &str) {
+    if lookup_by_name(name).is_none() {
+        bail(format!("vocabulary {name:?} does not exist"));
+    }
+    Spi::run(&format!("DROP DOMAIN tokens.{}", quote_ident(name))).unwrap_or_else(|e| bail(e));
 }
 
 /// Resolve a name to the three fields a typmod needs. Called at DDL time only.
@@ -338,5 +368,97 @@ mod tests {
         Spi::run("SELECT pgtoken.create_vocabulary('v_immutable', 300)").expect("create");
         Spi::run("UPDATE pgtoken.vocabulary SET vocab_size = 400 WHERE name = 'v_immutable'")
             .unwrap();
+    }
+
+    /// A binary-coercible `pgtoken.tokens -> bytea` cast, so a test can inspect a stored value's
+    /// actual byte length. Domains are binary-compatible with their base type, so this also
+    /// works on a value whose declared column type is `tokens.<name>`. Created inside the test's
+    /// own transaction, which pgrx rolls back, and skipped if one already exists.
+    fn ensure_bytea_cast() {
+        Spi::run(
+            "DO $cast$ BEGIN \
+               IF NOT EXISTS (SELECT 1 FROM pg_cast \
+                              WHERE castsource = 'pgtoken.tokens'::regtype \
+                                AND casttarget = 'bytea'::regtype) THEN \
+                 CREATE CAST (pgtoken.tokens AS bytea) WITHOUT FUNCTION; \
+               END IF; \
+             END $cast$",
+        )
+        .expect("bytea cast");
+    }
+
+    #[pg_test]
+    fn creating_a_vocabulary_emits_a_domain() {
+        // `body::int[]` is the brief's original assertion, but that cast is Task 7's job (see
+        // the "(from Task 7) `int[]` input" note in `tokens.rs`'s `encode_for`) and does not
+        // exist yet at this point in the sequence. `::text` proves the same thing — a table
+        // declared with the domain accepts a literal and reads it back — using a cast this task
+        // can actually reach.
+        Spi::run("SELECT pgtoken.create_vocabulary('dom1', 32000)").expect("create");
+        Spi::run("CREATE TABLE dom1_docs (body tokens.dom1)").expect("create table");
+        Spi::run("INSERT INTO dom1_docs (body) VALUES ('{1,2,3}')").expect("insert");
+        let got = Spi::get_one::<String>("SELECT body::text FROM dom1_docs").expect("query failed");
+        assert_eq!(got, Some("{1,2,3}".to_string()));
+    }
+
+    #[pg_test]
+    fn the_domain_carries_the_vocabulary_typmod() {
+        Spi::run("SELECT pgtoken.create_vocabulary('dom2', 256)").expect("create");
+        let base = Spi::get_one::<String>(
+            "SELECT format_type(typbasetype, typtypmod) FROM pg_type \
+             WHERE oid = 'tokens.dom2'::regtype",
+        )
+        .expect("query failed");
+        assert_eq!(base, Some("pgtoken.tokens('dom2')".to_string()));
+
+        // `format_type` reading the catalog correctly is necessary but not sufficient: it could
+        // render right while a write through the domain still stored the unresolved raw24
+        // carrier. Prove the domain's typmod actually reaches the write path by checking a value
+        // inserted through it lands at dom2's declared width (256 -> raw8, one byte per token)
+        // rather than the wider unresolved encoding.
+        ensure_bytea_cast();
+        Spi::run("CREATE TABLE dom2_docs (body tokens.dom2)").expect("create table");
+        Spi::run("INSERT INTO dom2_docs (body) VALUES ('{1,2,3}')").expect("insert");
+        let len =
+            Spi::get_one::<i32>("SELECT length(body::bytea) FROM dom2_docs").expect("query failed");
+        assert_eq!(
+            len,
+            Some(12 + 3),
+            "raw8: one byte per token, proving the domain's typmod reached the encoder"
+        );
+    }
+
+    #[pg_test(error = "cannot store dom_b token ids in a tokens('dom_a') column")]
+    fn distinct_vocabularies_are_distinct_types() {
+        // A domain buys a distinct type per vocabulary for free, but the refusal below is not
+        // proof of that by itself: Task 5's cross-vocabulary-assignment check on the *base*
+        // type's length coercion cast fires for exactly this statement even without domains,
+        // because coercing dom_b to dom_a reduces to the base type's cast (with dom_a's typmod)
+        // before the domain's own (constraint-only) wrapping ever runs. Both mechanisms now cover
+        // this, so asserting on the exact message — rather than merely `is_err()` — pins down
+        // which one actually fires, instead of leaving it ambiguous.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('dom_a', 32000); \
+             SELECT pgtoken.create_vocabulary('dom_b', 32000); \
+             CREATE TABLE dom_a_t (body tokens.dom_a); \
+             CREATE TABLE dom_b_t (body tokens.dom_b); \
+             INSERT INTO dom_b_t (body) VALUES ('{1,2}');",
+        )
+        .expect("setup");
+        Spi::run("INSERT INTO dom_a_t (body) SELECT body FROM dom_b_t").unwrap();
+    }
+
+    #[pg_test]
+    fn drop_vocabulary_removes_the_domain_but_reserves_the_id() {
+        Spi::run("SELECT pgtoken.create_vocabulary('dom_gone', 300)").expect("create");
+        Spi::run("SELECT pgtoken.drop_vocabulary('dom_gone')").expect("drop");
+        let domains =
+            Spi::get_one::<i64>("SELECT count(*) FROM pg_type WHERE typname = 'dom_gone'")
+                .expect("query failed");
+        assert_eq!(domains, Some(0), "the domain must be gone");
+        let reserved =
+            Spi::get_one::<i64>("SELECT count(*) FROM pgtoken.vocabulary WHERE name = 'dom_gone'")
+                .expect("query failed");
+        assert_eq!(reserved, Some(1), "the id stays reserved forever");
     }
 }
