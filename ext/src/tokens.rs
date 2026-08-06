@@ -911,12 +911,25 @@ mod tests {
         // Creating and exporting have to be separate statements, for the same reason
         // `vocabulary.rs`'s `create` helper splits: `lo_export` in the same statement runs under a
         // snapshot taken before `lo_from_bytea` inserted the object, and fails to find it.
+        //
+        // `pgtoken.encode` is gone, and `w_to`'s own width is raw24 (its vocab_size needs three
+        // bytes), so a raw16 value under its id cannot come from the type itself — it is built by
+        // hand, one hex byte at a time: a7 (magic), 01 (version), 00 (codec raw16), 00 (reserved),
+        // the vocabulary id as a little-endian u16, 0000 (reserved), 03000000 (n_tokens = 3, LE),
+        // then ids 1, 2, 3 as little-endian u16 each.
         let loid = Spi::get_one::<String>(&format!(
             "SELECT lo_from_bytea(0, \
                  '\\x5047434f50590aff0d0a00'::bytea || int4send(0) || int4send(0) \
                  || int2send(1::smallint) || int4send(length(v)) || v \
                  || int2send((-1)::smallint))::text \
-             FROM (SELECT pgtoken.encode('{{1,2,3}}', 'raw16', {id}) AS v) s"
+             FROM (SELECT decode( \
+                     'a7010000' || \
+                     lpad(to_hex({id} & 255), 2, '0') || \
+                     lpad(to_hex(({id} >> 8) & 255), 2, '0') || \
+                     '0000' || \
+                     '03000000' || \
+                     '010002000300', \
+                     'hex') AS v) s"
         ))
         .expect("build the COPY BINARY stream")
         .expect("lo_from_bytea returned NULL");
