@@ -292,6 +292,7 @@ fn vocabulary_info(
         name!(compression, String),
         name!(width, i32),
         name!(ranked, Option<i32>),
+        name!(mapped, Option<i32>),
         name!(sha256, Option<String>),
         name!(file_bytes, Option<i64>),
     ),
@@ -321,12 +322,28 @@ fn vocabulary_info(
         }
     };
 
+    // Same rule as the ranking above: unmapped is normal and reports NULL, but a mapping file
+    // that is present and unreadable is a fault, not "never loaded".
+    let map_path = crate::registry::map_path(v.id);
+    let mapped = if !map_path.exists() {
+        None
+    } else {
+        match crate::registry::describe_map(v.id) {
+            Ok((n, _digest, _len)) => Some(n as i32),
+            Err(e) => bail(format!(
+                "vocabulary {name:?} has a mapping file at {} but it could not be read: {e}",
+                map_path.display()
+            )),
+        }
+    };
+
     TableIterator::once((
         v.id as i32,
         size as i32,
         compression_name(v.compression).to_string(),
         v.width as i32,
         ranked,
+        mapped,
         sha256,
         file_bytes,
     ))
