@@ -57,19 +57,27 @@ The type sets `STORAGE EXTERNAL` itself, so there is no `ALTER TABLE` to remembe
 
 ### Getting text back
 
-Load a `token_id -> bytes` mapping once, exported from the same tokenizer:
+`pgtoken.text()` needs a `token_id -> bytes` table, exported from the tokenizer that produced your
+IDs. `scripts/load_mapping.py` does that for any tiktoken encoding, in about a second for o200k:
 
-```python
-import tiktoken
-enc = tiktoken.get_encoding("o200k_base")
-rows = [(i, enc.decode_single_token_bytes(i)) for i in range(enc.n_vocab)]
-# COPY rows into vocab_staging(id int, bytes bytea)
+```sh
+uv run python scripts/load_mapping.py --encoding o200k_base --vocabulary o200k
+# o200k_base: 200000 of 200019 ids have bytes, 19 unassigned
+# mapped 200000 of 200019 ids for vocabulary o200k
 ```
 
 ```sql
-SELECT pgtoken.load_mapping('o200k', 'SELECT id, bytes FROM vocab_staging');
-SELECT pgtoken.text(body) FROM documents;   -- 'hello world'
+SELECT pgtoken.text(body) FROM documents;   -- 'Hello, world!'
 ```
+
+The table maps ids to bytes rather than strings, because one character often spans two tokens.
+pgtoken concatenates the bytes and interprets UTF-8 once, at the end. To use a different tokenizer,
+replace `export_pairs` in that script; the rest is generic.
+
+o200k_base leaves 19 of its 200019 ids unassigned, and `decode_single_token_bytes` raises on them,
+which is why a one-line comprehension over `range(n_vocab)` crashes. The script skips them and says
+so. Its two special tokens are fine: they decode to the literal text `<|endoftext|>` and
+`<|endofprompt|>`.
 
 The mapping is write-once, which is what lets `pgtoken.text` be `IMMUTABLE` and back an index:
 
