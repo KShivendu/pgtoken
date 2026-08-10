@@ -6,11 +6,11 @@ Store text in PostgreSQL as token IDs instead of UTF-8.
 
 Agents read and write token IDs, not characters. A `text` column makes them re-tokenize on every
 read; `pgtoken` stores the IDs directly, compressed, and hands them back as-is. When something
-downstream needs prose, `pgtoken.text()` gives it to you.
+downstream needs text, `pgtoken.text()` gives it to you.
 
 **No tokenizer.** You tokenize with whatever you already use — tiktoken, HuggingFace,
 SentencePiece, your own. The database needs two things from it: how many token IDs it has, and
-optionally a `token_id -> bytes` table if you want prose back. It never sees a merge table and
+optionally a `token_id -> bytes` table if you want text back. It never sees a merge table and
 never spends a cycle tokenizing.
 
 <sub>Background: [blog](https://www.kshivendu.dev/blog/token-storage) ·
@@ -55,7 +55,7 @@ mean nothing outside the tokenizer that produced them.
 
 The type sets `STORAGE EXTERNAL` itself, so there is no `ALTER TABLE` to remember.
 
-### Getting prose back
+### Getting text back
 
 Load a `token_id -> bytes` mapping once, exported from the same tokenizer:
 
@@ -87,7 +87,7 @@ cast-to-`text` syntax, not a call to this function, and it silently returns the 
 | the stored bytes, no server work | `SELECT body`, binary mode | none — this is the fast path |
 | the same, from a driver that makes binary awkward | `body::bytea` | hex, 2× on the wire |
 | token IDs for SQL-side work | `body::int[]` | 4 B/token |
-| prose, for a human | `pgtoken.text(body)` | needs a mapping |
+| text, for a human | `pgtoken.text(body)` | needs a mapping |
 
 ## Compression
 
@@ -152,7 +152,7 @@ understate it because the Python client pays numpy overhead on 512-element array
 
 ## Limitations
 
-- **Prose needs a mapping.** Without `load_mapping`, reads give you token IDs and `psql` shows
+- **Text needs a mapping.** Without `load_mapping`, reads give you token IDs and `psql` shows
   integers.
 - **No `=`, `ORDER BY`, `GROUP BY` or `DISTINCT`** on the column. Byte order of a compressed value
   is meaningless, and there is no equality operator yet.
