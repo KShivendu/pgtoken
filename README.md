@@ -8,7 +8,7 @@ Agents read and write token IDs, not characters. A `text` column makes them re-t
 read; `pgtoken` stores the IDs directly, compressed, and hands them back as-is. When something
 downstream needs text, `pgtoken.text()` gives it to you.
 
-**No tokenizer.** You tokenize with whatever you already use — tiktoken, HuggingFace,
+**No tokenizer.** You tokenize with whatever you already use: tiktoken, HuggingFace,
 SentencePiece, your own. The database needs two things from it: how many token IDs it has, and
 optionally a `token_id -> bytes` table if you want text back. It never sees a merge table and
 never spends a cycle tokenizing.
@@ -30,10 +30,10 @@ git clone https://github.com/KShivendu/pgtoken.git
 cd pgtoken/ext && cargo pgrx install --release
 ```
 
-No PostgreSQL to hand? `setup_pg.sh` installs one under `~/.local/share`, no root needed.
+If you have no PostgreSQL to hand, `setup_pg.sh` installs one under `~/.local/share`, no root
+needed.
 
-Set `pgtoken.table_dir` in `postgresql.conf` — it is where trained rankings and token mappings
-live.
+Set `pgtoken.table_dir` in `postgresql.conf`. Trained rankings and token mappings live there.
 
 ## Usage
 
@@ -50,7 +50,7 @@ SELECT body FROM documents;                             -- {24912,2375}
 ```
 
 `create_vocabulary` also creates the domain `tokens.o200k`, which is what you put on the column.
-Two vocabularies are two types, so PostgreSQL refuses to move values between them — token IDs
+Two vocabularies are two types, so PostgreSQL refuses to move values between them. Token IDs
 mean nothing outside the tokenizer that produced them.
 
 The type sets `STORAGE EXTERNAL` itself, so there is no `ALTER TABLE` to remember.
@@ -84,7 +84,7 @@ cast-to-`text` syntax, not a call to this function, and it silently returns the 
 
 | you want | write | cost |
 | --- | --- | --- |
-| the stored bytes, no server work | `SELECT body`, binary mode | none — this is the fast path |
+| the stored bytes, no server work | `SELECT body`, binary mode | none, the fast path |
 | the same, from a driver that makes binary awkward | `body::bytea` | hex, 2× on the wire |
 | token IDs for SQL-side work | `body::int[]` | 4 B/token |
 | text, for a human | `pgtoken.text(body)` | needs a mapping |
@@ -104,7 +104,7 @@ SELECT pgtoken.create_vocabulary('corpus', vocab_size => 200019, compression => 
 SELECT pgtoken.train('corpus', 'SELECT ids FROM my_corpus');
 ```
 
-The ranking holds only the tokens your corpus contained — 28 bytes for one skewed corpus, not the
+The ranking holds only the tokens your corpus contained: 28 bytes for one skewed corpus, not the
 800 KB a full vocabulary would need. Tokens it never saw still encode losslessly, just wider.
 
 A vocabulary is immutable: size, compression, ranking and mapping are fixed once set, because
@@ -115,9 +115,9 @@ SELECT pgtoken.create_vocabulary('corpus_v2', vocab_size => 200019);
 ALTER TABLE documents ALTER COLUMN body TYPE tokens.corpus_v2 USING body::tokens.corpus_v2;
 ```
 
-If the column backs a `pgtoken.text` index, load the new vocabulary's mapping *before* the
-`ALTER`: rebuilding the index detokenizes every row, and it will fail on a vocabulary that has
-none yet.
+If the column backs a `pgtoken.text` index, load the new vocabulary's mapping first, then run the
+`ALTER`. Rebuilding the index detokenizes every row, and it fails on a vocabulary that has no
+mapping yet.
 
 ## Benchmarks
 
@@ -148,7 +148,7 @@ So `freq` decodes in ~4 µs against ~250 µs to tokenize the same text; the end-
 understate it because the Python client pays numpy overhead on 512-element arrays.
 
 > The end-to-end numbers predate the type, and `benchmarks/bench_readwrite.py` still calls removed
-> functions — it needs porting to vocabularies before it runs again.
+> functions. It needs porting to vocabularies before it runs again.
 
 ## Limitations
 
@@ -157,7 +157,7 @@ understate it because the Python client pays numpy overhead on 512-element array
 - **No `=`, `ORDER BY`, `GROUP BY` or `DISTINCT`** on the column. Byte order of a compressed value
   is meaningless, and there is no equality operator yet.
 - **A column must name a vocabulary.** A bare `pgtoken.tokens` column accepts inserts and fails on
-  read — PostgreSQL applies a type modifier after the input function runs, so there is nowhere
+  read. PostgreSQL applies a type modifier after the input function runs, so there is nowhere
   earlier to refuse. Recoverable with `ALTER TABLE ... TYPE tokens.<name>`.
 - **Binary writes are trusted.** Text and `int[]` input bounds-check every id; `COPY BINARY` and
   the `bytea` cast check only the 12-byte header, because scanning the payload would cost the
@@ -182,7 +182,7 @@ All in the `pgtoken` schema. Casts: `int[] → tokens` (assignment); `tokens →
 `tokens → bytea`, `bytea → tokens` (explicit).
 
 Setting: `pgtoken.table_dir`, where rankings and mappings live (`SIGHUP`). Not session-settable on
-purpose — two sessions must never decode one value differently.
+purpose: two sessions must never decode one value differently.
 
 `benchmarks/pgtoken_client.py` is a reference codec in Python, byte-compatible with the extension
 in both directions (`benchmarks/test_client.py` asserts it).
