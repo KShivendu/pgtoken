@@ -85,8 +85,10 @@ The mapping is write-once, which is what lets `pgtoken.text` be `IMMUTABLE` and 
 CREATE INDEX ON documents USING gin (to_tsvector('english', pgtoken.text(body)));
 ```
 
-Write it schema-qualified. On a `tokens.<name>` column a bare `text(body)` is PostgreSQL's
-cast-to-`text` syntax, not a call to this function, and it silently returns the ID list.
+`create_vocabulary` also declares a `pgtoken.text` for each domain, so a bare `text(body)` calls
+this function rather than PostgreSQL's cast-to-`text` syntax. That only works with `pgtoken` on
+`search_path`; without it, write `pgtoken.text(body)`. An explicit `body::text` is still a cast and
+still gives you the ID list.
 
 ### Which read to use
 

@@ -246,6 +246,25 @@ fn create_vocabulary(
     ))
     .unwrap_or_else(|e| bail(e));
 
+    // A `pgtoken.text` that accepts this exact domain, so `text(body)` resolves to the function
+    // instead of PostgreSQL's cast-to-`text` syntax.
+    //
+    // `typename(expr)` is a legal spelling of `CAST(expr AS typename)`, and PostgreSQL only falls
+    // back to reading it that way when no function matches the argument type exactly. The real
+    // `pgtoken.text` takes `pgtoken.tokens`, and a column takes the domain, so nothing matched and
+    // `text(body)` silently returned the id list. Declaring one per domain gives it the exact match
+    // it was looking for. An explicit `body::text` is still a cast, which is correct.
+    //
+    // Only helps when `pgtoken` is on `search_path`; without it no unqualified `text` is visible at
+    // all. That is the population this protects, since anyone else already qualifies every call.
+    Spi::run(&format!(
+        "CREATE FUNCTION pgtoken.text(tokens.{ident}) RETURNS text \
+         LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE \
+         AS $wrap$ SELECT pgtoken.text($1::pgtoken.tokens) $wrap$",
+        ident = quote_ident(name)
+    ))
+    .unwrap_or_else(|e| bail(e));
+
     assigned
 }
 
@@ -298,7 +317,13 @@ fn drop_vocabulary(name: &str) {
              be dropped again"
         ));
     }
-    Spi::run(&format!("DROP DOMAIN tokens.{}", quote_ident(name))).unwrap_or_else(|e| bail(e));
+    // The per-domain `pgtoken.text` overload must go first: a function's parameter type counts as
+    // a dependency, so with it in place `DROP DOMAIN` fails even when no column uses the domain.
+    Spi::run(&format!(
+        "DROP FUNCTION IF EXISTS pgtoken.text(tokens.{ident}); DROP DOMAIN tokens.{ident}",
+        ident = quote_ident(name)
+    ))
+    .unwrap_or_else(|e| bail(e));
 }
 
 /// Resolve a name to the three fields a typmod needs. Called at DDL time only.
@@ -630,6 +655,85 @@ mod tests {
         )
         .expect("setup");
         Spi::run("INSERT INTO dom_a_t (body) SELECT body FROM dom_b_t").unwrap();
+    }
+
+    #[pg_test]
+    fn unqualified_text_resolves_to_the_function_not_the_cast() {
+        // `text(body)` is a legal spelling of `CAST(body AS text)`, and PostgreSQL only reads it
+        // that way when no function matches the argument type. Before the per-domain overload it
+        // silently returned the id list from a column someone had loaded a mapping for.
+        create("'ovl_hit', 8, id => 62301");
+        Spi::run(
+            "CREATE TABLE ovl_hit_t (b tokens.ovl_hit); \
+             INSERT INTO ovl_hit_t VALUES ('{0,1}'); \
+             CREATE TEMP TABLE ovl_stage (id int, bytes bytea); \
+             INSERT INTO ovl_stage VALUES (0, 'hello'), (1, ' world');",
+        )
+        .expect("setup");
+        Spi::run("SELECT pgtoken.load_mapping('ovl_hit', 'SELECT id, bytes FROM ovl_stage')")
+            .expect("load_mapping");
+
+        // `SET search_path` is what makes the bare name visible at all; without it PostgreSQL sees
+        // no unqualified `text` function and falls back to the cast no matter what we declare.
+        let got = Spi::get_one::<String>(
+            "SET search_path = public, pgtoken; SELECT text(b) FROM ovl_hit_t",
+        )
+        .expect("query failed");
+        assert_eq!(
+            got,
+            Some("hello world".to_string()),
+            "the overload must win"
+        );
+
+        let qualified =
+            Spi::get_one::<String>("SELECT pgtoken.text(b) FROM ovl_hit_t").expect("query failed");
+        assert_eq!(qualified, Some("hello world".to_string()));
+
+        // An explicit cast is still a cast. Only the ambiguous spelling changed.
+        let cast = Spi::get_one::<String>("SELECT b::text FROM ovl_hit_t").expect("query failed");
+        assert_eq!(cast, Some("{0,1}".to_string()), "::text must stay a cast");
+    }
+
+    #[pg_test]
+    fn the_overload_can_back_an_index() {
+        // A wrapper that could not be indexed would be useless: backing a GIN index over
+        // to_tsvector is most of why pgtoken.text exists.
+        create("'ovl_idx', 8, id => 62302");
+        Spi::run(
+            "CREATE TABLE ovl_idx_t (b tokens.ovl_idx); \
+             INSERT INTO ovl_idx_t VALUES ('{0,1}'); \
+             CREATE TEMP TABLE ovl_idx_stage (id int, bytes bytea); \
+             INSERT INTO ovl_idx_stage VALUES (0, 'hello'), (1, ' world');",
+        )
+        .expect("setup");
+        Spi::run("SELECT pgtoken.load_mapping('ovl_idx', 'SELECT id, bytes FROM ovl_idx_stage')")
+            .expect("load_mapping");
+        Spi::run(
+            "SET search_path = public, pgtoken; \
+             CREATE INDEX ON ovl_idx_t USING gin (to_tsvector('english', text(b)))",
+        )
+        .expect("the overload must be IMMUTABLE enough to index");
+        let hits = Spi::get_one::<i64>(
+            "SET search_path = public, pgtoken; \
+             SELECT count(*) FROM ovl_idx_t \
+             WHERE to_tsvector('english', text(b)) @@ to_tsquery('world')",
+        )
+        .expect("query failed");
+        assert_eq!(hits, Some(1));
+    }
+
+    #[pg_test]
+    fn dropping_a_vocabulary_removes_its_overload_too() {
+        // The overload depends on the domain, so a stale one would block DROP DOMAIN outright.
+        create("'ovl_drop', 300, id => 62303");
+        Spi::run("SELECT pgtoken.drop_vocabulary('ovl_drop')").expect("drop must succeed");
+        let left = Spi::get_one::<i64>(
+            "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+             WHERE n.nspname = 'pgtoken' AND p.proname = 'text' \
+             AND pg_get_function_identity_arguments(p.oid) LIKE '%ovl_drop%'",
+        )
+        .expect("query failed");
+        assert_eq!(left, Some(0), "the overload must go with the domain");
     }
 
     #[pg_test]
