@@ -95,8 +95,7 @@ still gives you the ID list.
 | you want | write | cost |
 | --- | --- | --- |
 | the stored bytes, no server work | `SELECT body`, binary mode | none, the fast path |
-| the same, from a driver that makes binary awkward | `body::bytea` | hex, 2× on the wire |
-| token IDs for SQL-side work | `body::int[]` | 4 B/token |
+| token IDs for SQL-side work, and for `train` | `body::int[]` | 4 B/token |
 | text, for a human | `pgtoken.text(body)` | needs a mapping |
 
 ## Compression
@@ -188,8 +187,9 @@ understate it because the Python client pays numpy overhead on 512-element array
 | `token_count(tokens)` | `int` | header only, no decode |
 | `describe(tokens)` | record | codec, vocabulary, sizes |
 
-All in the `pgtoken` schema. Casts: `int[] → tokens` (assignment); `tokens → int[]`,
-`tokens → bytea`, `bytea → tokens` (explicit).
+All in the `pgtoken` schema. Casts: `int[] → tokens` (assignment) and `tokens → int[]`
+(explicit). For the stored bytes without going through binary mode, call
+`pgtoken.tokens_send(body)`.
 
 Setting: `pgtoken.table_dir`, where rankings and mappings live (`SIGHUP`). Not session-settable on
 purpose: two sessions must never decode one value differently.

@@ -272,8 +272,8 @@ mod tests {
         )
         .expect("setup");
         let (raw, freq) = Spi::get_two::<i32, i32>(
-            "SELECT length(a::pgtoken.tokens('sk_raw')::bytea), \
-                    length(a::pgtoken.tokens('sk_freq')::bytea) \
+            "SELECT length(pgtoken.tokens_send(a::pgtoken.tokens('sk_raw'))), \
+                    length(pgtoken.tokens_send(a::pgtoken.tokens('sk_freq'))) \
              FROM (SELECT array_agg(199999)::int[] AS a FROM generate_series(1,512)) s",
         )
         .expect("query failed");
@@ -298,7 +298,7 @@ mod tests {
     fn token_count_reads_only_the_header() {
         Spi::run("SELECT pgtoken.create_vocabulary('tc', 60000)").expect("create");
         let (n, total) = Spi::get_two::<i32, i32>(
-            "SELECT pgtoken.token_count(v), length(v::bytea) \
+            "SELECT pgtoken.token_count(v), length(pgtoken.tokens_send(v)) \
              FROM (SELECT '{1,2,3}'::pgtoken.tokens('tc') AS v) s",
         )
         .expect("query failed");
@@ -308,14 +308,14 @@ mod tests {
 
     #[pg_test]
     fn encoding_is_canonical_in_sql() {
-        // The property under test is byte equality, so comparing `::bytea` says that directly.
+        // The property under test is byte equality, so comparing the sent bytes says so directly.
         // `pgtoken.tokens` deliberately has no `=` operator of its own (adding one would need a
         // hash opclass to back GROUP BY / DISTINCT / hash joins too, or it would ship half an
         // equality story; that is a design pass of its own, not a side effect of this test).
         Spi::run("SELECT pgtoken.create_vocabulary('canon', 60000)").expect("create");
         let same = Spi::get_one::<bool>(
-            "SELECT '{5,9,5,1}'::pgtoken.tokens('canon')::bytea \
-               = '{5,9,5,1}'::pgtoken.tokens('canon')::bytea",
+            "SELECT pgtoken.tokens_send('{5,9,5,1}'::pgtoken.tokens('canon')) \
+               = pgtoken.tokens_send('{5,9,5,1}'::pgtoken.tokens('canon'))",
         )
         .expect("query failed");
         assert_eq!(same, Some(true));
@@ -326,7 +326,8 @@ mod tests {
         // The property that makes rendering token IDs rather than hex safe for pg_dump.
         Spi::run("SELECT pgtoken.create_vocabulary('dump', 60000)").expect("create");
         let same = Spi::get_one::<bool>(
-            "SELECT v::bytea = (v::text)::pgtoken.tokens('dump')::bytea \
+            "SELECT pgtoken.tokens_send(v) \
+             = pgtoken.tokens_send((v::text)::pgtoken.tokens('dump')) \
              FROM (SELECT ('{' || string_agg((i % 60000)::text, ',') || '}') \
                             ::pgtoken.tokens('dump') AS v \
                    FROM generate_series(1,512) i) s",
@@ -370,7 +371,10 @@ mod tests {
 
     #[pg_test(error = "value is 1 bytes, shorter than the 12-byte header")]
     fn rejects_a_truncated_value() {
-        Spi::get_one::<Vec<i32>>("SELECT '\\x00'::bytea::pgtoken.tokens::int[]").unwrap();
+        // `tokens_recv_bytes` is the door outside bytes come in through; there is no
+        // `bytea -> tokens` cast, deliberately, because it only duplicated this function.
+        Spi::get_one::<Vec<i32>>("SELECT pgtoken.tokens_recv_bytes('\\x00'::bytea)::int[]")
+            .unwrap();
     }
 
     #[pg_test(error = "vocabulary tr_untrained has no ranking; run pgtoken.train first")]

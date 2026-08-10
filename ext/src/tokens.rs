@@ -645,12 +645,16 @@ mod tests {
     /// A binary-coercible `pgtoken.tokens -> bytea` cast, for the tests that need a value's
     /// actual datum bytes.
     ///
-    /// `::bytea` does not exist yet — Task 7 adds it — and PostgreSQL will not I/O-coerce to
-    /// `bytea`, because I/O coercion is only offered when one side is a string-category type and
-    /// `bytea` is not one. `WITHOUT FUNCTION` is deliberate and is what makes these tests
-    /// meaningful: a binary-coercible cast is a pure relabel, so `v::bytea` hands back the stored
-    /// datum untouched instead of whatever a conversion function chose to build. Created inside
-    /// the test's own transaction, which pgrx rolls back, and skipped if one already exists.
+    /// The extension deliberately ships no `tokens -> bytea` cast: a text-mode client gets the ids
+    /// straight from `SELECT body` at the same wire cost, so a hex form would only add a codec
+    /// dependency. `pgtoken.tokens_send` is what callers use for the stored bytes.
+    ///
+    /// This test-local cast is not that function, and must not be: `WITHOUT FUNCTION` makes it a
+    /// pure relabel, so `v::bytea` hands back the stored datum untouched rather than whatever a
+    /// conversion function chose to build. That is what lets the send test compare against an
+    /// independent reference instead of against itself. PostgreSQL will not I/O-coerce to `bytea`,
+    /// since I/O coercion needs a string-category type on one side. Created inside the test's own
+    /// transaction, which pgrx rolls back.
     fn ensure_bytea_cast() {
         Spi::run(
             "DO $cast$ BEGIN \
@@ -696,8 +700,8 @@ mod tests {
         vocab("t_big", 200019);
         ensure_bytea_cast();
         let (small, big) = Spi::get_two::<i32, i32>(
-            "SELECT length('{1,2,3}'::pgtoken.tokens('t_small')::bytea), \
-                    length('{1,2,3}'::pgtoken.tokens('t_big')::bytea)",
+            "SELECT length(pgtoken.tokens_send('{1,2,3}'::pgtoken.tokens('t_small'))), \
+                    length(pgtoken.tokens_send('{1,2,3}'::pgtoken.tokens('t_big')))",
         )
         .expect("query failed");
         assert_eq!(small, Some(12 + 3), "raw8: one byte per token");
@@ -805,9 +809,10 @@ mod tests {
         ensure_bytea_cast();
         Spi::run("CREATE TABLE ct (body pgtoken.tokens('t_copytext'))").expect("create");
         Spi::run("COPY ct FROM PROGRAM 'echo ''{1,2,3}'''").expect("copy in");
-        let (rendered, len) =
-            Spi::get_two::<String, i32>("SELECT body::text, length(body::bytea) FROM ct")
-                .expect("query failed");
+        let (rendered, len) = Spi::get_two::<String, i32>(
+            "SELECT body::text, length(pgtoken.tokens_send(body)) FROM ct",
+        )
+        .expect("query failed");
         assert_eq!(rendered, Some("{1,2,3}".to_string()));
         assert_eq!(
             len,
@@ -918,9 +923,10 @@ mod tests {
         // `tokens_typmod_apply_impl` exempts [`UNRESOLVED`] from that refusal.
         Spi::run("ALTER TABLE unresolved_ur ALTER COLUMN x TYPE tokens.t_repair").expect("repair");
 
-        let (rendered, len) =
-            Spi::get_two::<String, i32>("SELECT x::text, length(x::bytea) FROM unresolved_ur")
-                .expect("query failed");
+        let (rendered, len) = Spi::get_two::<String, i32>(
+            "SELECT x::text, length(pgtoken.tokens_send(x)) FROM unresolved_ur",
+        )
+        .expect("query failed");
         assert_eq!(
             rendered,
             Some("{1,2,3}".to_string()),
@@ -952,8 +958,8 @@ mod tests {
         ensure_bytea_cast();
         Spi::run("CREATE TABLE moved (body pgtoken.tokens('t_from'))").expect("create");
         Spi::run("INSERT INTO moved VALUES ('{1,2,3}')").expect("insert");
-        let before =
-            Spi::get_one::<i32>("SELECT length(body::bytea) FROM moved").expect("query failed");
+        let before = Spi::get_one::<i32>("SELECT length(pgtoken.tokens_send(body)) FROM moved")
+            .expect("query failed");
         assert_eq!(before, Some(12 + 9), "raw24 to start with");
 
         Spi::run(
@@ -961,9 +967,10 @@ mod tests {
              USING body::tokens.t_to",
         )
         .expect("alter type");
-        let (rendered, after) =
-            Spi::get_two::<String, i32>("SELECT body::text, length(body::bytea) FROM moved")
-                .expect("query failed");
+        let (rendered, after) = Spi::get_two::<String, i32>(
+            "SELECT body::text, length(pgtoken.tokens_send(body)) FROM moved",
+        )
+        .expect("query failed");
         assert_eq!(rendered, Some("{1,2,3}".to_string()), "ids must survive");
         assert_eq!(after, Some(12 + 3), "re-encoded to raw8");
     }

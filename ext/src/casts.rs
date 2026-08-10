@@ -8,7 +8,7 @@
 use pgrx::prelude::*;
 
 use crate::registry::bail;
-use crate::tokens::{decode_value, encode_for, require_vocabulary, validate};
+use crate::tokens::{decode_value, encode_for, require_vocabulary};
 
 /// SQL `int[]` to token IDs. Rejects NULLs and negatives rather than coercing them, since either
 /// would silently store a different sequence than the caller meant.
@@ -43,26 +43,6 @@ fn tokens_to_int4array_impl(value: &[u8]) -> Vec<i32> {
         .collect()
 }
 
-/// `pgtoken.tokens → bytea`: the documented idiom for drivers that cannot reach binary mode.
-///
-/// Calls `require_vocabulary` first, then copies the bytes through untouched — it does not decode,
-/// same as `tokens_send_impl`. Without the check, a client relying on this idiom would get a
-/// plausible-looking blob from a bare column and never learn the column is misdeclared.
-#[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_to_bytea_impl(value: &[u8]) -> Vec<u8> {
-    require_vocabulary(value);
-    value.to_vec()
-}
-
-/// `bytea → pgtoken.tokens`: one of the trusted binary paths, alongside `RECEIVE`. It checks only
-/// the 12-byte header through [`validate`] and hands the payload through untouched — it does
-/// **not** scan the ids, so do not mistake it for a validating entry point. See `validate`'s doc
-/// comment in `tokens.rs` for what a header check guarantees and what it deliberately does not.
-#[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_from_bytea_impl(value: &[u8]) -> Vec<u8> {
-    validate(value)
-}
-
 extension_sql!(
     r#"
 CREATE FUNCTION pgtoken.tokens_from_int4array(int[], integer, boolean)
@@ -74,14 +54,6 @@ CREATE FUNCTION pgtoken.tokens_to_int4array(pgtoken.tokens) RETURNS int[]
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_to_int4array_impl_wrapper';
 
-CREATE FUNCTION pgtoken.tokens_to_bytea(pgtoken.tokens) RETURNS bytea
-    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
-    AS 'MODULE_PATHNAME', 'tokens_to_bytea_impl_wrapper';
-
-CREATE FUNCTION pgtoken.tokens_from_bytea(bytea) RETURNS pgtoken.tokens
-    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
-    AS 'MODULE_PATHNAME', 'tokens_from_bytea_impl_wrapper';
-
 -- Assignment, not implicit: a plain INSERT of an int[] works, while accidental coercions in
 -- expressions still have to be spelled out.
 CREATE CAST (int[] AS pgtoken.tokens)
@@ -90,19 +62,12 @@ CREATE CAST (int[] AS pgtoken.tokens)
 CREATE CAST (pgtoken.tokens AS int[])
     WITH FUNCTION pgtoken.tokens_to_int4array(pgtoken.tokens);
 
-CREATE CAST (pgtoken.tokens AS bytea)
-    WITH FUNCTION pgtoken.tokens_to_bytea(pgtoken.tokens);
-
-CREATE CAST (bytea AS pgtoken.tokens)
-    WITH FUNCTION pgtoken.tokens_from_bytea(bytea);
 "#,
     name = "tokens_casts",
     requires = [
         "tokens_type",
         tokens_from_int4array_impl,
         tokens_to_int4array_impl,
-        tokens_to_bytea_impl,
-        tokens_from_bytea_impl
     ],
 );
 
@@ -136,8 +101,8 @@ mod tests {
         )
         .expect("setup");
         let (small, big) = Spi::get_two::<i32, i32>(
-            "SELECT (SELECT length(body::bytea) FROM c_small_t), \
-                    (SELECT length(body::bytea) FROM c_big_t)",
+            "SELECT (SELECT length(pgtoken.tokens_send(body)) FROM c_small_t), \
+                    (SELECT length(pgtoken.tokens_send(body)) FROM c_big_t)",
         )
         .expect("query failed");
         assert_eq!(small, Some(12 + 3), "raw8 via the target typmod");
@@ -148,7 +113,8 @@ mod tests {
     fn bytea_roundtrips_both_ways() {
         Spi::run("SELECT pgtoken.create_vocabulary('c2', 200019)").expect("create");
         let got = Spi::get_one::<Vec<i32>>(
-            "SELECT ('{7,8}'::pgtoken.tokens('c2')::bytea)::pgtoken.tokens::int[]",
+            "SELECT pgtoken.tokens_recv_bytes(\
+                      pgtoken.tokens_send('{7,8}'::pgtoken.tokens('c2')))::int[]",
         )
         .expect("query failed");
         assert_eq!(got, Some(vec![7, 8]));
@@ -189,15 +155,5 @@ mod tests {
         Spi::run("CREATE TABLE bare_ia (x pgtoken.tokens)").expect("create table");
         Spi::run("INSERT INTO bare_ia VALUES ('{1,2,3}')").expect("insert");
         Spi::get_one::<Vec<i32>>("SELECT x::int[] FROM bare_ia").unwrap();
-    }
-
-    #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
-    fn bytea_cast_refuses_a_value_without_a_vocabulary() {
-        // `::bytea` is the documented idiom for drivers that cannot reach binary mode, so it has
-        // to refuse an unresolved value too -- otherwise it is the one accepting read path left
-        // on a bare column, reopening the hole `tokens_send` was changed to close.
-        Spi::run("CREATE TABLE bare_ba (x pgtoken.tokens)").expect("create table");
-        Spi::run("INSERT INTO bare_ba VALUES ('{1,2,3}')").expect("insert");
-        Spi::get_one::<Vec<u8>>("SELECT x::bytea FROM bare_ba").unwrap();
     }
 }

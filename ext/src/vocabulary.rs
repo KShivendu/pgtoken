@@ -628,8 +628,8 @@ mod tests {
         ensure_bytea_cast();
         Spi::run("CREATE TABLE dom2_docs (body tokens.dom2)").expect("create table");
         Spi::run("INSERT INTO dom2_docs (body) VALUES ('{1,2,3}')").expect("insert");
-        let len =
-            Spi::get_one::<i32>("SELECT length(body::bytea) FROM dom2_docs").expect("query failed");
+        let len = Spi::get_one::<i32>("SELECT length(pgtoken.tokens_send(body)) FROM dom2_docs")
+            .expect("query failed");
         assert_eq!(
             len,
             Some(12 + 3),
