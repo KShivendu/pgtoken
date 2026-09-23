@@ -159,11 +159,11 @@ one dedicated CPU (median of 5 runs):
 | `raw24` | 0.98 µs | 0.39 µs | 3.02 |
 | `freq` | 5.12 µs | **3.60 µs** | **1.89** |
 
-**Latency and tokenizer choice.** pgtoken is built for agent workloads, where an LLM is both the
-writer and the reader: it answers by pulling hundreds of records and writes back long, verbose
-traces of its own tokens. A `text` column re-tokenizes on every read and detokenizes on every
-write, so the tokenizer runs constantly, and its cost varies a lot, so pair pgtoken with a fast
-one. HuggingFace `tokenizers` v1 handles a 512-token chunk in single-digit microseconds where a
+**Latency and tokenizer choice.** pgtoken pays off wherever an LLM is the main reader or writer of
+a column, and either side is enough: an agent answering a question pulls hundreds of records, and
+one producing output writes back long, verbose traces of its own tokens. That side works in token
+IDs, so a `text` column re-tokenizes on every read and detokenizes on every write. The tokenizer
+runs constantly and its cost varies a lot, so pair pgtoken with a fast one. HuggingFace `tokenizers` v1 handles a 512-token chunk in single-digit microseconds where a
 cold tiktoken table takes hundreds. pgtoken stores and returns the IDs directly, so it skips the
 tokenize on reads and the detokenize on writes, and decodes in ~0.22 µs (`raw16`) to ~3.6 µs
 (`freq`). The steady win is compression, ~2.1x fewer bytes on disk, in WAL, and over the wire,
