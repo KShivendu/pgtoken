@@ -159,12 +159,16 @@ one dedicated CPU (median of 5 runs):
 | `raw24` | 0.98 µs | 0.39 µs | 3.02 |
 | `freq` | 5.12 µs | **3.60 µs** | **1.89** |
 
-**Read latency.** A fast tokenizer reshapes the read story. Re-tokenizing a 512-token chunk with
-`tokenizers` v1 costs single-digit microseconds, not the hundreds a cold tiktoken table shows, so
-pgtoken does not win reads by dodging an expensive tokenize any more. It wins on the payload:
-~2.1x fewer bytes off disk and over the wire, no TOAST fetch, and a `raw16` unpack in ~0.22 µs.
-The `freq` codec spends ~4 µs decoding to buy the smallest payload; `raw16` keeps both the bytes
-and the CPU low, and is the better default when reads dominate.
+**Latency and tokenizer choice.** pgtoken is built for agent workloads, where an LLM is both the
+writer and the reader: it answers by pulling hundreds of records and writes back long, verbose
+traces of its own tokens. A `text` column re-tokenizes on every read and detokenizes on every
+write, so the tokenizer runs constantly, and its cost varies a lot, so pair pgtoken with a fast
+one. HuggingFace `tokenizers` v1 handles a 512-token chunk in single-digit microseconds where a
+cold tiktoken table takes hundreds. pgtoken stores and returns the IDs directly, so it skips the
+tokenize on reads and the detokenize on writes, and decodes in ~0.22 µs (`raw16`) to ~3.6 µs
+(`freq`). The steady win is compression, ~2.1x fewer bytes on disk, in WAL, and over the wire,
+which is what compounds when a single answer touches hundreds of rows. `raw16` keeps bytes and CPU
+low; `freq` buys the smallest payload for a few extra microseconds.
 
 ## Limitations
 
