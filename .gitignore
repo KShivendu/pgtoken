@@ -7,3 +7,6 @@ __pycache__/
 # machine they were measured on.
 benchmarks/fixture/
 benchmarks/*_results.json
+
+# Agent scratch: design plans and specs written during development, not part of the repo.
+docs/

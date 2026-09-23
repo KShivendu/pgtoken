@@ -62,8 +62,12 @@ def ddl(name: str, kind: str) -> str:
     return stmt + (f"; ALTER TABLE {name} ALTER COLUMN body SET STORAGE EXTERNAL" if kind == "tok" else "")
 
 
-def prepare(conn, texts, id_lists, table):
-    """Create one table per variant and return the payloads each will be given."""
+def prepare(conn, texts, id_lists, enc_args):
+    """Create one table per variant and return the payloads each will be given.
+
+    `enc_args[label] = (codec, vocabulary_id, rank_table)` for the token-native variants; the
+    text variants store the raw text and encode nothing.
+    """
     payloads = {}
     for label, kind, codec in VARIANTS:
         name = "b_" + label.split()[0] + ("_lz4" if "lz4" in label else "") + (f"_{codec}" if codec else "")
@@ -72,14 +76,14 @@ def prepare(conn, texts, id_lists, table):
         for stmt in ddl(name, kind).split(";"):
             conn.execute(stmt)
         if kind == "tok":
-            tid = C.FREQ_TABLE_ID if codec == "freq" else 0
-            payloads[label] = (name, [K.encode(ids, codec, tid, table) for ids in id_lists])
+            codec_name, vocab_id, tbl = enc_args[label]
+            payloads[label] = (name, [K.encode(ids, codec_name, vocab_id, tbl) for ids in id_lists])
         else:
             payloads[label] = (name, texts)
     return payloads
 
 
-def bench_write(conn, payloads, id_lists, texts, table, batch, reps):
+def bench_write(conn, payloads, id_lists, texts, enc_args, batch, reps):
     """Time an agent writing `batch` rows, from token IDs it already holds."""
     out = {}
     for label, kind, codec in VARIANTS:
@@ -96,8 +100,8 @@ def bench_write(conn, payloads, id_lists, texts, table, batch, reps):
 
             t0 = time.perf_counter()
             if kind == "tok":
-                tid = C.FREQ_TABLE_ID if codec == "freq" else 0
-                rows = [K.encode(ids, codec, tid, table) for ids in ids_batch]
+                codec_name, vocab_id, tbl = enc_args[label]
+                rows = [K.encode(ids, codec_name, vocab_id, tbl) for ids in ids_batch]
             else:
                 # The agent holds IDs, so the text column costs a detokenize before it can
                 # send anything.
@@ -125,12 +129,13 @@ def bench_write(conn, payloads, id_lists, texts, table, batch, reps):
     return out
 
 
-def bench_read(conn, payloads, table, fanout, reps, n_rows):
+def bench_read(conn, payloads, enc_args, fanout, reps, n_rows):
     """Time an agent reading `fanout` rows and getting token IDs back."""
     out = {}
     rng = np.random.default_rng(4242)
     for label, kind, codec in VARIANTS:
         name, rows = payloads[label]
+        tbl = enc_args[label][2] if kind == "tok" else None
         # Load the table once for reading.
         conn.execute(f"TRUNCATE {name}")
         with conn.cursor() as cur:
@@ -152,11 +157,11 @@ def bench_read(conn, payloads, table, fanout, reps, n_rows):
                 t1 = time.perf_counter()
                 if kind == "tok":
                     for b in got:
-                        K.decode(bytes(b), table)
+                        K.decode(bytes(b), tbl)
                 else:
                     # A model needs IDs, so the text column pays a tokenize on every read.
                     for s in got:
-                        enc.encode(s, disallowed_special=())
+                        enc.encode(s)
                 t2 = time.perf_counter()
 
                 fetch_us.append((t1 - t0) * 1e6)
@@ -189,39 +194,44 @@ def main() -> int:
     args = ap.parse_args()
 
     texts = C.load_corpus(args.domain, args.docs)
+    enc = C.encoder()
     id_lists = [np.asarray(x, dtype=np.uint32) for x in C.tokenize_all(texts)]
-    print(f"corpus: {len(texts)} docs from {args.domain}, {C.TOKENIZER} (tokenized client-side)")
+    print(f"corpus: {len(texts)} docs from {args.domain}, {enc.name} "
+          f"(vocab {enc.n_vocab}, tokenized client-side)")
 
     with C.connect() as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS pgtoken")
-        C.train_table(conn, args.domain)
+        raw_vid = C.ensure_raw_vocab(conn)
+        freq_vid, table = C.ensure_freq_vocab(conn, args.domain)
+        enc_args = {
+            "pgtoken raw": (C.raw_codec_for(enc.n_vocab), raw_vid, None),
+            "pgtoken freq": ("freq", freq_vid, table),
+        }
         settings = {
             k: conn.execute(f"SHOW {k}").fetchone()[0]
             for k in ("server_version", "default_toast_compression", "shared_buffers")
         }
-        table_path = os.path.join(
-            os.path.expanduser("~/.local/share/pgtoken-pg/tables"), f"{C.FREQ_TABLE_ID}.tntt"
-        )
-        table = K.RankTable.load(table_path)
 
-        payloads = prepare(conn, texts, id_lists, table)
+        payloads = prepare(conn, texts, id_lists, enc_args)
 
         writes = {}
         for b in args.batch:
             print(f"  write, batch {b}...")
-            writes[b] = bench_write(conn, payloads, id_lists, texts, table, b, args.reps)
+            writes[b] = bench_write(conn, payloads, id_lists, texts, enc_args, b, args.reps)
 
         reads = {}
         for f in args.fanout:
             print(f"  read, fan-out {f}...")
-            reads[f] = bench_read(conn, payloads, table, f, args.reps, len(texts))
+            reads[f] = bench_read(conn, payloads, enc_args, f, args.reps, len(texts))
 
 
     results = {
         "config": {
             "docs": len(texts),
             "domain": args.domain,
-            "tokenizer": C.TOKENIZER,
+            "tokenizer": enc.name,
+            "n_vocab": enc.n_vocab,
+            "raw_codec": C.raw_codec_for(enc.n_vocab),
             "reps": args.reps,
             **settings,
         },

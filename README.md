@@ -4,9 +4,11 @@
 
 Store text in PostgreSQL as token IDs instead of UTF-8.
 
-Agents read and write token IDs, not characters. A `text` column makes them re-tokenize on every
-read; `pgtoken` stores the IDs directly, compressed, and hands them back as-is. When something
-downstream needs text, `pgtoken.text()` gives it to you.
+A RAG chunk or an agent's memory is text that a model will tokenize before it can use it.
+`pgtoken` stores it already tokenized: an entropy-coded column of IDs that runs ~2.1x smaller than
+the text on disk, in WAL, and in the buffer cache, and small enough that no value spills to TOAST.
+Reads hand the IDs back to the model as-is, no re-tokenizing. When something downstream needs
+characters, `pgtoken.text()` gives them back.
 
 **No tokenizer.** You tokenize with whatever you already use: tiktoken, HuggingFace,
 SentencePiece, your own. The database needs two things from it: how many token IDs it has, and
@@ -130,22 +132,26 @@ mapping yet.
 
 ## Benchmarks
 
-C4 English, 512-token chunks, o200k, PostgreSQL 14, one pinned core. The workload is an agent: it
-wants token IDs back, so a `text` column pays a tokenize on every read.
+C4 English prose, 512-token chunks, gpt2 ids via HuggingFace `tokenizers` v1, PostgreSQL 14,
+20000 rows. Regenerate with `benchmarks/bench_storage_wal.py` and `benchmarks/bench_readwrite.py`.
 
-**Read**, µs per query:
+**Storage, WAL and TOAST.** The token-native column is smaller on disk, in WAL, and in the buffer
+cache, by roughly the same factor each way. This is the durable win, and it holds for any
+tokenizer: IDs are IDs.
 
-| column | fan-out 1 | fan-out 10 | fan-out 100 | wire @100 |
-| --- | --: | --: | --: | --: |
-| `text` (pglz) | 1176 | 4066 | 19258 | 233 KB |
-| `pgtoken` raw | **748** (1.6×) | **903** (4.5×) | **2588** (7.4×) | 147 KB |
-| `pgtoken` freq | 938 (1.3×) | 1888 (2.2×) | 10485 (1.8×) | **88 KB** |
+| column | payload/row | total relation | WAL/row | docs/8 KB page | past TOAST line |
+| --- | --: | --: | --: | --: | --: |
+| `text` (pglz) | 1893 B | 45.9 MB | 2098 B | 6.32 | 7000 / 20000 |
+| `text` (lz4) | 1832 B | 42.6 MB | 1955 B | 4.32 | 1500 / 20000 |
+| `pgtoken` freq | **901 B** (2.10x) | **21.0 MB** (2.19x) | **995 B** (2.11x) | **8.00** | **0** / 20000 |
 
-At fan-out 100 the `text` column spends 16.5 ms of its 19.3 ms tokenizing. That is the cost
-`pgtoken` removes, and it recurs on every read. Storage is ~2.1× smaller in payload, relation
-size and WAL.
+Every token-native value stays inline while a third of the text rows spill to TOAST, and each
+spilled value costs an extra index and heap fetch on every read. Add a 4 KB embedding column and
+the relation and WAL ratios fall to ~1.2x, because the embedding dominates the row and is TOASTed
+in every table.
 
-The codec alone, no database in the way (`cd core && cargo run --release --example codec_bench`):
+**Codec cost**, no database in the way (`cd core && cargo run --release --example codec_bench`),
+one quiet core:
 
 | codec | encode | decode | bytes/token |
 | --- | --: | --: | --: |
@@ -153,11 +159,12 @@ The codec alone, no database in the way (`cd core && cargo run --release --examp
 | `raw24` | 1.11 µs | 0.42 µs | 3.02 |
 | `freq` | 5.38 µs | **4.06 µs** | **1.89** |
 
-So `freq` decodes in ~4 µs against ~250 µs to tokenize the same text; the end-to-end figures
-understate it because the Python client pays numpy overhead on 512-element arrays.
-
-> The end-to-end numbers predate the type, and `benchmarks/bench_readwrite.py` still calls removed
-> functions. It needs porting to vocabularies before it runs again.
+**Read latency.** A fast tokenizer reshapes the read story. Re-tokenizing a 512-token chunk with
+`tokenizers` v1 costs single-digit microseconds, not the hundreds a cold tiktoken table shows, so
+pgtoken does not win reads by dodging an expensive tokenize any more. It wins on the payload:
+~2.1x fewer bytes off disk and over the wire, no TOAST fetch, and a `raw16` unpack in ~0.26 µs.
+The `freq` codec spends ~4 µs decoding to buy the smallest payload; `raw16` keeps both the bytes
+and the CPU low, and is the better default when reads dominate.
 
 ## Limitations
 

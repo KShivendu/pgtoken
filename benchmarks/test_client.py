@@ -151,9 +151,11 @@ def main() -> int:
                 tag = f"{codec} n={len(ids)}"
                 rank_table = table if codec == "freq" else None
 
+                # The extension ships no `tokens -> bytea` cast on purpose (see tokens.rs); the
+                # supported way to read a value's stored bytes is `pgtoken.tokens_send`.
                 pg_blob = bytes(
                     conn.execute(
-                        f"SELECT %s::pgtoken.tokens('{vocab}')::bytea", (lit,)
+                        f"SELECT pgtoken.tokens_send(%s::pgtoken.tokens('{vocab}'))", (lit,)
                     ).fetchone()[0]
                 )
                 py_blob = K.encode(arr, codec, vocab_id, rank_table)
@@ -167,8 +169,11 @@ def main() -> int:
                 if not np.array_equal(got, arr):
                     failures.append(f"{tag}: python could not decode the extension's bytes")
 
-                # 3. the extension decodes what Python wrote
-                back = conn.execute("SELECT %s::pgtoken.tokens::int[]", (py_blob,)).fetchone()[0]
+                # 3. the extension decodes what Python wrote. `tokens_recv_bytes` is the shipped
+                # bytea -> tokens entry point (there is no bytea cast), and it bounds-checks.
+                back = conn.execute(
+                    "SELECT pgtoken.tokens_recv_bytes(%s)::int[]", (py_blob,)
+                ).fetchone()[0]
                 if list(back or []) != list(ids):
                     failures.append(f"{tag}: extension could not decode python's bytes")
 

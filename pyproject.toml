@@ -10,6 +10,11 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "psycopg[binary]",
+    # The default benchmark tokenizer. v1 is the fast splitter; its microsecond encode is what
+    # makes the "a text column re-tokenizes on every read" cost honest to measure against.
+    "tokenizers>=1.0.0rc0",
+    # tiktoken is the opt-in comparison tokenizer (PGTOKEN_TOKENIZER=tiktoken-r50k|o200k) and is
+    # also used to recover text from the token-storage corpus, which is stored as r50k ids.
     "tiktoken",
     "constriction",
     "pyfastpfor",
@@ -17,3 +22,7 @@ dependencies = [
     # implementation at all, not just to run the byte-codec baselines.
     "zstandard",
 ]
+
+# tokenizers 1.0 is a release candidate at time of writing; allow uv to resolve the prerelease.
+[tool.uv]
+prerelease = "allow"
