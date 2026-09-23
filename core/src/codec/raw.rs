@@ -78,7 +78,9 @@ pub fn decode16(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
         });
     }
     Ok(payload
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]) as u32)
         .collect())
 }
@@ -103,7 +105,9 @@ pub fn decode24(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
         });
     }
     Ok(payload
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32))
         .collect())
 }
