@@ -151,18 +151,18 @@ the relation and WAL ratios fall to ~1.2x, because the embedding dominates the r
 in every table.
 
 **Codec cost**, no database in the way (`cd core && cargo run --release --example codec_bench`),
-one quiet core:
+one dedicated CPU (median of 5 runs):
 
 | codec | encode | decode | bytes/token |
 | --- | --: | --: | --: |
-| `raw16` | 0.57 µs | 0.26 µs | 2.02 |
-| `raw24` | 1.11 µs | 0.42 µs | 3.02 |
-| `freq` | 5.38 µs | **4.06 µs** | **1.89** |
+| `raw16` | 0.36 µs | 0.22 µs | 2.02 |
+| `raw24` | 0.98 µs | 0.39 µs | 3.02 |
+| `freq` | 5.12 µs | **3.60 µs** | **1.89** |
 
 **Read latency.** A fast tokenizer reshapes the read story. Re-tokenizing a 512-token chunk with
 `tokenizers` v1 costs single-digit microseconds, not the hundreds a cold tiktoken table shows, so
 pgtoken does not win reads by dodging an expensive tokenize any more. It wins on the payload:
-~2.1x fewer bytes off disk and over the wire, no TOAST fetch, and a `raw16` unpack in ~0.26 µs.
+~2.1x fewer bytes off disk and over the wire, no TOAST fetch, and a `raw16` unpack in ~0.22 µs.
 The `freq` codec spends ~4 µs decoding to buy the smallest payload; `raw16` keeps both the bytes
 and the CPU low, and is the better default when reads dominate.
 
