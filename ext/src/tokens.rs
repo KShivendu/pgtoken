@@ -759,13 +759,17 @@ mod tests {
 
         // Equal ids compare equal, different ids compare unequal, within one vocabulary.
         assert_eq!(
-            Spi::get_one::<bool>("SELECT '{1,2,3}'::pgtoken.tokens('eq') = '{1,2,3}'::pgtoken.tokens('eq')")
-                .expect("eq query"),
+            Spi::get_one::<bool>(
+                "SELECT '{1,2,3}'::pgtoken.tokens('eq') = '{1,2,3}'::pgtoken.tokens('eq')"
+            )
+            .expect("eq query"),
             Some(true)
         );
         assert_eq!(
-            Spi::get_one::<bool>("SELECT '{1,2,3}'::pgtoken.tokens('eq') <> '{4,5}'::pgtoken.tokens('eq')")
-                .expect("ne query"),
+            Spi::get_one::<bool>(
+                "SELECT '{1,2,3}'::pgtoken.tokens('eq') <> '{4,5}'::pgtoken.tokens('eq')"
+            )
+            .expect("ne query"),
             Some(true)
         );
 
