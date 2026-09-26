@@ -139,8 +139,9 @@ steady win is the 2.1x compression, and it compounds when a single answer touche
 
 - **Text needs a mapping.** Without `load_mapping`, reads give you token IDs, and `psql` shows
   integers.
-- **No `=`, `ORDER BY`, `GROUP BY`, or `DISTINCT`** on the column. A compressed value has no
-  meaningful byte order, and there is no equality operator yet.
+- **No `ORDER BY`** on the column. A compressed value has no meaningful byte order, because the
+  `freq` codec remaps ids before packing. `=`, `<>`, `DISTINCT`, and `GROUP BY` do work (equality is
+  a byte compare within one vocabulary), so sort on `pgtoken.text(body)` when you need alphabetical.
 - **A column must name a vocabulary.** A column typed as bare `pgtoken.tokens` accepts inserts but
   errors on read, because PostgreSQL applies the type modifier too late to reject them up front. Fix
   it with `ALTER TABLE ... TYPE tokens.<name>`.
@@ -163,7 +164,9 @@ steady win is the 2.1x compression, and it compounds when a single answer touche
 | `describe(tokens)` | record | codec, vocabulary, sizes |
 
 Everything lives in the `pgtoken` schema. The casts are `int[] → tokens` (assignment) and
-`tokens → int[]` (explicit). For the raw stored bytes, call `pgtoken.tokens_send(body)`.
+`tokens → int[]` (explicit). For the raw stored bytes, call `pgtoken.tokens_send(body)`. The `=` and
+`<>` operators compare two values within one vocabulary, and a default hash operator class powers
+`DISTINCT`, `GROUP BY`, and hash joins (a bare `=` needs `pgtoken` on `search_path`).
 `pgtoken.table_dir` reloads on `SIGHUP` and is not session-settable, so two sessions can never
 decode the same value differently.
 

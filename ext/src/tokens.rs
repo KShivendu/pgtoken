@@ -550,6 +550,39 @@ fn text_impl(value: &[u8]) -> String {
     pgtoken_core::detok::to_text(&ids, &map).unwrap_or_else(|e| bail(e))
 }
 
+// ── equality and hashing ──────────────────────────────────────────────────────────────
+//
+// Two stored values are equal exactly when their bytes are equal. The encoding is canonical
+// (pgtoken_core::value::tests::encoding_is_canonical): the same ids under one vocabulary and codec
+// pack to the same bytes, and the 12-byte header carries the vocabulary id and codec, so values
+// from different vocabularies never compare equal. Equality is therefore a memcmp with no decode,
+// and a hash opclass over the bytes lets GROUP BY, DISTINCT and hash joins use it. There is no
+// ORDER BY on purpose: the freq codec remaps ids to frequency rank before packing, so byte order
+// says nothing about the ids or the text. Sort on pgtoken.text(body) when you want alphabetical.
+
+#[pg_extern(immutable, parallel_safe, strict)]
+fn tokens_eq_impl(a: &[u8], b: &[u8]) -> bool {
+    a == b
+}
+
+#[pg_extern(immutable, parallel_safe, strict)]
+fn tokens_ne_impl(a: &[u8], b: &[u8]) -> bool {
+    a != b
+}
+
+/// Hash the stored bytes so equal values land in the same bucket. FNV-1a, 32-bit: deterministic
+/// across backends, self-contained, and consistent with `tokens_eq` by construction, since that is
+/// a byte comparison too.
+#[pg_extern(immutable, parallel_safe, strict)]
+fn tokens_hash_impl(value: &[u8]) -> i32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in value {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h as i32
+}
+
 // ── the type ─────────────────────────────────────────────────────────────────────────
 
 extension_sql!(
@@ -630,6 +663,55 @@ CREATE FUNCTION pgtoken.text(pgtoken.tokens) RETURNS text
     ],
 );
 
+// ── equality operators and the hash operator class ─────────────────────────────────────
+//
+// Re-declared against `pgtoken.tokens`, like the I/O functions above. `HASHES` on `=` plus a
+// default hash operator class is what lets GROUP BY, DISTINCT and hash joins work without the
+// caller naming an operator; a bare `a = b` still needs `pgtoken` on search_path, the same as
+// `pgtoken.text`. No btree class, so no ORDER BY: byte order is meaningless here.
+extension_sql!(
+    r#"
+CREATE FUNCTION pgtoken.tokens_eq(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_eq_impl_wrapper';
+
+CREATE FUNCTION pgtoken.tokens_ne(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_ne_impl_wrapper';
+
+CREATE FUNCTION pgtoken.tokens_hash(pgtoken.tokens) RETURNS integer
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_hash_impl_wrapper';
+
+CREATE OPERATOR pgtoken.= (
+    LEFTARG = pgtoken.tokens, RIGHTARG = pgtoken.tokens,
+    FUNCTION = pgtoken.tokens_eq,
+    COMMUTATOR = OPERATOR(pgtoken.=),
+    NEGATOR = OPERATOR(pgtoken.<>),
+    RESTRICT = eqsel, JOIN = eqjoinsel, HASHES
+);
+
+CREATE OPERATOR pgtoken.<> (
+    LEFTARG = pgtoken.tokens, RIGHTARG = pgtoken.tokens,
+    FUNCTION = pgtoken.tokens_ne,
+    COMMUTATOR = OPERATOR(pgtoken.<>),
+    NEGATOR = OPERATOR(pgtoken.=),
+    RESTRICT = neqsel, JOIN = neqjoinsel
+);
+
+CREATE OPERATOR CLASS pgtoken.tokens_hash_ops DEFAULT FOR TYPE pgtoken.tokens USING hash AS
+    OPERATOR 1 pgtoken.= (pgtoken.tokens, pgtoken.tokens),
+    FUNCTION 1 pgtoken.tokens_hash(pgtoken.tokens);
+"#,
+    name = "tokens_equality",
+    requires = [
+        "tokens_type",
+        tokens_eq_impl,
+        tokens_ne_impl,
+        tokens_hash_impl,
+    ],
+);
+
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
@@ -666,6 +748,42 @@ mod tests {
              END $cast$",
         )
         .expect("bytea cast");
+    }
+
+    #[pg_test]
+    fn equality_powers_dedup_and_group_by() {
+        vocab("eq", 300);
+        Spi::run("SET search_path TO pgtoken, tokens, public").expect("search_path");
+        Spi::run("CREATE TABLE eq_t (body tokens.eq)").expect("create table");
+        Spi::run("INSERT INTO eq_t VALUES ('{1,2,3}'), ('{1,2,3}'), ('{4,5}')").expect("insert");
+
+        // Equal ids compare equal, different ids compare unequal, within one vocabulary.
+        assert_eq!(
+            Spi::get_one::<bool>("SELECT '{1,2,3}'::pgtoken.tokens('eq') = '{1,2,3}'::pgtoken.tokens('eq')")
+                .expect("eq query"),
+            Some(true)
+        );
+        assert_eq!(
+            Spi::get_one::<bool>("SELECT '{1,2,3}'::pgtoken.tokens('eq') <> '{4,5}'::pgtoken.tokens('eq')")
+                .expect("ne query"),
+            Some(true)
+        );
+
+        // DISTINCT collapses the two identical rows: three rows, two distinct.
+        assert_eq!(
+            Spi::get_one::<i64>("SELECT count(*) FROM (SELECT DISTINCT body FROM eq_t) s")
+                .expect("distinct query"),
+            Some(2)
+        );
+
+        // GROUP BY buckets the duplicate together: the largest group has two rows.
+        assert_eq!(
+            Spi::get_one::<i64>(
+                "SELECT count(*) FROM eq_t GROUP BY body ORDER BY count(*) DESC LIMIT 1"
+            )
+            .expect("group by query"),
+            Some(2)
+        );
     }
 
     #[pg_test]
