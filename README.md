@@ -82,42 +82,24 @@ CREATE INDEX ON documents USING gin (to_tsvector('english', pgtoken.text(body)))
 
 ### Coming from a text column
 
-Dedup, group and join are the same SQL, because `=` works:
+Dedup, group and join are the same SQL, since `=` works:
 
 ```sql
 SELECT DISTINCT body FROM chunks;
-SELECT body, count(*) FROM chunks GROUP BY body HAVING count(*) > 1;
 SELECT * FROM a JOIN b ON a.body = b.body;
 ```
 
-Exact match compares token IDs, so pass the ids your tokenizer produces (here `'hello world'`):
+To match on content, pass the token IDs your tokenizer makes. For anything that reads the text, wrap
+the column in `pgtoken.text(body)` (load a mapping first):
 
 ```sql
-SELECT * FROM chunks WHERE body = '{24912,2375}'::tokens.o200k;
-```
-
-Anything that needs the characters wraps the column in `pgtoken.text(body)`, so load a mapping first:
-
-```sql
--- full-text search, GIN index and all
-CREATE INDEX ON chunks USING gin (to_tsvector('english', pgtoken.text(body)));
-SELECT * FROM chunks WHERE to_tsvector('english', pgtoken.text(body)) @@ to_tsquery('cat & dog');
-
--- LIKE and regex
+SELECT * FROM chunks WHERE body = '{24912,2375}'::tokens.o200k;   -- 'hello world'
 SELECT * FROM chunks WHERE pgtoken.text(body) LIKE '%invoice%';
-
--- sort alphabetically
-SELECT * FROM chunks ORDER BY pgtoken.text(body);
-
--- length in tokens (no decode) or characters (via the mapping)
-SELECT pgtoken.token_count(body) FROM chunks;
-SELECT length(pgtoken.text(body)) FROM chunks;
+CREATE INDEX ON chunks USING gin (to_tsvector('english', pgtoken.text(body)));
 ```
 
-Dedup, group and join compare the token IDs. That matches a `text` column exactly for a lossless
-tokenizer like tiktoken; a normalizing tokenizer (one that lowercases or strips accents) groups
-`'Hello'` and `'hello'` together where a `text` column keeps them apart. A `UNIQUE` constraint on
-the column is the one thing not supported.
+Dedup and join compare token IDs, so a tokenizer that lowercases treats `'Hello'` and `'hello'` as
+the same. A `UNIQUE` constraint on the column is not supported.
 
 ## Compression
 
