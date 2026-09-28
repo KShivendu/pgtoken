@@ -82,20 +82,42 @@ CREATE INDEX ON documents USING gin (to_tsvector('english', pgtoken.text(body)))
 
 ### Coming from a text column
 
-| task | `text` column | `pgtoken` column |
-| --- | --- | --- |
-| dedup / group / join | `DISTINCT body`, `GROUP BY body`, `a.body = b.body` | same SQL |
-| exact match | `body = 'hello world'` | `body = '{24912,2375}'::tokens.o200k` (ids from your tokenizer) |
-| full-text search | `to_tsvector('english', body)` | `to_tsvector('english', pgtoken.text(body))` |
-| `LIKE`, regex | `body LIKE '%invoice%'` | `pgtoken.text(body) LIKE '%invoice%'` |
-| sort alphabetically | `ORDER BY body` | `ORDER BY pgtoken.text(body)` |
-| length | `length(body)` | `pgtoken.token_count(body)` (tokens), `length(pgtoken.text(body))` (chars) |
+Dedup, group and join are the same SQL, because `=` works:
 
-Wrap the column in `pgtoken.text(body)` for anything that needs the characters, and load a mapping
-first. Dedup, group and join compare the token IDs, which matches a `text` column exactly for a
-lossless tokenizer like tiktoken. A normalizing tokenizer (one that lowercases or strips accents)
-groups `'Hello'` and `'hello'` together where a `text` column keeps them apart. A `UNIQUE`
-constraint on the column is the one thing not supported.
+```sql
+SELECT DISTINCT body FROM chunks;
+SELECT body, count(*) FROM chunks GROUP BY body HAVING count(*) > 1;
+SELECT * FROM a JOIN b ON a.body = b.body;
+```
+
+Exact match compares token IDs, so pass the ids your tokenizer produces (here `'hello world'`):
+
+```sql
+SELECT * FROM chunks WHERE body = '{24912,2375}'::tokens.o200k;
+```
+
+Anything that needs the characters wraps the column in `pgtoken.text(body)`, so load a mapping first:
+
+```sql
+-- full-text search, GIN index and all
+CREATE INDEX ON chunks USING gin (to_tsvector('english', pgtoken.text(body)));
+SELECT * FROM chunks WHERE to_tsvector('english', pgtoken.text(body)) @@ to_tsquery('cat & dog');
+
+-- LIKE and regex
+SELECT * FROM chunks WHERE pgtoken.text(body) LIKE '%invoice%';
+
+-- sort alphabetically
+SELECT * FROM chunks ORDER BY pgtoken.text(body);
+
+-- length in tokens (no decode) or characters (via the mapping)
+SELECT pgtoken.token_count(body) FROM chunks;
+SELECT length(pgtoken.text(body)) FROM chunks;
+```
+
+Dedup, group and join compare the token IDs. That matches a `text` column exactly for a lossless
+tokenizer like tiktoken; a normalizing tokenizer (one that lowercases or strips accents) groups
+`'Hello'` and `'hello'` together where a `text` column keeps them apart. A `UNIQUE` constraint on
+the column is the one thing not supported.
 
 ## Compression
 
