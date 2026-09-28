@@ -80,6 +80,23 @@ CREATE INDEX ON documents USING gin (to_tsvector('english', pgtoken.text(body)))
 | token IDs for SQL or `train` | `body::int[]` | 4 B/token |
 | text for a human | `pgtoken.text(body)` | needs a mapping |
 
+### Coming from a text column
+
+| task | `text` column | `pgtoken` column |
+| --- | --- | --- |
+| dedup / group / join | `DISTINCT body`, `GROUP BY body`, `a.body = b.body` | same SQL |
+| exact match | `body = 'hello world'` | `body = '{24912,2375}'::tokens.o200k` (ids from your tokenizer) |
+| full-text search | `to_tsvector('english', body)` | `to_tsvector('english', pgtoken.text(body))` |
+| `LIKE`, regex | `body LIKE '%invoice%'` | `pgtoken.text(body) LIKE '%invoice%'` |
+| sort alphabetically | `ORDER BY body` | `ORDER BY pgtoken.text(body)` |
+| length | `length(body)` | `pgtoken.token_count(body)` (tokens), `length(pgtoken.text(body))` (chars) |
+
+Wrap the column in `pgtoken.text(body)` for anything that needs the characters, and load a mapping
+first. Dedup, group and join compare the token IDs, which matches a `text` column exactly for a
+lossless tokenizer like tiktoken. A normalizing tokenizer (one that lowercases or strips accents)
+groups `'Hello'` and `'hello'` together where a `text` column keeps them apart. A `UNIQUE`
+constraint on the column is the one thing not supported.
+
 ## Compression
 
 | method | size | decode | training |
