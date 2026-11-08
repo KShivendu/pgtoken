@@ -5,8 +5,10 @@
 --                  a Postgres column holding RAG chunks looks like today.
 --   docs_text_lz4  text with COMPRESSION lz4. Matches the paper's LZ4 baseline and what
 --                  Qdrant and Elasticsearch actually do.
---   docs_tnt       token-native bytea with STORAGE EXTERNAL, which tells Postgres not to
---                  compress a payload that is already entropy-coded.
+--   docs_tnt       a real pgtoken column, `tokens.<vocabulary>`. Its type names a vocabulary
+--                  that depends on the tokenizer, so bench_storage_wal.py creates this table
+--                  itself, after creating the vocabulary. create_vocabulary already sets
+--                  STORAGE EXTERNAL, so Postgres never recompresses the encoded payload.
 --
 -- Every table carries the same surrogate embedding column so the row shape, and therefore
 -- the tuple size and TOAST decisions, stay comparable. The embedding is never measured.
@@ -32,19 +34,8 @@ CREATE TABLE docs_text_lz4 (
     body      text COMPRESSION lz4 NOT NULL
 );
 
-CREATE TABLE docs_tnt (
-    id        integer PRIMARY KEY,
-    embedding bytea,
-    body      bytea NOT NULL
-);
-
--- Do not let Postgres compress the already-compressed token payload. Running pglz over ANS
--- or streamvbyte output costs CPU for essentially no gain.
-ALTER TABLE docs_tnt ALTER COLUMN body SET STORAGE EXTERNAL;
-
 -- Keep the surrogate embedding out of the comparison: it is identical across tables, and
 -- letting Postgres compress or TOAST it differently per table would confound the
 -- measurement of the text column.
 ALTER TABLE docs_text     ALTER COLUMN embedding SET STORAGE EXTERNAL;
 ALTER TABLE docs_text_lz4 ALTER COLUMN embedding SET STORAGE EXTERNAL;
-ALTER TABLE docs_tnt      ALTER COLUMN embedding SET STORAGE EXTERNAL;
