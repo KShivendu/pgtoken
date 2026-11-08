@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "pgtoken-rs"
+version = "0.1.0"
+description = "Rust-speed client codec for pgtoken values."
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "pgtoken_rs._native"
+features = ["pyo3/extension-module"]

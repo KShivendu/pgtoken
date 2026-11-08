@@ -45,6 +45,38 @@ jobs:
         working-directory: core
         run: cargo run --release --example codec_bench
 
+  # The Python client codec in py/ (pgtoken_rs). Checked against the pure-Python reference codec,
+  # so this job needs no PostgreSQL and none of the benchmarks' heavier dependencies.
+  py:
+    name: py (Python client codec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: py
+
+      - name: Format
+        run: cargo fmt --check --manifest-path py/Cargo.toml
+
+      - name: Clippy
+        working-directory: py
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build and install
+        run: pip install ./py
+
+      - name: Rust and Python clients agree
+        run: python py/tests/test_roundtrip.py
+
   extension:
     name: extension (pg${{ matrix.pg }})
     runs-on: ubuntu-latest

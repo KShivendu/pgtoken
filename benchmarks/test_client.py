@@ -8,6 +8,9 @@ the one in the database, so this asserts it rather than assuming it:
   * bytes Python wrote decode correctly in the extension,
   * and the two produce byte-identical output for the same input.
 
+The Rust client in py/ (`pgtoken_rs`) gets the same encode and decode checks, since that is
+the codec the read benchmark times.
+
 A codec is no longer nameable directly (see `pgtoken.tokens`): every value names a vocabulary,
 and the vocabulary's `vocab_size` is what picks the width under test. So each parity case runs
 against a small, disposable vocabulary sized for the codec it exercises -- 256 for raw8, 60000
@@ -28,6 +31,7 @@ import numpy as np
 import psycopg
 
 import pgtoken_client as K
+import pgtoken_rs as R
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -139,6 +143,13 @@ def main() -> int:
             else:
                 vocabs.append(("freq", FREQ_VOCAB, FREQ_VOCAB_SIZE, freq_id))
 
+        table_dir = conn.execute("SELECT current_setting('pgtoken.table_dir')").fetchone()[0]
+        rs_tables = {
+            vid: R.load_table(os.path.join(table_dir, f"{vid}.tntt"))
+            for codec, _, _, vid in vocabs
+            if codec == "freq"
+        }
+
         n_cases = 0
         for ids in CASES:
             arr = np.asarray(ids, dtype=np.uint32)
@@ -181,12 +192,19 @@ def main() -> int:
                 if K.token_count(pg_blob) != len(ids):
                     failures.append(f"{tag}: token_count disagrees")
 
+                # 5. the Rust client (py/, what the read benchmark times) matches both ways
+                rs_table = rs_tables.get(vocab_id)
+                if R.encode(arr, codec, vocab_id, rs_table) != pg_blob:
+                    failures.append(f"{tag}: rust client encode differs from the extension")
+                if not np.array_equal(R.decode(pg_blob, rs_table), arr):
+                    failures.append(f"{tag}: rust client could not decode the extension's bytes")
+
     if failures:
         print(f"FAILED ({len(failures)}):")
         for f in failures:
             print("  -", f)
         return 1
-    print(f"ok: python client and extension agree on {n_cases} (case, codec) combinations")
+    print(f"ok: python client, rust client and extension agree on {n_cases} (case, codec) combinations")
     return 0
 
 
