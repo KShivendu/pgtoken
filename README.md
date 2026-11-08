@@ -123,16 +123,17 @@ little wider. A vocabulary is fixed once created, so to change one, make a new v
 
 ## Benchmarks
 
-C4 English prose, 512-token chunks, gpt2 ids via HuggingFace `tokenizers` v1, PostgreSQL 14, 20000
-rows. Regenerate with the scripts in `benchmarks/`.
+C4 English text, 512-token chunks, gpt2 ids from HuggingFace `tokenizers` v1, PostgreSQL 14. Every
+pgtoken number below uses a real `tokens.<name>` column. Regenerate with the scripts in
+`benchmarks/`.
 
-**Storage** is smaller on disk, in WAL, and in the cache, by about 2.1x, whatever tokenizer you use:
+**Storage.** With 20000 rows, pgtoken is about 2.1x smaller on disk, in WAL, and in the cache:
 
 | column | payload/row | relation | WAL/row | docs/page | past TOAST |
 | --- | --: | --: | --: | --: | --: |
-| `text` (pglz) | 1893 B | 45.9 MB | 2098 B | 6.32 | 7000 / 20000 |
-| `text` (lz4) | 1832 B | 42.6 MB | 1955 B | 4.32 | 1500 / 20000 |
-| `pgtoken` freq | **901 B** (2.10x) | **21.0 MB** (2.19x) | **995 B** (2.11x) | **8.00** | **0** / 20000 |
+| `text` (pglz) | 1893 B | 45.9 MB | 2091 B | 6.32 | 7000 / 20000 |
+| `text` (lz4) | 1832 B | 42.6 MB | 1953 B | 4.32 | 1500 / 20000 |
+| `pgtoken` freq | **901 B** (2.10x) | **21.0 MB** (2.19x) | **993 B** (2.10x) | **8.00** | **0** / 20000 |
 
 Every token value stays inline. A third of the text rows spill to TOAST instead, and each spill
 costs an extra fetch on every read. A 4 KB embedding column dilutes the ratios to about 1.2x, since
@@ -147,14 +148,31 @@ dedicated CPU):
 | `raw24` | 0.98 µs | 0.39 µs | 3.02 |
 | `freq` | 5.12 µs | **3.60 µs** | **1.89** |
 
-**Latency.** pgtoken suits agent workloads, where an LLM is the main reader or writer and already
-works in token IDs. With a plain `text` column, every read has to tokenize and every write has to
-detokenize. pgtoken skips both, because it stores and returns the IDs directly.
+**Read and write speed.** pgtoken suits agent workloads, where an LLM reads and writes token IDs.
+With a `text` column, every write has to detokenize and every read has to tokenize again. With
+pgtoken, the client sends and receives the stored bytes in binary mode. It encodes and decodes them
+with `pgtoken_rs`, a Python module in `py/` that runs the extension's own Rust codec.
 
-How much that saves depends on your tokenizer, so use a fast one. HuggingFace `tokenizers` v1
-tokenizes a 512-token chunk in single-digit microseconds, where an older or cold tiktoken table
-takes hundreds. pgtoken itself decodes in 0.22 µs for `raw16` and 3.6 µs for `freq`. Either way, the
-steady win is the 2.1x compression, and it compounds when a single answer touches hundreds of rows.
+Setup: 2000 chunks, 300 repeats, `synchronous_commit = off`, client pinned to one core, CPU cache
+flushed before every timed call. Times are the median, end to end, as the client sees them:
+
+| column | read 1 row | read 10 rows | read 100 rows | write 1 row | write 100 rows, per row |
+| --- | --: | --: | --: | --: | --: |
+| `text` (lz4) | 332 µs | 734 µs | 3311 µs | 341 µs | 55.6 µs |
+| `text` (pglz) | 346 µs | 755 µs | 3705 µs | 414 µs | 104.5 µs |
+| `pgtoken` raw | 290 µs | 417 µs | 1273 µs | 280 µs | **12.6 µs** |
+| `pgtoken` freq | **286 µs** | **415 µs** | **1265 µs** | **276 µs** | 19.2 µs |
+
+Reading 100 rows shows where the time goes. The lz4 text column spends 1.06 ms fetching 233 KB and
+2.24 ms tokenizing it. pgtoken freq spends 0.68 ms fetching 90 KB and 0.58 ms decoding it. That is
+2.6x faster, and it was faster in all 300 repeats. A single row gains less (1.16x), because the round
+trip to the server dominates.
+
+The client codec matters. The same freq reads through the pure-Python reference codec
+(`benchmarks/pgtoken_client.py`) take 6.1 ms for 100 rows, slower than text. Reading `body::int[]`
+with no client codec takes 7.0 ms. The server builds an array (about 14 µs a row), and psycopg then
+makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding of `pgtoken-core`.
+`uv sync` builds `pgtoken_rs`, or run `pip install ./py`.
 
 ## Limitations
 
@@ -191,8 +209,9 @@ Everything lives in the `pgtoken` schema. The casts are `int[] → tokens` (assi
 `pgtoken.table_dir` reloads on `SIGHUP` and is not session-settable, so two sessions can never
 decode the same value differently.
 
-`benchmarks/pgtoken_client.py` is a Python reference codec, byte-identical to the extension in both
-directions. `benchmarks/test_client.py` asserts that.
+`benchmarks/pgtoken_client.py` is a Python reference codec, and `pgtoken_rs` (in `py/`) wraps the
+Rust one. Both are byte-identical to the extension in both directions, and
+`benchmarks/test_client.py` asserts that.
 
 ## Tests
 
