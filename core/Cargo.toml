@@ -14,6 +14,9 @@ license = "Apache-2.0"
 [dependencies]
 sha2 = "0.10"
 
-# Only for `examples/leb_vs_svb.rs`, the benchmark that chose LEB128 over streamvbyte for `freq`.
+# Only for the benchmarks in examples/: `leb_vs_svb.rs` (chose LEB128 over streamvbyte for
+# `freq`) and `lz_on_freq.rs` (LZ compression on top of `freq`).
 [dev-dependencies]
 stream-vbyte = "0.4"
+lz4_flex = "0.11"
+zstd = { version = "0.13", features = ["experimental", "zdict_builder"] }

@@ -13,3 +13,4 @@ docs/
 
 # Benchmark run logs.
 benchmarks/*_run.log
+bench_data/
