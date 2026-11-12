@@ -1,0 +1,23 @@
+{
+ "tokenizer": "o200k_base",
+ "vocab_size": 200019,
+ "ranked": 77463,
+ "training": {
+  "prose": 1777649,
+  "code": 1777649,
+  "hindi": 1777649
+ },
+ "source": "token-storage data/corpus *_train.npy",
+ "files": {
+  "o200k.tntt": {
+   "bytes": 309864,
+   "zst_bytes": 132735,
+   "sha256": "743afb3cae0eac236f9bece91973ebe3038539b557ac3dcc955bb0d9a1de42af"
+  },
+  "o200k.tnmap": {
+   "bytes": 2197790,
+   "zst_bytes": 973155,
+   "sha256": "5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7"
+  }
+ }
+}

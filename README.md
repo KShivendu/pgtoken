@@ -11,7 +11,7 @@ need the characters, `pgtoken.text()` hands them back.
 
 You bring the tokenizer: tiktoken, HuggingFace, SentencePiece, or your own. The database only needs
 its vocabulary size, plus a `token_id -> bytes` table if you want text back. It never tokenizes
-anything itself.
+anything itself. For OpenAI's `o200k_base`, both come bundled, so there is nothing to set up.
 
 <sub>Background: [blog](https://www.kshivendu.dev/blog/token-storage) ·
 [paper](https://arxiv.org/abs/2608.02376)</sub>
@@ -30,38 +30,42 @@ git clone https://github.com/KShivendu/pgtoken.git
 cd pgtoken/ext && cargo pgrx install --release
 ```
 
-No PostgreSQL to hand? `setup_pg.sh` installs one under `~/.local/share`, no root needed. Then set
-`pgtoken.table_dir` in `postgresql.conf`. Trained rankings and token mappings live there.
+No PostgreSQL to hand? `setup_pg.sh` installs one under `~/.local/share`, no root needed. There is
+nothing to configure: trained rankings and token mappings are stored in the database itself.
 
 ## Usage
 
 ```sql
 CREATE EXTENSION pgtoken;
-
--- Declare the ID space once. The storage width follows: 200019 ids need 3 bytes.
-SELECT pgtoken.create_vocabulary('o200k', vocab_size => 200019);
+SELECT pgtoken.create_vocabulary('o200k');   -- bundled: o200k_base, freq compression, text()
 
 CREATE TABLE documents (id bigserial PRIMARY KEY, body tokens.o200k);
 
-INSERT INTO documents (body) VALUES ('{24912,2375}');   -- ids from your tokenizer
-SELECT body FROM documents;                             -- {24912,2375}
+INSERT INTO documents (body) VALUES ('{13225,11,2375,0}');   -- ids from tiktoken's o200k_base
+SELECT body FROM documents;                                  -- {13225,11,2375,0}
+SELECT pgtoken.text(body) FROM documents;                    -- Hello, world!
 ```
 
 `create_vocabulary` creates the domain `tokens.o200k` that you put on the column, and it sets
 `STORAGE EXTERNAL` for you. Each vocabulary is its own type, so PostgreSQL won't let you mix values
 between them. That is on purpose: a token ID means nothing outside the tokenizer that produced it.
 
-### Getting text back
-
-`pgtoken.text()` needs a `token_id -> bytes` table exported from your tokenizer.
-`scripts/load_mapping.py` builds one for any tiktoken encoding:
-
-```sh
-uv run python scripts/load_mapping.py --encoding o200k_base --vocabulary o200k
-```
+`o200k` is a **preset**: the extension ships its frequency ranking and its `token_id -> bytes` table
+inside the binary. Use it under another name with `create_vocabulary('chat', preset => 'o200k')`,
+or store plain 3-byte ids with `compression => 'raw'`. Any other tokenizer declares its ID space,
+and the storage width follows (50257 ids need 2 bytes):
 
 ```sql
-SELECT pgtoken.text(body) FROM documents;   -- 'Hello, world!'
+SELECT pgtoken.create_vocabulary('gpt2', vocab_size => 50257);
+```
+
+### Getting text back
+
+`pgtoken.text()` needs a `token_id -> bytes` table. A preset has one built in. For anything else,
+export it from your tokenizer. `scripts/load_mapping.py` builds one for any tiktoken encoding:
+
+```sh
+uv run python scripts/load_mapping.py --encoding cl100k_base --vocabulary cl100k
 ```
 
 The table maps IDs to bytes rather than strings, because one character can span two tokens. pgtoken
@@ -90,7 +94,7 @@ SELECT * FROM a JOIN b ON a.body = b.body;
 ```
 
 To match on content, pass the token IDs your tokenizer makes. For anything that reads the text, wrap
-the column in `pgtoken.text(body)` (load a mapping first):
+the column in `pgtoken.text(body)` (presets have a mapping; otherwise load one first):
 
 ```sql
 SELECT * FROM chunks WHERE body = '{24912,2375}'::tokens.o200k;   -- 'hello world'
@@ -101,12 +105,38 @@ CREATE INDEX ON chunks USING gin (to_tsvector('english', pgtoken.text(body)));
 Dedup and join compare token IDs, so a tokenizer that lowercases treats `'Hello'` and `'hello'` as
 the same. A `UNIQUE` constraint on the column is not supported.
 
+## Use from Python
+
+`pgtoken-rs` (in `py/`) reads and writes these columns as numpy arrays of token IDs. It encodes on
+your machine with the extension's own Rust codec. Install it from this checkout, with the psycopg
+extra:
+
+```sh
+uv pip install "./py[psycopg]"
+```
+
+```python
+import psycopg
+from pgtoken_rs.psycopg import register
+
+conn = psycopg.connect("dbname=mydb", autocommit=True)
+vocab = register(conn, "o200k")   # asks the server for the vocabulary's codec and ranking
+
+conn.execute("INSERT INTO documents (body) VALUES (%s)", [vocab.encode([24912, 2375])])
+ids = conn.execute("SELECT body FROM documents", binary=True).fetchone()[0]
+print(ids)                        # [24912  2375], a numpy uint32 array
+```
+
+`register` needs only a normal connection. It works on a hosted server too, because the ranking
+comes back as bytes from `pgtoken.vocabulary_codec`. Binary `COPY` works as well. See
+[py/README.md](py/README.md) for `COPY`, several vocabularies, and the errors it raises.
+
 ## Compression
 
 | method | size | decode | training |
 | --- | --: | --: | --- |
-| `raw` (default) | 1-3 B/token | 0.2-0.4 µs | no |
-| `freq` | ~1.9 B/token | 3.6 µs | yes |
+| `raw` (default without a preset) | 1-3 B/token | 0.2-0.4 µs | no |
+| `freq` (default for a preset) | ~1.9 B/token | 3.6 µs | yes, or bundled in a preset |
 
 `raw` packs IDs at the fixed width `vocab_size` implies. `freq` remaps them to frequency rank and
 varint-packs, so common tokens cost a single byte:
@@ -116,9 +146,10 @@ SELECT pgtoken.create_vocabulary('corpus', vocab_size => 200019, compression => 
 SELECT pgtoken.train('corpus', 'SELECT ids FROM my_corpus');
 ```
 
-The ranking only stores the tokens your corpus actually used. For a skewed corpus that is tens of
-bytes, not the 800 KB a full vocabulary would need. Tokens it never saw still encode fine, just a
-little wider. A vocabulary is fixed once created, so to change one, make a new vocabulary and
+The o200k preset ships a ranking counted over an equal mix of English prose, code and Hindi. Train
+your own when your data looks different. A ranking only stores the tokens the corpus actually used.
+For a skewed corpus that is tens of bytes, not the 800 KB a full vocabulary would need. Tokens it
+never saw still encode fine, just a little wider. A vocabulary is fixed once created, so to change one, make a new vocabulary and
 `ALTER TABLE ... TYPE tokens.<new>`.
 
 ## Benchmarks
@@ -176,8 +207,8 @@ makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding
 
 ## Limitations
 
-- **Text needs a mapping.** Without `load_mapping`, reads give you token IDs, and `psql` shows
-  integers.
+- **Text needs a mapping.** A preset has one. Otherwise, without `load_mapping`, reads give you
+  token IDs, and `psql` shows integers.
 - **No `ORDER BY`** on the column. A compressed value has no meaningful byte order, because the
   `freq` codec remaps ids before packing. `=`, `<>`, `DISTINCT`, and `GROUP BY` do work (equality is
   a byte compare within one vocabulary), so sort on `pgtoken.text(body)` when you need alphabetical.
@@ -193,11 +224,12 @@ makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding
 
 | function | returns | |
 | --- | --- | --- |
-| `create_vocabulary(name, vocab_size [, compression] [, id])` | `int` | also creates `tokens.<name>` |
-| `train(name, query [, max_ranks])` | `text` | ranking for `freq`, write-once |
-| `load_mapping(name, query)` | `text` | `token_id -> bytes`, write-once |
+| `create_vocabulary(name [, vocab_size] [, compression] [, id] [, preset])` | `int` | also creates `tokens.<name>` |
+| `train(name, query [, max_ranks])` | `text` | ranking for `freq`, write-once; not for presets |
+| `load_mapping(name, query)` | `text` | `token_id -> bytes`, write-once; not for presets |
 | `text(tokens)` | `text` | detokenize; needs a mapping; `IMMUTABLE` |
-| `vocabulary_info(name)` | record | size, compression, width, per-artefact stats |
+| `vocabulary_info(name)` | record | size, compression, width, preset, per-artefact stats |
+| `vocabulary_codec(name)` | record | id, codec and ranking bytes, for a client codec |
 | `drop_vocabulary(name)` | | drops the domain; the id stays reserved |
 | `token_count(tokens)` | `int` | header only, no decode |
 | `describe(tokens)` | record | codec, vocabulary, sizes |
@@ -206,8 +238,14 @@ Everything lives in the `pgtoken` schema. The casts are `int[] → tokens` (assi
 `tokens → int[]` (explicit). For the raw stored bytes, call `pgtoken.tokens_send(body)`. The `=` and
 `<>` operators compare two values within one vocabulary, and a default hash operator class powers
 `DISTINCT`, `GROUP BY`, and hash joins (a bare `=` needs `pgtoken` on `search_path`).
-`pgtoken.table_dir` reloads on `SIGHUP` and is not session-settable, so two sessions can never
-decode the same value differently.
+
+**Where rankings and mappings live.** A preset's are compiled into the extension, and its
+vocabularies take ids from a reserved range (65280-65535 for o200k), so a value is readable with
+nothing else in the database. `train` and `load_mapping` store theirs as SQL functions,
+`pgtoken.artefact_<id>_ranking()` and `pgtoken.artefact_<id>_mapping()`, that return the bytes. So
+they are transactional, WAL-logged, copied to replicas, private to their database, and included in
+`pg_dump`. A dump restores functions before any table data, so a `freq` column restores even with
+`pg_restore -j`. Do not edit or drop these functions.
 
 `benchmarks/pgtoken_client.py` is a Python reference codec, and `pgtoken_rs` (in `py/`) wraps the
 Rust one. Both are byte-identical to the extension in both directions, and
@@ -218,11 +256,12 @@ Rust one. Both are byte-identical to the extension in both directions, and
 ```sh
 cd core && cargo test          # codecs, no PostgreSQL
 cd ext  && cargo pgrx test pg14
+uv run python py/tests/test_psycopg.py   # Python client, against a running server
+bash scripts/test_dump_restore.sh        # pg_dump and pg_restore -j, against a running server
 ```
 
-Clear `$pgtoken.table_dir` between runs. Rankings and mappings are files, so they survive the
-rollback that resets everything else, and both refuse to overwrite an existing one. CI runs both
-suites across PostgreSQL 14 through 18, plus `cargo fmt`, `clippy -D warnings`, and an install check.
+CI runs both cargo suites across PostgreSQL 14 through 18, plus `cargo fmt`, `clippy -D warnings`,
+and an install check.
 
 ## License
 

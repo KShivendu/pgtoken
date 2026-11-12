@@ -68,16 +68,21 @@ class RankTable:
     @classmethod
     def load(cls, path: str) -> "RankTable":
         with open(path, "rb") as f:
-            buf = f.read()
+            return cls.from_bytes(f.read(), what=path)
+
+    @classmethod
+    def from_bytes(cls, buf: bytes, what: str = "ranking") -> "RankTable":
+        """Parse a ranking, e.g. the bytes `pgtoken.vocabulary_codec(name)` returns."""
+        buf = bytes(buf)
         if buf[:4] != b"TNTT":
-            raise ValueError(f"{path}: bad magic, expected TNTT")
+            raise ValueError(f"{what}: bad magic, expected TNTT")
         if buf[4] != 1:
-            raise ValueError(f"{path}: unsupported table version {buf[4]}")
+            raise ValueError(f"{what}: unsupported table version {buf[4]}")
         if buf[5] != 1:
-            raise ValueError(f"{path}: unsupported table kind {buf[5]}")
+            raise ValueError(f"{what}: unsupported table kind {buf[5]}")
         k = int.from_bytes(buf[8:12], "little")
         if len(buf) - 12 != k * 4:
-            raise ValueError(f"{path}: payload is {len(buf) - 12} bytes, expected {k * 4}")
+            raise ValueError(f"{what}: payload is {len(buf) - 12} bytes, expected {k * 4}")
         return cls(np.frombuffer(buf, dtype=np.uint32, count=k, offset=12))
 
     def ranks(self, ids: np.ndarray) -> np.ndarray:

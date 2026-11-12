@@ -102,6 +102,12 @@ def ensure_vocabulary(conn, name: str, vocab_size: int, compression: str = "raw"
     ).fetchone()[0]
 
 
+def ranking_bytes(conn, name: str) -> bytes | None:
+    """A freq vocabulary's ranking as bytes, or None before it is trained."""
+    row = conn.execute("SELECT ranking FROM pgtoken.vocabulary_codec(%s)", (name,)).fetchone()
+    return None if row[0] is None else bytes(row[0])
+
+
 def ensure_freq_table(conn, name: str, vocab_size: int) -> tuple[int, K.RankTable | None]:
     """Create and train `name` if needed, and return its id and ranking (if one loaded).
 
@@ -114,11 +120,11 @@ def ensure_freq_table(conn, name: str, vocab_size: int) -> tuple[int, K.RankTabl
         lit = "{" + ",".join(map(str, FREQ_TRAIN_IDS)) + "}"
         conn.execute("SELECT pgtoken.train(%s, %s)", (name, f"SELECT '{lit}'::int[]"))
 
-    table_dir = conn.execute("SELECT current_setting('pgtoken.table_dir')").fetchone()[0]
-    path = os.path.join(table_dir, f"{vocab_id}.tntt")
-    if not os.path.exists(path):
+    # The ranking lives in the database; vocabulary_codec hands it over as bytes.
+    ranking = ranking_bytes(conn, name)
+    if ranking is None:
         return vocab_id, None
-    return vocab_id, K.RankTable.load(path)
+    return vocab_id, K.RankTable.from_bytes(ranking)
 
 
 def main() -> int:
@@ -143,10 +149,9 @@ def main() -> int:
             else:
                 vocabs.append(("freq", FREQ_VOCAB, FREQ_VOCAB_SIZE, freq_id))
 
-        table_dir = conn.execute("SELECT current_setting('pgtoken.table_dir')").fetchone()[0]
         rs_tables = {
-            vid: R.load_table(os.path.join(table_dir, f"{vid}.tntt"))
-            for codec, _, _, vid in vocabs
+            vid: R.Table.from_bytes(ranking_bytes(conn, name))
+            for codec, name, _, vid in vocabs
             if codec == "freq"
         }
 

@@ -9,7 +9,8 @@
 
 use pgrx::prelude::*;
 
-use crate::registry::bail;
+use crate::preset::{self, Preset};
+use crate::registry::{self, bail, Artefact};
 
 /// Compression method, as stored in the catalog and packed into a typmod.
 pub const COMPRESSION_RAW: u8 = 0;
@@ -24,6 +25,8 @@ pub struct Vocabulary {
     pub id: u16,
     pub compression: u8,
     pub width: u8,
+    /// 0 for a vocabulary with its own artefacts, else a `preset::Preset::code`.
+    pub preset: u8,
 }
 
 /// The narrowest width that can address `vocab_size` distinct ids.
@@ -90,7 +93,10 @@ CREATE TABLE pgtoken.vocabulary (
     name        text     NOT NULL UNIQUE,
     vocab_size  int      NOT NULL CHECK (vocab_size >= 1),
     compression text     NOT NULL CHECK (compression IN ('raw', 'freq')),
-    width       smallint NOT NULL CHECK (width BETWEEN 1 AND 4)
+    width       smallint NOT NULL CHECK (width BETWEEN 1 AND 4),
+    -- A bundled preset (see preset.rs) whose ranking and mapping this vocabulary uses, or NULL
+    -- for one that brings its own through `train` and `load_mapping`.
+    preset      text
 );
 
 -- Rows must survive pg_dump: a restored database with an empty catalog would have columns whose
@@ -142,16 +148,12 @@ GRANT USAGE ON SCHEMA pgtoken TO PUBLIC;
 GRANT SELECT ON pgtoken.vocabulary TO PUBLIC;
 
 -- Schema USAGE reaches the functions too, and PUBLIC holds EXECUTE on a function by default, so
--- the four that mutate a vocabulary are taken back explicitly. Two of them are already stopped by
--- ordinary object permissions -- `create_vocabulary` needs INSERT on the catalog (not granted)
--- and CREATE on schema tokens, `drop_vocabulary` needs to own the domain -- but `train` and
--- `load_mapping` are not: they write artefact files through the filesystem as the server's OS
--- user, and neither the catalog nor the domain is consulted first. Left to PUBLIC, any role could
--- seal a wrong `<id>.tnmap` for someone else's vocabulary and, the file being write-once, leave
--- the owner no way to load the right one -- the same harm `create_vocabulary`'s orphan check
--- exists to prevent, reached from the other side. Grant EXECUTE back to whoever administers
--- vocabularies.
-REVOKE EXECUTE ON FUNCTION pgtoken.create_vocabulary(text, int, text, int) FROM PUBLIC;
+-- the four that mutate a vocabulary are taken back explicitly. They are also stopped by ordinary
+-- object permissions -- `create_vocabulary` needs INSERT on the catalog, `train` and
+-- `load_mapping` need CREATE on schema pgtoken for the artefact function they write,
+-- `drop_vocabulary` needs to own the domain -- but saying so here makes the intent plain. Grant
+-- EXECUTE back to whoever administers vocabularies.
+REVOKE EXECUTE ON FUNCTION pgtoken.create_vocabulary(text, int, text, int, text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pgtoken.drop_vocabulary(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pgtoken.train(text, text, int) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pgtoken.load_mapping(text, text) FROM PUBLIC;
@@ -162,13 +164,47 @@ REVOKE EXECUTE ON FUNCTION pgtoken.load_mapping(text, text) FROM PUBLIC;
     finalize,
 );
 
+/// Create a vocabulary and its `tokens.<name>` domain, and return its id.
+///
+/// Two kinds. A **preset** vocabulary (`create_vocabulary('o200k')`, or any name with
+/// `preset => 'o200k'`) uses a ranking and mapping bundled in the extension: it defaults to `freq`
+/// and works with no further setup. Any other vocabulary declares its own `vocab_size` and brings
+/// its own artefacts through `train` and `load_mapping`. A name that is a preset's name always
+/// means that preset.
 #[pg_extern]
 fn create_vocabulary(
     name: &str,
-    vocab_size: i32,
-    compression: default!(&str, "'raw'"),
+    vocab_size: default!(Option<i32>, "NULL"),
+    compression: default!(Option<&str>, "NULL"),
     id: default!(Option<i32>, "NULL"),
+    preset: default!(Option<&str>, "NULL"),
 ) -> i32 {
+    if name.contains('\'') || name.contains('"') || name.contains('\\') {
+        bail(format!(
+            "vocabulary name {name:?} may not contain quotes or backslashes"
+        ));
+    }
+    let preset: Option<&'static Preset> = match preset {
+        Some(p) => Some(preset::by_name(p).unwrap_or_else(|| {
+            bail(format!(
+                "unknown preset {p:?}; the bundled presets are {}",
+                preset::names()
+            ))
+        })),
+        None => preset::by_name(name),
+    };
+    let vocab_size = match (preset, vocab_size) {
+        (Some(p), Some(v)) if v as i64 != p.vocab_size as i64 => bail(format!(
+            "vocab_size {v} does not match the {} preset, which has {} ids",
+            p.name, p.vocab_size
+        )),
+        (Some(p), _) => p.vocab_size as i32,
+        (None, Some(v)) => v,
+        (None, None) => bail(format!(
+            "vocab_size is required, unless the vocabulary uses a preset ({})",
+            preset::names()
+        )),
+    };
     if vocab_size < 1 {
         bail("vocab_size is required and must be at least 1");
     }
@@ -177,12 +213,8 @@ fn create_vocabulary(
             "vocab_size {vocab_size} exceeds the {MAX_VOCAB_SIZE} this format can address"
         ));
     }
-    if name.contains('\'') || name.contains('"') || name.contains('\\') {
-        bail(format!(
-            "vocabulary name {name:?} may not contain quotes or backslashes"
-        ));
-    }
     // Validate before touching the catalog, so a bad call leaves nothing behind.
+    let compression = compression.unwrap_or(if preset.is_some() { "freq" } else { "raw" });
     let _ = compression_code(compression);
     let width = width_for(vocab_size);
 
@@ -201,37 +233,51 @@ fn create_vocabulary(
         ));
     }
 
-    // The only place an id is ever assigned, and therefore the only place the orphaned-artefact
-    // check belongs. See `next_free_id` for what an orphan is and why the catalog cannot see one.
+    // Preset vocabularies take ids from their preset's reserved range, because a value's header
+    // carries only the id and the read paths find the bundled artefacts by it (see preset.rs).
     let assigned = match id {
         Some(v) if v < 1 || v > u16::MAX as i32 => {
             bail(format!("vocabulary id {v} is out of range (1..65535)"))
         }
         Some(v) => {
-            if let Some(path) = crate::registry::existing_artefact(v as u16) {
+            let owner = preset::for_id(v as u16);
+            match (preset, owner) {
+                (Some(p), o) if o.map(|o| o.code) != Some(p.code) => bail(format!(
+                    "vocabulary id {v} is outside the {} preset's ids {}..{}",
+                    p.name,
+                    p.ids.start(),
+                    p.ids.end()
+                )),
+                (None, Some(o)) => bail(format!(
+                    "vocabulary id {v} is reserved for vocabularies on the {} preset ({}..{})",
+                    o.name,
+                    o.ids.start(),
+                    o.ids.end()
+                )),
+                _ => {}
+            }
+            if preset.is_none() && has_custom_artefact(v as u16) {
                 bail(format!(
-                    "vocabulary id {v} already has an artefact file at {}, left over from a \
-                     vocabulary that was rolled back or dropped: artefact files are written \
-                     outside the transaction, so they outlive the catalog row that ordered them. \
-                     A vocabulary created here would inherit it; remove the file if nothing \
-                     references it, or pick another id",
-                    path.display()
-                ))
+                    "vocabulary id {v} already has an artefact function \
+                     (pgtoken.artefact_{v}_ranking or _mapping) but no catalog row; drop it if \
+                     nothing references it, or pick another id"
+                ));
             }
             v
         }
-        None => next_free_id(),
+        None => next_free_id(preset),
     };
 
     Spi::run_with_args(
-        "INSERT INTO pgtoken.vocabulary (id, name, vocab_size, compression, width) \
-         VALUES ($1, $2, $3, $4, $5::smallint)",
+        "INSERT INTO pgtoken.vocabulary (id, name, vocab_size, compression, width, preset) \
+         VALUES ($1, $2, $3, $4, $5::smallint, $6)",
         &[
             assigned.into(),
             name.into(),
             vocab_size.into(),
             compression.into(),
             width.into(),
+            preset.map(|p| p.name).into(),
         ],
     )
     .unwrap_or_else(|e| bail(e));
@@ -268,34 +314,54 @@ fn create_vocabulary(
     assigned
 }
 
-/// The lowest id no vocabulary has ever used — counting artefact files as use.
+/// Whether an artefact function exists for an id. Only a `TRUNCATE` of the catalog (which the
+/// immutability trigger cannot see) leaves one behind without its row; a vocabulary created at
+/// that id would inherit it.
+fn has_custom_artefact(id: u16) -> bool {
+    registry::exists(id, Artefact::Ranking) || registry::exists(id, Artefact::Mapping)
+}
+
+/// The id a new vocabulary gets when none is given.
 ///
-/// `max(id) + 1` over the catalog is not sufficient, because an artefact file outlives the row
-/// that ordered it. `train` and `load_mapping` write `<id>.tntt` and `<id>.tnmap` through the
-/// filesystem, outside the transaction, so a `ROLLBACK` (or a `DROP` of the whole extension)
-/// removes the catalog row and leaves the file. The next `max(id) + 1` then lands back on that id
-/// and the new vocabulary silently adopts an artefact it never created.
-///
-/// For a ranking the damage is bounded — a `RankTable` is a lossless bijection, so a wrong
-/// ranking still round-trips and no id is misread. For a mapping it is not: `pgtoken.text` would
-/// return another vocabulary's prose, and `load_mapping` would then refuse to load the real one,
-/// the file being write-once. So skip both, and skip them here, where the id is chosen.
-fn next_free_id() -> i32 {
-    let start = Spi::get_one::<i32>("SELECT coalesce(max(id), 0)::int + 1 FROM pgtoken.vocabulary")
+/// For a preset, the lowest unused id in its range. Otherwise `max(id) + 1` below every preset
+/// range, skipping any id that still has an artefact function (see [`has_custom_artefact`]).
+fn next_free_id(preset: Option<&Preset>) -> i32 {
+    if let Some(p) = preset {
+        return Spi::get_one_with_args::<i32>(
+            "SELECT min(i) FROM generate_series($1, $2) i \
+             WHERE NOT EXISTS (SELECT 1 FROM pgtoken.vocabulary v WHERE v.id = i)",
+            &[(*p.ids.start() as i32).into(), (*p.ids.end() as i32).into()],
+        )
         .unwrap_or_else(|e| bail(e))
-        .unwrap_or(1);
-    let mut candidate = start;
-    while candidate <= u16::MAX as i32 {
-        if crate::registry::existing_artefact(candidate as u16).is_none() {
-            return candidate;
-        }
+        .unwrap_or_else(|| {
+            bail(format!(
+                "all {} ids for the {} preset are in use",
+                p.ids.len(),
+                p.name
+            ))
+        });
+    }
+    let reserved = preset::ALL
+        .iter()
+        .map(|p| *p.ids.start() as i32)
+        .min()
+        .unwrap_or(u16::MAX as i32 + 1);
+    let mut candidate = Spi::get_one_with_args::<i32>(
+        "SELECT coalesce(max(id), 0)::int + 1 FROM pgtoken.vocabulary WHERE id < $1",
+        &[reserved.into()],
+    )
+    .unwrap_or_else(|e| bail(e))
+    .unwrap_or(1);
+    while candidate < reserved && has_custom_artefact(candidate as u16) {
         candidate += 1;
     }
-    bail(format!(
-        "no vocabulary id is free: every id from {start} to {} already has an artefact file in {}",
-        u16::MAX,
-        crate::registry::table_dir().display()
-    ))
+    if candidate >= reserved {
+        bail(format!(
+            "no vocabulary id below {reserved} is free; ids from {reserved} up are reserved for \
+             presets"
+        ));
+    }
+    candidate
 }
 
 /// Remove a vocabulary's domain.
@@ -331,7 +397,7 @@ pub fn lookup_by_name(name: &str) -> Option<Vocabulary> {
     Spi::connect(|client| {
         let rows = client
             .select(
-                "SELECT id, compression, width::int FROM pgtoken.vocabulary WHERE name = $1",
+                "SELECT id, compression, width::int, preset FROM pgtoken.vocabulary WHERE name = $1",
                 Some(1),
                 &[name.into()],
             )
@@ -340,10 +406,14 @@ pub fn lookup_by_name(name: &str) -> Option<Vocabulary> {
         let id: i32 = row.get(1).ok()??;
         let compression: String = row.get(2).ok()??;
         let width: i32 = row.get(3).ok()??;
+        let preset: Option<String> = row.get(4).ok()?;
         Some(Vocabulary {
             id: id as u16,
             compression: compression_code(&compression),
             width: width as u8,
+            preset: preset
+                .and_then(|p| preset::by_name(&p))
+                .map_or(0, |p| p.code),
         })
     })
 }
@@ -387,10 +457,12 @@ pub fn vocab_size_for(id: u16) -> Option<u32> {
 /// Both artefacts get a digest and a length, not just the ranking. The digest is sold as the way
 /// two machines check they hold the same vocabulary, and a vocabulary is the pair: identical
 /// rankings with different mappings are different vocabularies, and reporting one hash for the
-/// two of them would let them compare equal. `describe_map` computes the mapping's digest
-/// anyway, so the second pair of columns costs nothing that was not already being paid.
+/// two of them would let them compare equal.
+///
+/// A preset vocabulary reports the bundled artefacts: the mapping always, the ranking when it
+/// uses `freq` (a `raw` vocabulary never reads one).
 #[pg_extern]
-#[allow(clippy::type_complexity)] // A 10-column TableIterator tuple; a type alias would just move the noise.
+#[allow(clippy::type_complexity)] // An 11-column TableIterator tuple; a type alias would just move the noise.
 fn vocabulary_info(
     name: &str,
 ) -> TableIterator<
@@ -406,37 +478,32 @@ fn vocabulary_info(
         name!(mapped, Option<i32>),
         name!(map_sha256, Option<String>),
         name!(map_bytes, Option<i64>),
+        name!(preset, Option<String>),
     ),
 > {
     let v =
         lookup_by_name(name).unwrap_or_else(|| bail(format!("vocabulary {name:?} does not exist")));
     let size = vocab_size_for(v.id)
         .unwrap_or_else(|| bail(format!("vocabulary {name:?} has no catalog row")));
+    let p = preset::by_code(v.preset);
 
-    // An unfilled artefact is a normal state, not a fault, so a genuinely absent file becomes
-    // NULLs rather than an error. Anything else — `table_dir` unset so the question cannot even
-    // be asked, or a file that is there but unreadable/corrupt — is a real fault and must say so
-    // rather than collapsing into the same NULLs, which would silently read as "never filled".
-    crate::registry::require_dir("tell whether any vocabulary has a ranking or a mapping")
-        .unwrap_or_else(|e| bail(e));
-
-    let (ranked, rank_sha256, rank_bytes) = match crate::registry::describe_table(v.id) {
-        Ok(None) => (None, None, None),
-        Ok(Some((k, digest, len))) => (Some(k as i32), Some(digest), Some(len as i64)),
-        Err(e) => bail(format!(
-            "vocabulary {name:?} has a ranking file at {} but it could not be read: {e}",
-            crate::registry::table_path(v.id).display()
-        )),
-    };
-
-    let (mapped, map_sha256, map_bytes) = match crate::registry::describe_map(v.id) {
+    // An unfilled artefact is a normal state, not a fault, so an absent one becomes NULLs. One
+    // that is there but does not parse is a real fault and must say so rather than collapse into
+    // the same NULLs, which would silently read as "never filled".
+    let describe = |a: Artefact| match registry::describe(v.id, a) {
         Ok(None) => (None, None, None),
         Ok(Some((n, digest, len))) => (Some(n as i32), Some(digest), Some(len as i64)),
         Err(e) => bail(format!(
-            "vocabulary {name:?} has a mapping file at {} but it could not be read: {e}",
-            crate::registry::map_path(v.id).display()
+            "vocabulary {name:?} has a {} but it could not be read: {e}",
+            a.as_str()
         )),
     };
+    let (ranked, rank_sha256, rank_bytes) = if p.is_some() && v.compression != COMPRESSION_FREQ {
+        (None, None, None)
+    } else {
+        describe(Artefact::Ranking)
+    };
+    let (mapped, map_sha256, map_bytes) = describe(Artefact::Mapping);
 
     TableIterator::once((
         v.id as i32,
@@ -449,6 +516,43 @@ fn vocabulary_info(
         mapped,
         map_sha256,
         map_bytes,
+        p.map(|p| p.name.to_string()),
+    ))
+}
+
+/// Everything a client needs to encode and decode a vocabulary's values itself.
+///
+/// `codec` is the codec name the client codec takes (`raw8`, `raw16`, `raw24` or `freq`), and
+/// `ranking` is the trained ranking's bytes for a `freq` vocabulary: NULL for `raw`, and NULL for
+/// a `freq` vocabulary that has not been trained yet. The ranking comes back as bytes rather than
+/// a path, so this works over any connection, including to a hosted server whose disk the client
+/// cannot see.
+#[pg_extern(stable, strict)]
+fn vocabulary_codec(
+    name: &str,
+) -> TableIterator<
+    'static,
+    (
+        name!(id, i32),
+        name!(vocab_size, i32),
+        name!(codec, String),
+        name!(ranking, Option<Vec<u8>>),
+    ),
+> {
+    let v =
+        lookup_by_name(name).unwrap_or_else(|| bail(format!("vocabulary {name:?} does not exist")));
+    let size = vocab_size_for(v.id)
+        .unwrap_or_else(|| bail(format!("vocabulary {name:?} has no catalog row")));
+    let ranking = if v.compression == COMPRESSION_FREQ {
+        registry::artefact_bytes(v.id, Artefact::Ranking).unwrap_or_else(|e| bail(e))
+    } else {
+        None
+    };
+    TableIterator::once((
+        v.id as i32,
+        size as i32,
+        crate::typmod::codec_for(v).as_str().to_string(),
+        ranking,
     ))
 }
 
@@ -456,6 +560,57 @@ fn vocabulary_info(
 #[pg_schema]
 mod tests {
     use pgrx::prelude::*;
+
+    #[pg_test]
+    fn vocabulary_codec_reports_a_raw_vocabulary() {
+        Spi::run("SELECT pgtoken.create_vocabulary('vc_raw', 60000, id => 62401)").expect("create");
+        let (codec, ranking) = Spi::get_two::<String, Vec<u8>>(
+            "SELECT codec, ranking FROM pgtoken.vocabulary_codec('vc_raw')",
+        )
+        .expect("query failed");
+        assert_eq!(codec.as_deref(), Some("raw16"));
+        assert_eq!(ranking, None, "raw has no ranking");
+    }
+
+    #[pg_test]
+    fn vocabulary_codec_ships_the_ranking_bytes() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('vc_freq', 300, compression => 'freq', \
+                                              id => 62402)",
+        )
+        .expect("create");
+        let before =
+            Spi::get_one::<Vec<u8>>("SELECT ranking FROM pgtoken.vocabulary_codec('vc_freq')")
+                .expect("query failed");
+        assert_eq!(
+            before, None,
+            "an untrained freq vocabulary has no ranking yet"
+        );
+
+        Spi::run("SELECT pgtoken.train('vc_freq', $$SELECT ARRAY[5,5,5,9]::int[]$$)")
+            .expect("train");
+        let (id, codec, ranking) = Spi::get_three::<i32, String, Vec<u8>>(
+            "SELECT id, codec, ranking FROM pgtoken.vocabulary_codec('vc_freq')",
+        )
+        .expect("query failed");
+        assert_eq!(id, Some(62402));
+        assert_eq!(codec.as_deref(), Some("freq"));
+        let ranking = ranking.expect("a trained freq vocabulary ships its ranking");
+        let table = pgtoken_core::RankTable::from_bytes(&ranking).expect("valid ranking bytes");
+        assert_eq!(table.k(), 2, "two distinct tokens were ranked");
+        let len = Spi::get_one::<i64>("SELECT rank_bytes FROM pgtoken.vocabulary_info('vc_freq')")
+            .expect("query failed");
+        assert_eq!(
+            len,
+            Some(ranking.len() as i64),
+            "the whole ranking, byte for byte"
+        );
+    }
+
+    #[pg_test(error = "vocabulary \"vc_missing\" does not exist")]
+    fn vocabulary_codec_rejects_an_unknown_name() {
+        Spi::run("SELECT * FROM pgtoken.vocabulary_codec('vc_missing')").unwrap();
+    }
 
     /// Create a vocabulary and return its id.
     ///
@@ -618,7 +773,12 @@ mod tests {
              WHERE oid = 'tokens.dom2'::regtype",
         )
         .expect("query failed");
-        assert_eq!(base, Some("pgtoken.tokens('dom2')".to_string()));
+        // The long typmod form (name, id, compression, width) that pg_dump needs; see typmod.rs.
+        let base = base.expect("format_type returned NULL");
+        assert!(
+            base.starts_with("pgtoken.tokens('dom2', ") && base.ends_with(", 'raw', 1)"),
+            "{base}"
+        );
 
         // `format_type` reading the catalog correctly is necessary but not sufficient: it could
         // render right while a write through the domain still stored the unresolved raw24
@@ -765,48 +925,6 @@ mod tests {
         Spi::run("SELECT pgtoken.drop_vocabulary('dom_double')").unwrap();
     }
 
-    /// Where the test cluster's `pgtoken.table_dir` points; see `crate::pg_test`.
-    const DIR: &str = "/tmp/pgtoken-pgrx-test-tables";
-
-    /// Put an artefact file at `<id>.<suffix>` with no catalog row behind it — exactly what a
-    /// `ROLLBACK` after `load_mapping` or `train` leaves on disk, since the write goes through
-    /// the filesystem and never sees the transaction.
-    fn orphan(id: i32, suffix: &str) {
-        std::fs::create_dir_all(DIR).expect("create the table dir");
-        std::fs::write(format!("{DIR}/{id}.{suffix}"), b"orphaned artefact")
-            .expect("write an orphaned artefact");
-    }
-
-    #[pg_test]
-    fn auto_assignment_skips_ids_with_an_orphaned_artefact() {
-        // `max(id) + 1` alone would hand out 62202, whose mapping file is still on disk from a
-        // vocabulary that no longer exists — and the new vocabulary would answer
-        // `pgtoken.text` out of a mapping it never loaded, with `load_mapping` refusing to
-        // replace it. 62203 covers the ranking's identical exposure: the file is a different
-        // shape of wrong, but the id is spoken for either way.
-        Spi::run("SELECT pgtoken.create_vocabulary('orph_base', 8, id => 62201)").expect("create");
-        orphan(62202, "tnmap");
-        orphan(62203, "tntt");
-        let assigned = create("'orph_next', 8");
-        assert_eq!(
-            assigned, 62204,
-            "auto-assignment must skip every id that already has an artefact file"
-        );
-    }
-
-    #[pg_test(error = "vocabulary id 62205 already has an artefact file at \
-                 /tmp/pgtoken-pgrx-test-tables/62205.tnmap, left over from a vocabulary that was \
-                 rolled back or dropped: artefact files are written outside the transaction, so \
-                 they outlive the catalog row that ordered them. A vocabulary created here would \
-                 inherit it; remove the file if nothing references it, or pick another id")]
-    fn an_explicit_id_with_an_orphaned_artefact_is_refused() {
-        // Skipping is only available to auto-assignment. An explicit id has to be refused, and
-        // the message has to name the file — it is the only thing that can be acted on, and
-        // there is no SQL that will do it.
-        orphan(62205, "tnmap");
-        Spi::run("SELECT pgtoken.create_vocabulary('orph_pinned', 8, id => 62205)").unwrap();
-    }
-
     #[pg_test]
     fn vocabulary_info_digests_each_artefact_separately() {
         // Two vocabularies trained on the same corpus and mapped differently. One digest over
@@ -885,5 +1003,134 @@ mod tests {
         Spi::run("SELECT pgtoken.create_vocabulary('dom_reserved', 300)").expect("create");
         Spi::run("SELECT pgtoken.drop_vocabulary('dom_reserved')").expect("drop");
         Spi::run("SELECT pgtoken.create_vocabulary('dom_reserved', 300)").unwrap();
+    }
+
+    // ── presets ──────────────────────────────────────────────────────────────────────────
+
+    #[pg_test]
+    fn a_preset_works_with_no_setup() {
+        // The whole quickstart: no vocab_size, no train, no load_mapping.
+        let id = create("'o200k'");
+        assert_eq!(id, 65280, "the first id in o200k's reserved range");
+        Spi::run(
+            "CREATE TABLE p_docs (body tokens.o200k); \
+             INSERT INTO p_docs VALUES ('{13225,11,2375,0}');",
+        )
+        .expect("setup");
+        let (text, ids, codec) = Spi::get_three::<String, Vec<i32>, String>(
+            "SELECT pgtoken.text(body), body::int[], (pgtoken.describe(body)).codec FROM p_docs",
+        )
+        .expect("query failed");
+        assert_eq!(text.as_deref(), Some("Hello, world!"));
+        assert_eq!(ids, Some(vec![13225, 11, 2375, 0]));
+        assert_eq!(codec.as_deref(), Some("freq"));
+
+        let (size, compression, width) = Spi::get_three::<i32, String, i32>(
+            "SELECT vocab_size, compression, width FROM pgtoken.vocabulary_info('o200k')",
+        )
+        .expect("query failed");
+        assert_eq!(
+            (size, compression.as_deref(), width),
+            (Some(200019), Some("freq"), Some(3))
+        );
+        let (ranked, mapped) =
+            Spi::get_two::<i32, i32>("SELECT ranked, mapped FROM pgtoken.vocabulary_info('o200k')")
+                .expect("query failed");
+        assert_eq!(ranked, Some(77463));
+        assert!(mapped.unwrap() > 199_000, "{mapped:?}");
+        let (preset, rank_sha) = Spi::get_two::<String, String>(
+            "SELECT preset, rank_sha256 FROM pgtoken.vocabulary_info('o200k')",
+        )
+        .expect("query failed");
+        assert_eq!(preset.as_deref(), Some("o200k"));
+        assert_eq!(
+            rank_sha.as_deref(),
+            Some("743afb3cae0eac236f9bece91973ebe3038539b557ac3dcc955bb0d9a1de42af")
+        );
+
+        let (codec, ranking) = Spi::get_two::<String, Vec<u8>>(
+            "SELECT codec, ranking FROM pgtoken.vocabulary_codec('o200k')",
+        )
+        .expect("query failed");
+        assert_eq!(codec.as_deref(), Some("freq"));
+        assert_eq!(
+            ranking.map(|r| r.len()),
+            Some(309_864),
+            "the bundled ranking, byte for byte"
+        );
+    }
+
+    #[pg_test]
+    fn a_preset_can_back_another_name_and_raw_compression() {
+        let chat = create("'chat', preset => 'o200k'");
+        let raw = create("'chat_raw', preset => 'o200k', compression => 'raw'");
+        assert_eq!((chat, raw), (65280, 65281));
+        let (a, b, codec) = Spi::get_three::<String, String, String>(
+            "SELECT pgtoken.text('{13225,0}'::tokens.chat), \
+                    pgtoken.text('{13225,0}'::tokens.chat_raw), \
+                    (pgtoken.describe('{13225,0}'::tokens.chat_raw)).codec",
+        )
+        .expect("query failed");
+        assert_eq!(a.as_deref(), Some("Hello!"));
+        assert_eq!(b.as_deref(), Some("Hello!"));
+        assert_eq!(codec.as_deref(), Some("raw24"));
+        let ranking =
+            Spi::get_one::<Vec<u8>>("SELECT ranking FROM pgtoken.vocabulary_codec('chat_raw')")
+                .expect("query failed");
+        assert_eq!(ranking, None, "raw reads no ranking");
+        let typ = Spi::get_one::<String>(
+            "SELECT format_type(typbasetype, typtypmod) FROM pg_type \
+             WHERE oid = 'tokens.chat'::regtype",
+        )
+        .expect("query failed");
+        assert_eq!(
+            typ.as_deref(),
+            Some("pgtoken.tokens('chat', 65280, 'freq', 3, 'o200k')")
+        );
+    }
+
+    #[pg_test]
+    fn a_preset_value_needs_no_catalog_row() {
+        // What a restore or a replica sees before pgtoken.vocabulary's rows exist: the typmod's
+        // long form names the preset, and the read paths find the artefacts by id range.
+        let text = Spi::get_one::<String>(
+            "SELECT pgtoken.text('{13225,11,2375,0}'::pgtoken.tokens(nowhere, 65300, freq, 3, o200k))",
+        )
+        .expect("query failed");
+        assert_eq!(text.as_deref(), Some("Hello, world!"));
+    }
+
+    #[pg_test(error = "vocab_size 50257 does not match the o200k preset, which has 200019 ids")]
+    fn a_preset_refuses_a_different_vocab_size() {
+        create("'o200k', 50257");
+    }
+
+    #[pg_test(error = "unknown preset \"cl100k\"; the bundled presets are 'o200k'")]
+    fn an_unknown_preset_is_refused() {
+        create("'x', preset => 'cl100k'");
+    }
+
+    #[pg_test(
+        error = "vocabulary id 65300 is reserved for vocabularies on the o200k preset (65280..65535)"
+    )]
+    fn a_custom_vocabulary_cannot_take_a_preset_id() {
+        create("'x', 300, id => 65300");
+    }
+
+    #[pg_test(error = "vocabulary id 5 is outside the o200k preset's ids 65280..65535")]
+    fn a_preset_vocabulary_cannot_take_a_custom_id() {
+        create("'x', preset => 'o200k', id => 5");
+    }
+
+    #[pg_test(error = "vocab_size is required, unless the vocabulary uses a preset ('o200k')")]
+    fn a_custom_vocabulary_needs_a_size() {
+        create("'x'");
+    }
+
+    #[pg_test]
+    fn custom_ids_stay_below_the_preset_range() {
+        create("'o200k'");
+        let next = create("'after_preset', 300");
+        assert!(next < 65280, "{next}");
     }
 }

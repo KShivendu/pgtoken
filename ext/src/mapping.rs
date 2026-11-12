@@ -19,18 +19,14 @@ use crate::vocabulary;
 /// Build a vocabulary's mapping from a query returning `(int, bytea)`.
 ///
 /// Write-once: `pgtoken.text` is `IMMUTABLE` so it can back a full-text index, which is only
-/// honest if the mapping it reads can never change.
+/// honest if the mapping it reads can never change. Stored in the database as
+/// `pgtoken.artefact_<id>_mapping()`; see registry.rs.
 #[pg_extern(strict)]
 fn load_mapping(name: &str, query: &str) -> String {
     let v = vocabulary::lookup_by_name(name)
         .unwrap_or_else(|| bail(format!("vocabulary {name:?} does not exist")));
-    // Ask the directory question before the file question. With `pgtoken.table_dir` unset,
-    // `map_path` yields the bare relative name and `.exists()` answers against the data
-    // directory — so this would read "no mapping yet", go on to build one, and only fail at the
-    // write. `registry::require_dir` is the single place that refuses instead.
-    registry::require_dir("tell whether a vocabulary already has a mapping")
-        .unwrap_or_else(|e| bail(e));
-    if registry::map_path(v.id).exists() {
+    crate::refuse_preset(name, v);
+    if registry::exists(v.id, registry::Artefact::Mapping) {
         bail(format!("vocabulary {name} already has a mapping"));
     }
     let vocab_size = vocabulary::vocab_size_for(v.id)
@@ -58,7 +54,7 @@ fn load_mapping(name: &str, query: &str) -> String {
 
     let map = ByteMap::build(&pairs, vocab_size).unwrap_or_else(|e| bail(e));
     let mapped = map.mapped();
-    registry::write_map(v.id, &map.to_bytes()).unwrap_or_else(|e| bail(e));
+    registry::store(v.id, registry::Artefact::Mapping, name, &map.to_bytes());
     format!("mapped {mapped} of {vocab_size} ids for vocabulary {name}")
 }
 
@@ -68,10 +64,6 @@ mod tests {
     use pgrx::prelude::*;
 
     /// Create a vocabulary at a pinned id and stage a tiny mapping for it.
-    ///
-    /// The id must be pinned and disjoint from every other test's: mapping files survive the
-    /// transaction rollback that resets the catalog, so an auto-assigned id would collide with
-    /// another test's file.
     fn staged(name: &str, id: i32) {
         Spi::run(&format!(
             "SELECT pgtoken.create_vocabulary('{name}', 8, id => {id})"
@@ -176,5 +168,34 @@ mod tests {
             "SELECT pgtoken.load_mapping('m_neg_id', $$SELECT -1::int, 'x'::bytea$$)",
         )
         .unwrap();
+    }
+
+    #[pg_test]
+    fn a_rolled_back_load_mapping_can_be_loaded_again() {
+        // Write-once counts committed mappings only: the artefact is a catalog object, so a
+        // rollback takes it away, and the cache with it.
+        staged("m_rb", 62009);
+        Spi::run(
+            "DO $$ BEGIN \
+               PERFORM pgtoken.load_mapping('m_rb', $q$SELECT 0, 'wrong'::bytea$q$); \
+               PERFORM pgtoken.text('{0}'::pgtoken.tokens('m_rb')); \
+               RAISE EXCEPTION 'roll back'; \
+             EXCEPTION WHEN raise_exception THEN NULL; END $$",
+        )
+        .expect("rolled-back load");
+        Spi::run("SELECT pgtoken.load_mapping('m_rb', 'SELECT id, bytes FROM stage')")
+            .expect("load again");
+        let got =
+            Spi::get_one::<String>("SELECT pgtoken.text('{0,1,2,3}'::pgtoken.tokens('m_rb'))")
+                .expect("query failed");
+        assert_eq!(got.as_deref(), Some("Hello, world!"));
+    }
+
+    #[pg_test(
+        error = "vocabulary chat uses the bundled o200k preset, whose ranking and mapping are fixed"
+    )]
+    fn load_mapping_refuses_a_preset() {
+        Spi::run("SELECT pgtoken.create_vocabulary('chat', preset => 'o200k')").expect("create");
+        Spi::run("SELECT pgtoken.load_mapping('chat', $$SELECT 0, 'x'::bytea$$)").unwrap();
     }
 }

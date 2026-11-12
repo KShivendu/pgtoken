@@ -194,7 +194,7 @@ def measure_wal(
 def run_one(conn, texts: list[str], domain: str, embedding_bytes: int) -> dict:
     C.apply_schema(conn)
     vocab_id, _ = C.ensure_freq_vocab(conn, domain)
-    table = R.load_table(os.path.join(C.table_dir(conn), f"{vocab_id}.tntt"))
+    table = R.Table.from_bytes(C.ranking_bytes(conn, C._vocab_name("freq")))
     conn.execute("DROP TABLE IF EXISTS docs_tnt")
     conn.execute(
         f"CREATE TABLE docs_tnt (id integer PRIMARY KEY, embedding bytea, "

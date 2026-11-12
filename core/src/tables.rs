@@ -23,9 +23,11 @@
 //! and ranks at or above `k` only for out-of-table ones. The cost is that a token absent from
 //! training encodes as a slightly wider varint than its bare ID would.
 //!
-//! # On-disk format
+//! # Byte format
 //!
-//! Both artefacts share one 12-byte envelope and are told apart by the `kind` byte, so handing
+//! The extension stores these bytes in the database (see `ext/src/registry.rs`), and bundles a
+//! preset's as `.tntt` / `.tnmap` files (see `ext/src/preset.rs`). Both artefacts share one 12-byte
+//! envelope and are told apart by the `kind` byte, so handing
 //! one to the other's parser is an error rather than a misinterpretation.
 //!
 //! ```text
@@ -37,7 +39,7 @@
 //!   8     4  count, kind-dependent (u32 LE)
 //! ```
 //!
-//! **kind 1, the ranking** — written as `<vocabulary_id>.tntt`:
+//! **kind 1, the ranking** — file extension `.tntt`:
 //!
 //! ```text
 //! off  size  field
@@ -47,7 +49,7 @@
 //!
 //! `rank_of` is the inverse and is rebuilt on load rather than stored, which halves the file.
 //!
-//! **kind 2, the mapping** — written as `<vocabulary_id>.tnmap`:
+//! **kind 2, the mapping** — file extension `.tnmap`:
 //!
 //! ```text
 //! off        size  field

@@ -139,7 +139,6 @@ jobs:
       - name: Test
         working-directory: ext
         run: |
-          rm -rf /tmp/pgtoken-pgrx-test-tables
           cargo pgrx test pg${{ matrix.pg }} \
             --features pg${{ matrix.pg }} --no-default-features
 

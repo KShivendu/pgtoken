@@ -1,308 +1,311 @@
-//! Backend-local artefact registry, backed by mmap'd files.
+//! Where a vocabulary's artefacts live, and the per-backend cache in front of them.
 //!
-//! A vocabulary owns up to two optional artefacts, both named after its id and both resolved
-//! under the `pgtoken.table_dir` GUC: `<vocabulary_id>.tntt`, the frequency ranking the `freq`
-//! codec encodes against, and `<vocabulary_id>.tnmap`, the `token_id -> bytes` mapping
-//! `pgtoken.text` detokenizes with. A vocabulary may have either, both or neither.
+//! A vocabulary owns up to two optional artefacts: the frequency ranking the `freq` codec encodes
+//! against, and the `token_id -> bytes` mapping `pgtoken.text` detokenizes with (formats in
+//! `core/src/tables.rs`). They come from one of two places:
 //!
-//! Resolution is by filesystem convention rather than through a SQL catalog on purpose: a catalog
-//! lookup would need SPI on every read, which would make `pgtoken.tokens`'s read paths —
-//! `tokens_out`, `tokens_send`, and the `int[]`/`bytea` casts — neither `IMMUTABLE` nor
-//! `PARALLEL SAFE`. As it stands, reading a value depends only on its bytes and a write-once
-//! file, so declaring those functions `IMMUTABLE` is honest.
+//! * **A bundled preset** (`preset.rs`): compiled into the binary, found by the vocabulary id's
+//!   reserved range. Nothing in the database is consulted.
+//! * **The database**, for artefacts made by `train` and `load_mapping`. Each one is a SQL
+//!   function, `pgtoken.artefact_<id>_ranking()` or `pgtoken.artefact_<id>_mapping()`, returning
+//!   the bytes as a constant.
 //!
-//! Files are mmap'd read-only, so their pages are shared across every backend through the OS
-//! page cache instead of being duplicated per connection.
+//! # Why a function and not a table
 //!
-//! # The cache contract, stated exactly
+//! A function is a schema object. `pg_dump` writes it in the pre-data section, which every restore
+//! finishes before it loads any table data, `pg_restore -j` included. A table row would load in
+//! the data section instead, in no fixed order relative to the user tables whose `freq` values
+//! need it to parse: tables in a schema that sorts before `pgtoken` load first, and `-j` loads them
+//! in parallel. A function created after `CREATE EXTENSION` is not an extension member, so
+//! `pg_dump` includes it. It also gets everything else a catalog row gets for free: it is
+//! transactional (a rolled-back `train` leaves nothing), WAL-logged (so durable and on every
+//! physical and logical replica's schema), and private to its database (ids are per database).
 //!
-//! The parsed form is cached per backend, **keyed by the resolved path**, and entries are never
-//! invalidated. So the guarantee is narrow and worth spelling out: a given path is read at most
-//! once per backend, and every later read of that path in that backend answers from the first
-//! read. Replacing, truncating or deleting a file at a path some live backend has already read
-//! is **outside the contract** — that backend keeps answering from the bytes it saw, so two
-//! backends can disagree about the same value, and an index built by one can contradict a
-//! sequential scan run by the other. (`Mmap` makes truncation worse than stale: it is undefined,
-//! not merely wrong.) Repointing `pgtoken.table_dir` is not a way around this; it is why the key
-//! is the path and not the bare id, so a repointed directory is a cache miss rather than a
-//! silent hit on the old directory's contents.
+//! Write-once is kept by `CREATE FUNCTION` itself, which refuses an existing name. Two concurrent
+//! `train` calls on one vocabulary serialize on `pg_proc`'s unique index, and the loser errors.
 //!
-//! What keeps the contract keepable is that nothing reachable from SQL can put a second file at
-//! one path: `write_table` and `write_map` both refuse to overwrite, and `create_vocabulary`
-//! refuses to hand out an id whose artefact files already exist — including the orphans a
-//! rolled-back `load_mapping` leaves behind, since the file survives a `ROLLBACK` that removes
-//! the catalog row. The two rules are halves of one guarantee: a path names one artefact for the
-//! life of the cluster.
+//! # The cache
+//!
+//! Parsed artefacts and declared sizes are cached per backend, keyed by vocabulary id, so a warm
+//! encode or decode does a hash lookup and no SPI. Entries are dropped whenever this backend sees
+//! a `pg_proc` invalidation (a `CREATE` or `DROP FUNCTION` anywhere in the database, including
+//! one rolled back, at top level or in a savepoint) and at every transaction abort. A rolled-back
+//! `train` therefore cannot leave a ranking behind in the cache that the catalog no longer has.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::thread::LocalKey;
 
-use memmap2::Mmap;
 use pgrx::prelude::*;
 
-use pgtoken_core::tables::{ByteMap, RankTable};
+use pgtoken_core::tables::{digest_hex, table_digest, ByteMap, RankTable};
+
+use crate::preset;
+
+/// Which artefact. The `&str` is both the function-name suffix and the word in messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Artefact {
+    Ranking,
+    Mapping,
+}
+
+impl Artefact {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Artefact::Ranking => "ranking",
+            Artefact::Mapping => "mapping",
+        }
+    }
+}
+
+/// The unqualified name of the function holding a custom artefact.
+pub fn function_name(vocabulary_id: u16, a: Artefact) -> String {
+    format!("artefact_{vocabulary_id}_{}", a.as_str())
+}
+
+// ── the cache ─────────────────────────────────────────────────────────────────────────────
+
+type Cache<T> = RefCell<HashMap<u16, (u64, T)>>;
 
 thread_local! {
-    static CACHE: RefCell<HashMap<PathBuf, Rc<RankTable>>> = RefCell::new(HashMap::new());
-    static MAP_CACHE: RefCell<HashMap<PathBuf, Rc<ByteMap>>> = RefCell::new(HashMap::new());
+    /// Bumped by every invalidation. An entry is live only while its stamp equals this, so an
+    /// invalidation never has to borrow a map, and cannot fail even if it lands mid-lookup.
+    static GENERATION: Cell<u64> = const { Cell::new(0) };
+    /// Bumped at every transaction end. Stamps the "no catalog row" answers, which are only
+    /// trusted for the rest of the transaction that saw them.
+    static XACT: Cell<u64> = const { Cell::new(0) };
+    static RANKINGS: Cache<Rc<RankTable>> = RefCell::new(HashMap::new());
+    static MAPPINGS: Cache<Rc<ByteMap>> = RefCell::new(HashMap::new());
+    static SIZES: Cache<u32> = RefCell::new(HashMap::new());
+    /// Vocabulary ids with no catalog row, stamped with the transaction that looked.
+    static MISSING: Cache<u64> = RefCell::new(HashMap::new());
 }
 
-/// Directory holding a vocabulary's artefact files. Set via the `pgtoken.table_dir` GUC.
-///
-/// Empty when the GUC is unset. Prefer [`require_dir`] wherever an empty answer would be
-/// mistaken for a real directory.
-pub fn table_dir() -> PathBuf {
-    PathBuf::from(crate::guc_str(&crate::TABLE_DIR, ""))
+fn generation() -> u64 {
+    GENERATION.with(|g| g.get())
 }
 
-/// The artefact directory, or an error naming the GUC that is unset.
-///
-/// Every caller about to ask a question about an artefact goes through this rather than testing
-/// `table_dir()` itself, because the failure it prevents is not an obvious one. `table_path` and
-/// `map_path` join onto an *empty* path when the GUC is unset, yielding the bare relative name
-/// `<id>.tnmap`; `.exists()` then resolves that against the data directory and answers false. A
-/// caller that skipped this helper would read "unset" as "absent" and tell the user to create the
-/// artefact — advice that, followed, seals a second mapping while the real one sits unreachable
-/// in the directory nobody pointed at.
-///
-/// `purpose` completes the sentence "pgtoken.table_dir is not set; cannot ...".
-pub fn require_dir(purpose: &str) -> Result<PathBuf, String> {
-    let dir = table_dir();
-    if dir.as_os_str().is_empty() {
-        return Err(format!("pgtoken.table_dir is not set; cannot {purpose}"));
+/// Forget everything cached. Safe to call from an invalidation callback at any moment.
+pub fn invalidate() {
+    GENERATION.with(|g| g.set(g.get().wrapping_add(1)));
+}
+
+fn get<T: Clone>(cache: &'static LocalKey<Cache<T>>, id: u16) -> Option<T> {
+    let now = generation();
+    cache.with(|c| {
+        c.borrow()
+            .get(&id)
+            .filter(|(stamp, _)| *stamp == now)
+            .map(|(_, v)| v.clone())
+    })
+}
+
+/// `stamp` is the generation read *before* loading, so an invalidation that arrived during the
+/// load (SPI takes locks, and taking a lock processes invalidations) leaves the entry stale.
+fn put<T>(cache: &'static LocalKey<Cache<T>>, id: u16, stamp: u64, value: T) {
+    cache.with(|c| c.borrow_mut().insert(id, (stamp, value)));
+}
+
+unsafe extern "C-unwind" fn on_proc_invalidation(_arg: pg_sys::Datum, _cacheid: i32, _hash: u32) {
+    invalidate();
+}
+
+unsafe extern "C-unwind" fn on_xact_event(
+    event: pg_sys::XactEvent::Type,
+    _arg: *mut core::ffi::c_void,
+) {
+    use pg_sys::XactEvent::*;
+    match event {
+        XACT_EVENT_ABORT | XACT_EVENT_PARALLEL_ABORT => {
+            invalidate();
+            XACT.with(|x| x.set(x.get().wrapping_add(1)));
+        }
+        XACT_EVENT_COMMIT | XACT_EVENT_PARALLEL_COMMIT | XACT_EVENT_PREPARE => {
+            XACT.with(|x| x.set(x.get().wrapping_add(1)));
+        }
+        _ => {}
     }
-    Ok(dir)
 }
 
-pub fn table_path(vocabulary_id: u16) -> PathBuf {
-    table_dir().join(format!("{vocabulary_id}.tntt"))
-}
-
-/// Path of a vocabulary's `token_id -> bytes` mapping. Sits beside the ranking, which is
-/// `<id>.tntt`; the two are separate files because a vocabulary may have either, both, or
-/// neither.
-pub fn map_path(vocabulary_id: u16) -> PathBuf {
-    table_dir().join(format!("{vocabulary_id}.tnmap"))
-}
-
-/// The first artefact file already on disk for `vocabulary_id`, if any.
-///
-/// Asked by `create_vocabulary` before it hands out an id, because an artefact file outlives the
-/// catalog row that ordered it: `load_mapping` writes through the filesystem, outside the
-/// transaction, so a `ROLLBACK` takes the row and leaves the file. An id whose file is still
-/// there would hand the next vocabulary a mapping it never loaded — and, the file being
-/// write-once, no way to load its own.
-///
-/// Answers `None` when `pgtoken.table_dir` is unset, which is correct rather than evasive: with
-/// no directory there is nowhere an artefact could have been written (every writer refuses first)
-/// and nowhere to look — the bare relative name would be tested against the data directory.
-pub fn existing_artefact(vocabulary_id: u16) -> Option<PathBuf> {
-    if table_dir().as_os_str().is_empty() {
-        return None;
+/// Hook the cache up to PostgreSQL's invalidation and transaction events. Called from `_PG_init`.
+pub fn register_callbacks() {
+    // Safety: both callbacks only touch thread-local `Cell`s, never allocate in a memory context
+    // and never raise, so they are safe to run wherever PostgreSQL calls them.
+    unsafe {
+        pg_sys::CacheRegisterSyscacheCallback(
+            pg_sys::SysCacheIdentifier::PROCOID as i32,
+            Some(on_proc_invalidation),
+            pg_sys::Datum::from(0usize),
+        );
+        pg_sys::RegisterXactCallback(Some(on_xact_event), std::ptr::null_mut());
     }
-    [table_path(vocabulary_id), map_path(vocabulary_id)]
-        .into_iter()
-        .find(|p| p.exists())
 }
 
-/// Open and mmap an artefact file at `path`, or `Ok(None)` if there is none.
-///
-/// Shared by the ranking and the mapping, since both are plain write-once files under
-/// `table_dir` that are read once and cached forever. Absence comes back as `Ok(None)` rather
-/// than an error string because "this vocabulary has no ranking / no mapping" is a normal state
-/// its callers each want to phrase for themselves — and because folding the question into the
-/// `open` saves them a separate `stat()` on every row.
-fn read_mmap_at(path: &Path) -> Result<Option<Mmap>, String> {
-    require_dir("read vocabulary artefacts")?;
-    let file = match File::open(path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("cannot open {}: {e}", path.display())),
-    };
-    // Safety: opened read-only and treated as immutable by contract — see the module docs on what
-    // that contract does and does not cover. A concurrent truncation would be undefined, which is
-    // why artefact files are write-once and a changed artefact needs a new id.
-    unsafe { Mmap::map(&file) }
-        .map(Some)
-        .map_err(|e| format!("cannot mmap {}: {e}", path.display()))
+// ── reading ───────────────────────────────────────────────────────────────────────────────
+
+/// A custom artefact's bytes from its function, or `None` if it has none. One SPI round trip
+/// to ask, one to fetch; only ever on a cache miss.
+fn fetch(vocabulary_id: u16, a: Artefact) -> Result<Option<Vec<u8>>, String> {
+    let name = function_name(vocabulary_id, a);
+    let signature = format!("pgtoken.{name}()");
+    let present = Spi::get_one_with_args::<bool>(
+        "SELECT pg_catalog.to_regprocedure($1) IS NOT NULL",
+        &[signature.as_str().into()],
+    )
+    .map_err(|e| e.to_string())?
+    .unwrap_or(false);
+    if !present {
+        return Ok(None);
+    }
+    Spi::get_one::<Vec<u8>>(&format!("SELECT pgtoken.{name}()")).map_err(|e| {
+        format!(
+            "cannot read the {} of vocabulary {vocabulary_id}: {e}",
+            a.as_str()
+        )
+    })
 }
 
-/// Load a vocabulary's ranking, from the backend-local cache when possible. `Ok(None)` means the
+/// Whether a custom artefact exists. Presets are not asked about here; they are never custom.
+pub fn exists(vocabulary_id: u16, a: Artefact) -> bool {
+    let signature = format!("pgtoken.{}()", function_name(vocabulary_id, a));
+    Spi::get_one_with_args::<bool>(
+        "SELECT pg_catalog.to_regprocedure($1) IS NOT NULL",
+        &[signature.as_str().into()],
+    )
+    .unwrap_or_else(|e| bail(e))
+    .unwrap_or(false)
+}
+
+/// An artefact's raw bytes, preset or custom, for `vocabulary_info` and `vocabulary_codec`.
+pub fn artefact_bytes(vocabulary_id: u16, a: Artefact) -> Result<Option<Vec<u8>>, String> {
+    if let Some(p) = preset::for_id(vocabulary_id) {
+        return Ok(Some(match a {
+            Artefact::Ranking => p.ranking_bytes(),
+            Artefact::Mapping => p.mapping_bytes(),
+        }));
+    }
+    fetch(vocabulary_id, a)
+}
+
+/// A vocabulary's ranking, from the backend-local cache when possible. `Ok(None)` means the
 /// vocabulary has no ranking.
 pub fn rank_table(vocabulary_id: u16) -> Result<Option<Rc<RankTable>>, String> {
-    let path = table_path(vocabulary_id);
-    if let Some(hit) = CACHE.with(|c| c.borrow().get(&path).cloned()) {
+    if let Some(p) = preset::for_id(vocabulary_id) {
+        return Ok(Some(p.ranking()));
+    }
+    if let Some(hit) = get(&RANKINGS, vocabulary_id) {
         return Ok(Some(hit));
     }
-    let Some(mmap) = read_mmap_at(&path)? else {
+    let stamp = generation();
+    let Some(bytes) = fetch(vocabulary_id, Artefact::Ranking)? else {
         return Ok(None);
     };
-    let table = Rc::new(
-        RankTable::from_bytes(&mmap)
-            .map_err(|e| format!("coding table {vocabulary_id} is not valid: {e}"))?,
+    let t = Rc::new(
+        RankTable::from_bytes(&bytes)
+            .map_err(|e| format!("ranking of vocabulary {vocabulary_id} is not valid: {e}"))?,
     );
-    CACHE.with(|c| c.borrow_mut().insert(path, table.clone()));
-    Ok(Some(table))
+    put(&RANKINGS, vocabulary_id, stamp, t.clone());
+    Ok(Some(t))
 }
 
-/// Load a vocabulary's mapping, from the backend-local cache when possible. `Ok(None)` means the
+/// A vocabulary's mapping, from the backend-local cache when possible. `Ok(None)` means the
 /// vocabulary has no mapping.
-///
-/// `pgtoken.text` is the only caller: it reads a mapping back to detokenize a stored value. It
-/// leans on the `Ok(None)` arm rather than testing `map_path(...).exists()` first, which on a
-/// warm backend would be one wasted `stat()` per row — a million of them on a large index build.
 pub fn byte_map(vocabulary_id: u16) -> Result<Option<Rc<ByteMap>>, String> {
-    let path = map_path(vocabulary_id);
-    if let Some(hit) = MAP_CACHE.with(|c| c.borrow().get(&path).cloned()) {
+    if let Some(p) = preset::for_id(vocabulary_id) {
+        return Ok(Some(p.mapping()));
+    }
+    if let Some(hit) = get(&MAPPINGS, vocabulary_id) {
         return Ok(Some(hit));
     }
-    let Some(mmap) = read_mmap_at(&path)? else {
+    let stamp = generation();
+    let Some(bytes) = fetch(vocabulary_id, Artefact::Mapping)? else {
         return Ok(None);
     };
     let m = Rc::new(
-        ByteMap::from_bytes(&mmap)
-            .map_err(|e| format!("mapping for vocabulary {vocabulary_id} is not valid: {e}"))?,
+        ByteMap::from_bytes(&bytes)
+            .map_err(|e| format!("mapping of vocabulary {vocabulary_id} is not valid: {e}"))?,
     );
-    MAP_CACHE.with(|c| c.borrow_mut().insert(path, m.clone()));
+    put(&MAPPINGS, vocabulary_id, stamp, m.clone());
     Ok(Some(m))
 }
 
-/// Write a freshly trained table to `$table_dir/<vocabulary_id>.tntt`.
+/// A vocabulary's declared `vocab_size`, for the bound check on text and `int[]` input.
 ///
-/// Refuses to overwrite: a `vocabulary_id` is a permanent name for a specific table, because
-/// stored values reference it and `decode` is declared `IMMUTABLE`. Silently replacing one
-/// would change what existing rows decode to.
-///
-/// This is the weaker of the two writers and should adopt [`write_map`]'s pattern — temp file,
-/// `sync_all`, `hard_link` into place — which fixes both of the problems left here, just not as
-/// part of this change. First, TOCTOU: the `exists()` check below and the `write` that follows it
-/// are two separate syscalls, so two concurrent `train` calls on one fresh vocabulary id can both
-/// pass the check and race to write. Second, and worse, the create is not atomic with its
-/// content: a crash or `ENOSPC` mid-`write` leaves a truncated `.tntt` that `train` then refuses
-/// to replace.
-pub fn write_table(vocabulary_id: u16, bytes: &[u8]) -> Result<PathBuf, String> {
-    let dir = require_dir("write a vocabulary ranking")?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let path = table_path(vocabulary_id);
-    if path.exists() {
-        return Err(format!(
-            "coding table {vocabulary_id} already exists at {}; stored values reference \
-             vocabulary ids, so pick an unused id rather than replacing one",
-            path.display()
-        ));
+/// `None` while a `pg_dump` restore is still loading: a table in a schema that sorts before
+/// `pgtoken` loads its rows before `pgtoken.vocabulary`'s. That answer is cached for the rest of
+/// the transaction only, so a restore does not pay one SPI call per row, and a later transaction
+/// sees the row once it has loaded.
+pub fn vocab_size(vocabulary_id: u16) -> Option<u32> {
+    if let Some(p) = preset::for_id(vocabulary_id) {
+        return Some(p.vocab_size);
     }
-    std::fs::write(&path, bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-    Ok(path)
+    if let Some(size) = get(&SIZES, vocabulary_id) {
+        return Some(size);
+    }
+    let xact = XACT.with(|x| x.get());
+    if get(&MISSING, vocabulary_id) == Some(xact) {
+        return None;
+    }
+    let stamp = generation();
+    let size = crate::vocabulary::vocab_size_for(vocabulary_id);
+    match size {
+        Some(s) => put(&SIZES, vocabulary_id, stamp, s),
+        None => put(&MISSING, vocabulary_id, stamp, xact),
+    }
+    size
 }
 
-/// Write a freshly built mapping. Refuses to overwrite, for the same reason `write_table` does.
-///
-/// The create is atomic **with its content**: the bytes go to a temp file in the same directory,
-/// are `sync_all`'d, and only then get `hard_link`ed to the final name. Three properties fall out
-/// of that ordering:
-///
-/// * Write-once survives the split. `hard_link` fails with `AlreadyExists` if the final name is
-///   taken, so the check and the create remain one atomic syscall, exactly as `create_new` was —
-///   two concurrent `load_mapping` calls on one fresh vocabulary still cannot both win. `rename`,
-///   the more familiar idiom, is wrong here for precisely this reason: it clobbers.
-/// * `<id>.tnmap` never exists while short. It appears only once its bytes are on disk, so the
-///   truncated-file state that `ENOSPC` or a crash used to leave — refused by `load_mapping` as
-///   "already exists", rejected by `pgtoken.text` as corrupt, and with no SQL remedy for either —
-///   is unreachable.
-/// * A crash before the link leaves no mapping at all, which is a state `load_mapping` can simply
-///   be run again from. The temp is removed on every path, success or failure; the directory is
-///   deliberately not fsync'd, because losing the link entirely lands on that same re-runnable
-///   state while losing the *content* would not.
-pub fn write_map(vocabulary_id: u16, bytes: &[u8]) -> Result<PathBuf, String> {
-    let dir = require_dir("write a vocabulary mapping")?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let path = map_path(vocabulary_id);
-
-    // Dotted and suffixed so it can never be mistaken for an artefact, and stamped with the
-    // backend pid plus a clock reading so a temp left behind by a crashed backend cannot collide
-    // with this one's.
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let tmp = dir.join(format!(
-        ".{vocabulary_id}.tnmap.{}.{stamp}.tmp",
-        std::process::id()
-    ));
-
-    let staged = (|| -> Result<(), String> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(|e| {
-                format!(
-                    "cannot create temporary mapping file {}: {e}",
-                    tmp.display()
-                )
-            })?;
-        file.write_all(bytes)
-            .map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-        file.sync_all()
-            .map_err(|e| format!("cannot flush {} to disk: {e}", tmp.display()))
-    })();
-    if let Err(e) = staged {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-
-    let linked = std::fs::hard_link(&tmp, &path).map_err(|e| {
-        // `hard_link` fails for plenty of reasons besides a real collision -- permission denied,
-        // a vanished parent directory, a filesystem without hard links -- and only
-        // `AlreadyExists` means "pick a different id". Reporting every failure as a collision
-        // would send an operator chasing the one fix that cannot possibly help; this matters
-        // especially here, since managed PostgreSQL is exactly where permission and directory
-        // problems turn up.
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
-            format!(
-                "mapping for vocabulary {vocabulary_id} already exists at {}; stored values \
-                 reference vocabulary ids, so pick an unused id rather than replacing one",
-                path.display()
-            )
-        } else {
-            format!("cannot create mapping file {}: {e}", path.display())
-        }
-    });
-    // Unlink the temp whichever way the link went: on success the content now lives under its
-    // real name, on failure there is nothing to keep.
-    let _ = std::fs::remove_file(&tmp);
-    linked?;
-    Ok(path)
-}
-
-/// Report what a ranking file contains, without adding it to the cache. `Ok(None)` if there is
-/// no ranking.
-pub fn describe_table(vocabulary_id: u16) -> Result<Option<(u32, String, u64)>, String> {
-    let Some(mmap) = read_mmap_at(&table_path(vocabulary_id))? else {
+/// Size, sha256 and a count for one artefact, for `vocabulary_info`. `Ok(None)` if absent.
+pub fn describe(vocabulary_id: u16, a: Artefact) -> Result<Option<(u32, String, u64)>, String> {
+    let Some(bytes) = artefact_bytes(vocabulary_id, a)? else {
         return Ok(None);
     };
-    let bytes: &[u8] = &mmap;
-    let table = RankTable::from_bytes(bytes)
-        .map_err(|e| format!("coding table {vocabulary_id} is not valid: {e}"))?;
-    let digest = pgtoken_core::tables::digest_hex(&pgtoken_core::tables::table_digest(bytes));
-    Ok(Some((table.k(), digest, bytes.len() as u64)))
+    let count = match a {
+        Artefact::Ranking => RankTable::from_bytes(&bytes).map(|t| t.k()),
+        Artefact::Mapping => ByteMap::from_bytes(&bytes).map(|m| m.mapped()),
+    }
+    .map_err(|e| {
+        format!(
+            "{} of vocabulary {vocabulary_id} is not valid: {e}",
+            a.as_str()
+        )
+    })?;
+    Ok(Some((
+        count,
+        digest_hex(&table_digest(&bytes)),
+        bytes.len() as u64,
+    )))
 }
 
-/// Report what a mapping contains, without adding it to the cache. `Ok(None)` if there is no
-/// mapping.
-pub fn describe_map(vocabulary_id: u16) -> Result<Option<(u32, String, u64)>, String> {
-    let Some(mmap) = read_mmap_at(&map_path(vocabulary_id))? else {
-        return Ok(None);
-    };
-    let bytes: &[u8] = &mmap;
-    let map = ByteMap::from_bytes(bytes)
-        .map_err(|e| format!("mapping for vocabulary {vocabulary_id} is not valid: {e}"))?;
-    let digest = pgtoken_core::tables::digest_hex(&pgtoken_core::tables::table_digest(bytes));
-    Ok(Some((map.mapped(), digest, bytes.len() as u64)))
+// ── writing ───────────────────────────────────────────────────────────────────────────────
+
+/// Store a custom artefact as `pgtoken.artefact_<id>_<kind>()`. Write-once: an existing one is
+/// an error, raised by `CREATE FUNCTION` itself so that the check and the create are one step.
+///
+/// The bytes go in as base64, a third larger than raw rather than twice as large as hex. The
+/// function is `IMMUTABLE` and its body fully qualified, so it means the same under any
+/// `search_path`, including the empty one `pg_dump` restores with.
+pub fn store(vocabulary_id: u16, a: Artefact, name: &str, bytes: &[u8]) {
+    let fname = function_name(vocabulary_id, a);
+    let ddl = Spi::get_one_with_args::<String>(
+        "SELECT pg_catalog.format(\
+           'CREATE FUNCTION pgtoken.%I() RETURNS bytea LANGUAGE sql IMMUTABLE PARALLEL SAFE AS %L', \
+           $1::text, \
+           'SELECT pg_catalog.decode(' \
+             || pg_catalog.quote_literal(pg_catalog.encode($2, 'base64')) || ', ''base64'')')",
+        &[fname.as_str().into(), bytes.into()],
+    )
+    .unwrap_or_else(|e| bail(e))
+    .unwrap_or_else(|| bail("could not build the artefact function"));
+    Spi::run(&ddl).unwrap_or_else(|e| bail(e));
+    Spi::run(&format!(
+        "COMMENT ON FUNCTION pgtoken.{fname}() IS \
+         'pgtoken {} for vocabulary {}; write-once, do not edit or drop'",
+        a.as_str(),
+        name.replace('\'', "''")
+    ))
+    .unwrap_or_else(|e| bail(e));
 }
 
 /// Turn a core-crate error into a Postgres `ERROR`.

@@ -86,14 +86,13 @@ class Tok(bytes):
 class Ctx:
     """Everything an arm needs to encode, decode and name its column type."""
 
-    def __init__(self, conn, enc, raw_vid, freq_vid, table_dir):
+    def __init__(self, conn, enc, raw_vid, freq_vid, ranking: bytes):
         self.enc = enc
         self.raw_codec = C.raw_codec_for(enc.n_vocab)
         self.raw_vid = raw_vid
         self.freq_vid = freq_vid
-        path = os.path.join(table_dir, f"{freq_vid}.tntt")
-        self.tbl_py = K.RankTable.load(path)
-        self.tbl_rs = R.load_table(path)
+        self.tbl_py = K.RankTable.from_bytes(ranking)
+        self.tbl_rs = R.Table.from_bytes(ranking)
         self.domain = {
             "raw": f"tokens.{C._vocab_name('raw')}",
             "freq": f"tokens.{C._vocab_name('freq')}",
@@ -456,7 +455,7 @@ def main() -> int:
             conn.execute("SET synchronous_commit = off")
         raw_vid = C.ensure_raw_vocab(conn)
         freq_vid, _ = C.ensure_freq_vocab(conn, args.domain)
-        ctx = Ctx(conn, enc, raw_vid, freq_vid, C.table_dir(conn))
+        ctx = Ctx(conn, enc, raw_vid, freq_vid, C.ranking_bytes(conn, C._vocab_name("freq")))
         settings = {
             k: conn.execute(f"SHOW {k}").fetchone()[0]
             for k in ("server_version", "default_toast_compression", "shared_buffers",

@@ -21,9 +21,6 @@
 //! SQL-side work; note it costs 4 bytes per token on the wire, more than the compressed blob it
 //! came from.
 
-use std::ffi::CString;
-
-use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting};
 use pgrx::prelude::*;
 
 use pgtoken_core::tables::RankTable;
@@ -31,6 +28,7 @@ use pgtoken_core::value;
 
 mod casts;
 mod mapping;
+mod preset;
 mod registry;
 mod tokens;
 mod typmod;
@@ -40,30 +38,10 @@ use registry::bail;
 
 pgrx::pg_module_magic!();
 
-/// Directory holding `<vocabulary_id>.tntt` coding tables.
-static TABLE_DIR: GucSetting<Option<CString>> = GucSetting::<Option<CString>>::new(None);
-
 #[pg_guard]
 pub extern "C-unwind" fn _PG_init() {
-    GucRegistry::define_string_guc(
-        c"pgtoken.table_dir",
-        c"Directory holding <vocabulary_id>.tntt coding tables.",
-        c"Resolved by filesystem convention rather than a SQL catalog, so reading a value \
-          needs no SPI and pgtoken.tokens's read paths can honestly stay IMMUTABLE and \
-          PARALLEL SAFE. SIGHUP-scoped for the same reason: if a session could repoint it, two \
-          sessions could decode one value differently.",
-        &TABLE_DIR,
-        GucContext::Sighup,
-        GucFlags::default(),
-    );
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────────────
-
-fn guc_str(g: &GucSetting<Option<CString>>, default: &str) -> String {
-    g.get()
-        .and_then(|c| c.into_string().ok())
-        .unwrap_or_else(|| default.to_string())
+    // Keeps the per-backend artefact cache honest across rollbacks; see registry.rs.
+    registry::register_callbacks();
 }
 
 // ── inspect (header only, O(1), loads no table) ──────────────────────────────────────
@@ -131,17 +109,14 @@ CREATE FUNCTION pgtoken.describe(pgtoken.tokens)
 ///
 /// The ranking holds only the tokens the query actually contained, so unseen IDs still encode
 /// losslessly, just a little wider. Write-once: stored payloads reference ranks and `decode` is
-/// `IMMUTABLE`, so replacing one would change what existing rows mean.
+/// `IMMUTABLE`, so replacing one would change what existing rows mean. It is stored in the
+/// database as `pgtoken.artefact_<id>_ranking()`; see registry.rs for why a function.
 #[pg_extern(strict, name = "train")]
 fn train(name: &str, query: &str, max_ranks: default!(i32, -1)) -> String {
     let v = vocabulary::lookup_by_name(name)
         .unwrap_or_else(|| bail(format!("vocabulary {name:?} does not exist")));
-    // Directory question first: with `pgtoken.table_dir` unset, `table_path` yields a bare
-    // relative name whose `.exists()` is answered against the data directory, so this guard would
-    // report "no ranking yet" for a vocabulary that has one. See `registry::require_dir`.
-    registry::require_dir("tell whether a vocabulary already has a ranking")
-        .unwrap_or_else(|e| bail(e));
-    if registry::table_path(v.id).exists() {
+    refuse_preset(name, v);
+    if registry::exists(v.id, registry::Artefact::Ranking) {
         bail(format!("vocabulary {name} already has a ranking"));
     }
     let cap = if max_ranks < 0 {
@@ -173,11 +148,21 @@ fn train(name: &str, query: &str, max_ranks: default!(i32, -1)) -> String {
 
     let table = RankTable::train(&ids, cap).unwrap_or_else(|e| bail(e));
     let k = table.k();
-    registry::write_table(v.id, &table.to_bytes()).unwrap_or_else(|e| bail(e));
+    registry::store(v.id, registry::Artefact::Ranking, name, &table.to_bytes());
     format!(
         "trained vocabulary {name} on {rows} rows / {} tokens, {k} ranked",
         ids.len()
     )
+}
+
+/// `train` and `load_mapping` refuse a preset vocabulary: its artefacts are bundled and frozen.
+fn refuse_preset(name: &str, v: vocabulary::Vocabulary) {
+    if let Some(p) = preset::by_code(v.preset) {
+        bail(format!(
+            "vocabulary {name} uses the bundled {} preset, whose ranking and mapping are fixed",
+            p.name
+        ));
+    }
 }
 
 #[cfg(any(test, feature = "pg_test"))]
@@ -196,13 +181,13 @@ mod tests {
     }
 
     #[pg_test]
-    fn table_dir_guc_survives_and_stays_sighup() {
-        // A session that could repoint it could make two sessions decode one value differently.
-        let ctx = Spi::get_one::<String>(
-            "SELECT context FROM pg_settings WHERE name = 'pgtoken.table_dir'",
+    fn there_is_no_table_dir_setting() {
+        // Artefacts live in the database now, so there is no directory to configure.
+        let n = Spi::get_one::<i64>(
+            "SELECT count(*) FROM pg_settings WHERE name = 'pgtoken.table_dir'",
         )
         .expect("query failed");
-        assert_eq!(ctx, Some("sighup".to_string()));
+        assert_eq!(n, Some(0));
     }
 
     #[pg_test]
@@ -217,11 +202,6 @@ mod tests {
 
     #[pg_test]
     fn train_takes_a_vocabulary_name() {
-        // A pinned id, not the default auto-assignment: every test in this module that trains
-        // shares one Postgres cluster and one `pgtoken.table_dir`, and each test's catalog insert
-        // rolls back while the `.tntt` file it wrote does not. Two tests that both auto-assigned
-        // id 1 would silently race for the same file, so every trained vocabulary here gets its
-        // own id, disjoint from the others and from `tokens.rs`'s reserved 60001/60002.
         Spi::run(
             "SELECT pgtoken.create_vocabulary('tr1', 200019, compression => 'freq', \
                                               id => 61001)",
@@ -345,27 +325,21 @@ mod tests {
         assert_eq!(ranked, None, "an unfilled part is NULL, not an error");
     }
 
-    #[pg_test(error = "vocabulary \"vi_corrupt\" has a ranking file at \
-                 /tmp/pgtoken-pgrx-test-tables/61005.tntt but it could not be read: coding table \
-                 61005 is not valid: table file has bad magic, expected TNTT")]
+    #[pg_test(
+        error = "vocabulary \"vi_corrupt\" has a ranking but it could not be read: \
+                 ranking of vocabulary 61005 is not valid: table file has bad magic, expected TNTT"
+    )]
     fn vocabulary_info_reports_a_corrupt_ranking_as_an_error() {
         // A present-but-broken ranking is a fault, not the same "unfilled" NULL as never having
         // trained -- collapsing the two would hide a real problem behind a normal-looking status
-        // row. A pinned id, disjoint from every other trained vocabulary in this module.
+        // row. Only an owner editing the artefact function by hand can get here.
         Spi::run(
             "SELECT pgtoken.create_vocabulary('vi_corrupt', 300, compression => 'freq', \
-                                              id => 61005)",
+                                              id => 61005); \
+             CREATE FUNCTION pgtoken.artefact_61005_ranking() RETURNS bytea \
+               LANGUAGE sql IMMUTABLE AS $$ SELECT 'not a real coding table'::bytea $$;",
         )
-        .expect("create");
-        // pgrx does not guarantee test order, so this cannot assume some `train` test already
-        // created the directory via `registry::write_table`'s `create_dir_all` -- it has to create
-        // it itself, the same way, to be independent of what ran before it in this run.
-        std::fs::create_dir_all("/tmp/pgtoken-pgrx-test-tables").expect("create the table dir");
-        std::fs::write(
-            "/tmp/pgtoken-pgrx-test-tables/61005.tntt",
-            b"not a real coding table, just junk bytes",
-        )
-        .expect("write a junk ranking file");
+        .expect("setup");
         Spi::get_one::<i32>("SELECT ranked FROM pgtoken.vocabulary_info('vi_corrupt')").unwrap();
     }
 
@@ -397,6 +371,74 @@ mod tests {
         Spi::get_one::<String>("SELECT pgtoken.train('tr_once', $$SELECT ARRAY[1,2]::int[]$$)")
             .unwrap();
     }
+
+    #[pg_test]
+    fn train_stores_the_ranking_in_a_dumpable_function() {
+        // The artefact is a schema object, so pg_dump writes it in pre-data, before any table
+        // data. It must not be an extension member, or pg_dump would leave it out.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('tr_fn', 300, compression => 'freq'); \
+             SELECT pgtoken.train('tr_fn', $$SELECT ARRAY[5,5,9]::int[]$$);",
+        )
+        .expect("setup");
+        let (n, members) = Spi::get_two::<i64, i64>(
+            "SELECT count(*), count(d.objid) FROM pg_proc p \
+             JOIN pg_namespace n ON n.oid = p.pronamespace \
+             LEFT JOIN pg_depend d ON d.classid = 'pg_proc'::regclass AND d.objid = p.oid \
+                                  AND d.deptype = 'e' \
+             WHERE n.nspname = 'pgtoken' AND p.proname = 'artefact_' || \
+                   (SELECT id FROM pgtoken.vocabulary WHERE name = 'tr_fn') || '_ranking'",
+        )
+        .expect("query failed");
+        assert_eq!(n, Some(1), "one ranking function");
+        assert_eq!(
+            members,
+            Some(0),
+            "not an extension member, so pg_dump includes it"
+        );
+    }
+
+    #[pg_test]
+    fn a_rolled_back_train_leaves_nothing_behind_not_even_in_the_cache() {
+        // Train inside a savepoint, use the ranking (so this backend caches it), roll back, then
+        // train again with the opposite ranking. Write-once must not count the rolled-back one,
+        // and the encode after it must use the new ranking, not the cached old one.
+        Spi::run("SELECT pgtoken.create_vocabulary('tr_rb', 300, compression => 'freq')")
+            .expect("create");
+        // In the rolled-back ranking 5 is rank 0 and 9 is rank 1; in the kept one, the reverse.
+        Spi::run(
+            "DO $$ BEGIN \
+               PERFORM pgtoken.train('tr_rb', 'SELECT ARRAY[5,5,5,9]::int[]'); \
+               PERFORM '{9}'::pgtoken.tokens('tr_rb')::int[]; \
+               RAISE EXCEPTION 'roll back'; \
+             EXCEPTION WHEN raise_exception THEN NULL; END $$",
+        )
+        .expect("rolled-back train");
+        let ranked = Spi::get_one::<i32>("SELECT ranked FROM pgtoken.vocabulary_info('tr_rb')")
+            .expect("query failed");
+        assert_eq!(ranked, None, "the rolled-back ranking is gone");
+
+        Spi::run("SELECT pgtoken.train('tr_rb', $$SELECT ARRAY[9,9,9,5]::int[]$$)")
+            .expect("retrain after rollback");
+        // One token, freq: header, one streamvbyte control byte, then the rank as one byte.
+        let sent =
+            Spi::get_one::<Vec<u8>>("SELECT pgtoken.tokens_send('{9}'::pgtoken.tokens('tr_rb'))")
+                .expect("query failed")
+                .expect("NULL");
+        assert_eq!(
+            sent.last(),
+            Some(&0),
+            "9 is rank 0 in the kept ranking: {sent:?}"
+        );
+    }
+
+    #[pg_test(
+        error = "vocabulary o200k uses the bundled o200k preset, whose ranking and mapping are fixed"
+    )]
+    fn train_refuses_a_preset() {
+        Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
+        Spi::run("SELECT pgtoken.train('o200k', $$SELECT ARRAY[1]::int[]$$)").unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -404,9 +446,6 @@ pub mod pg_test {
     pub fn setup(_options: Vec<&str>) {}
 
     pub fn postgresql_conf_options() -> Vec<&'static str> {
-        // `pgtoken.table_dir` is SIGHUP-scoped, so it cannot be set with SET inside a test.
-        // Giving the test cluster one lets the suite cover `train` and the `freq` codec rather
-        // than only the table-free paths.
-        vec!["pgtoken.table_dir = '/tmp/pgtoken-pgrx-test-tables'"]
+        vec![]
     }
 }
