@@ -290,7 +290,11 @@ mod tests {
         )
         .expect("query failed");
         assert_eq!(n, Some(3));
-        assert_eq!(total, Some(12 + 6), "12-byte header plus 2 bytes per token");
+        assert_eq!(
+            total,
+            Some(5 + 6),
+            "5-byte header (tag, flags, id, one-byte count) plus 2 bytes per token"
+        );
     }
 
     #[pg_test]
@@ -350,11 +354,11 @@ mod tests {
         Spi::get_one::<i32>("SELECT ranked FROM pgtoken.vocabulary_info('vi_corrupt')").unwrap();
     }
 
-    #[pg_test(error = "value is 1 bytes, shorter than the 12-byte header")]
+    #[pg_test(error = "value is 1 bytes, shorter than the 5-byte minimum header")]
     fn rejects_a_truncated_value() {
         // `tokens_recv_bytes` is the door outside bytes come in through; there is no
         // `bytea -> tokens` cast, deliberately, because it only duplicated this function.
-        Spi::get_one::<Vec<i32>>("SELECT pgtoken.tokens_recv_bytes('\\x00'::bytea)::int[]")
+        Spi::get_one::<Vec<i32>>("SELECT pgtoken.tokens_recv_bytes('\\x11'::bytea)::int[]")
             .unwrap();
     }
 
@@ -427,7 +431,7 @@ mod tests {
 
         Spi::run("SELECT pgtoken.train('tr_rb', $$SELECT ARRAY[9,9,9,5]::int[]$$)")
             .expect("retrain after rollback");
-        // One token, freq: header, one streamvbyte control byte, then the rank as one byte.
+        // One token, freq: the header, then the rank as one LEB128 byte.
         let sent =
             Spi::get_one::<Vec<u8>>("SELECT pgtoken.tokens_send('{9}'::pgtoken.tokens('tr_rb'))")
                 .expect("query failed")

@@ -1,31 +1,53 @@
-//! `freq`: frequency-rank remap, then streamvbyte.
+//! `freq`: frequency-rank remap, then one LEB128 varint per rank.
 //!
 //! The recommended codec. Common tokens become small integers that a varint packs in one
 //! byte, and there is no general compressor in the path, so decoding is close to the cost of
 //! raw packing. See [`crate::tables::RankTable`] for how unseen tokens stay lossless without
 //! anyone declaring a vocabulary size.
+//!
+//! Each rank is unsigned LEB128: 7 bits per byte, low bits first, high bit set on every byte
+//! but the last, so the number of ranks is the number of bytes with the high bit clear; the
+//! decoder checks it equals the header's token count. LEB128 replaced streamvbyte here because it
+//! measured both smaller (5-7%) and faster to decode on real o200k text
+//! (`core/examples/leb_vs_svb.rs`).
+//!
+//! The encoding is canonical, which `=` and hashing rely on, so a decoder refuses anything an
+//! encoder would not write: a payload ending mid-varint, a varint with a redundant trailing
+//! zero byte, and a rank that does not fit `u32`.
 
-use stream_vbyte::{decode::decode, encode::encode, scalar::Scalar};
-
+use crate::header::write_varint;
 use crate::tables::{RankTable, TableError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FreqError {
     /// The ID could not be remapped; see [`TableError::IdTooLarge`].
     Table(TableError),
-    /// The varint stream did not consume the whole payload, so the payload and the declared
-    /// token count disagree.
-    TrailingBytes { consumed: usize, len: usize },
+    /// The payload ends with a continuation byte.
+    Truncated,
+    /// A multi-byte varint ends in `0x00`, so a shorter encoding of the same rank exists.
+    NonMinimal { offset: usize },
+    /// A varint encodes a value above `u32::MAX`.
+    Overflow { offset: usize },
+    /// The payload holds a different number of ranks than the header's count.
+    CountMismatch { want: usize, got: usize },
 }
 
 impl std::fmt::Display for FreqError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FreqError::Table(e) => write!(f, "{e}"),
-            FreqError::TrailingBytes { consumed, len } => write!(
+            FreqError::Truncated => write!(f, "freq payload ends inside a varint"),
+            FreqError::NonMinimal { offset } => write!(
                 f,
-                "streamvbyte consumed {consumed} of {len} payload bytes; the token count and \
-                 payload disagree"
+                "freq payload has a non-minimal varint ending at byte {offset}"
+            ),
+            FreqError::Overflow { offset } => write!(
+                f,
+                "freq payload has a varint at byte {offset} larger than 32 bits"
+            ),
+            FreqError::CountMismatch { want, got } => write!(
+                f,
+                "freq payload holds {got} tokens but the header says {want}"
             ),
         }
     }
@@ -39,40 +61,56 @@ impl From<TableError> for FreqError {
     }
 }
 
-/// Encode token IDs as frequency ranks packed with streamvbyte.
+/// Encode token IDs as frequency ranks, one LEB128 varint each.
 pub fn encode_freq(ids: &[u32], table: &RankTable, out: &mut Vec<u8>) -> Result<(), FreqError> {
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let mut ranks = Vec::with_capacity(ids.len());
+    out.reserve(ids.len() * 2);
     for &id in ids {
-        ranks.push(table.rank(id)?);
+        write_varint(table.rank(id)?, out);
     }
-    // The crate's guidance for a worst-case buffer is 5x the input length: up to 4 data bytes
-    // per value plus one control byte per quad.
-    let mut buf = vec![0u8; ranks.len() * 5];
-    let written = encode::<Scalar>(&ranks, &mut buf);
-    out.extend_from_slice(&buf[..written]);
     Ok(())
 }
 
-/// Decode a `freq` payload back to token IDs.
-pub fn decode_freq(payload: &[u8], n: usize, table: &RankTable) -> Result<Vec<u32>, FreqError> {
-    if n == 0 {
-        return Ok(Vec::new());
+/// Walk a payload's varints, calling `f` with each rank, and reject a non-canonical stream.
+#[inline]
+fn for_each_rank(payload: &[u8], mut f: impl FnMut(u32)) -> Result<(), FreqError> {
+    let mut v: u32 = 0;
+    let mut shift: u32 = 0;
+    for (i, &b) in payload.iter().enumerate() {
+        let bits = (b & 0x7F) as u32;
+        if shift == 28 && b > 0x0F {
+            // The fifth byte holds only the top 4 bits of a u32; anything more, including a
+            // continuation bit, overflows.
+            return Err(FreqError::Overflow { offset: i });
+        }
+        v |= bits << shift;
+        if b & 0x80 == 0 {
+            if b == 0 && shift > 0 {
+                return Err(FreqError::NonMinimal { offset: i });
+            }
+            f(v);
+            v = 0;
+            shift = 0;
+        } else {
+            shift += 7;
+        }
     }
-    // `decode` documents that the output slice must hold at least 4 values regardless of
-    // `count`, and it panics rather than erroring if the buffer is short. Oversize it.
-    let mut ranks = vec![0u32; n.max(4)];
-    let consumed = decode::<Scalar>(payload, n, &mut ranks);
-    if consumed != payload.len() {
-        return Err(FreqError::TrailingBytes {
-            consumed,
-            len: payload.len(),
+    if shift != 0 {
+        return Err(FreqError::Truncated);
+    }
+    Ok(())
+}
+
+/// Decode a `freq` payload of `n` tokens back to token IDs.
+pub fn decode_freq(payload: &[u8], n: usize, table: &RankTable) -> Result<Vec<u32>, FreqError> {
+    let mut out = Vec::with_capacity(n);
+    for_each_rank(payload, |r| out.push(table.token(r)))?;
+    if out.len() != n {
+        return Err(FreqError::CountMismatch {
+            want: n,
+            got: out.len(),
         });
     }
-    ranks.truncate(n);
-    Ok(ranks.into_iter().map(|r| table.token(r)).collect())
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -100,21 +138,10 @@ mod tests {
     }
 
     #[test]
-    fn roundtrips_every_quad_remainder() {
-        // streamvbyte groups values into quads, so lengths 1..=9 exercise the complete-quad
-        // path and every partial remainder.
-        let t = table();
-        for n in 1..=9usize {
-            let ids: Vec<u32> = (0..n as u32).map(|i| (i * 7) % 100).collect();
-            assert_eq!(roundtrip(&ids, &t), ids, "failed at n={n}");
-        }
-    }
-
-    #[test]
     fn roundtrips_ids_the_table_never_saw() {
         // No vocabulary is declared anywhere, so arbitrarily large IDs must still work.
         let t = table();
-        let ids = vec![0, 4, 65_535, 65_536, 200_018, 1_000_000];
+        let ids = vec![0, 4, 65_535, 65_536, 200_018, 1_000_000, u32::MAX - 3];
         assert_eq!(roundtrip(&ids, &t), ids);
     }
 
@@ -135,21 +162,35 @@ mod tests {
     }
 
     #[test]
+    fn golden_varints() {
+        // Ranks 0, 127, 128, 16383, 16384 and u32::MAX at every varint width boundary.
+        let t = RankTable::train(&[0], None).unwrap(); // k = 1: rank r is id r - 1 above 0
+        let ids = [0u32, 126, 127, 16_382, 16_383, u32::MAX - 1];
+        let mut out = Vec::new();
+        encode_freq(&ids, &t, &mut out).unwrap();
+        assert_eq!(
+            out,
+            [
+                0x00, // 0
+                0x7F, // 127
+                0x80, 0x01, // 128
+                0xFF, 0x7F, // 16383
+                0x80, 0x80, 0x01, // 16384
+                0xFF, 0xFF, 0xFF, 0xFF, 0x0F, // u32::MAX
+            ]
+        );
+        assert_eq!(decode_freq(&out, ids.len(), &t).unwrap(), ids);
+    }
+
+    #[test]
     fn remap_shrinks_frequent_high_ids() {
         // The point of the remap: a frequent but high-numbered token packs in one byte, where
         // its bare ID would have taken three.
         let t = RankTable::train(&vec![199_999u32; 100], None).unwrap();
         assert_eq!(t.rank(199_999).unwrap(), 0);
-
-        let ids = vec![199_999u32; 4];
         let mut out = Vec::new();
-        encode_freq(&ids, &t, &mut out).expect("encode");
-        assert_eq!(
-            out.len(),
-            5,
-            "4 values in one quad: 1 control byte + 1 data byte each"
-        );
-        assert!(out.len() < ids.len() * 3, "should beat 3-byte raw packing");
+        encode_freq(&[199_999u32; 4], &t, &mut out).expect("encode");
+        assert_eq!(out, [0, 0, 0, 0], "one byte per token, no control bytes");
     }
 
     #[test]
@@ -160,5 +201,54 @@ mod tests {
             encode_freq(&[u32::MAX], &t, &mut out),
             Err(FreqError::Table(TableError::IdTooLarge { .. }))
         ));
+    }
+
+    #[test]
+    fn rejects_a_truncated_varint() {
+        let t = table();
+        assert_eq!(decode_freq(&[0x00, 0x80], 2, &t), Err(FreqError::Truncated));
+        assert_eq!(decode_freq(&[0xFF], 1, &t), Err(FreqError::Truncated));
+    }
+
+    #[test]
+    fn rejects_a_non_minimal_varint() {
+        let t = table();
+        // 1 as two bytes, and 0 as three.
+        assert_eq!(
+            decode_freq(&[0x81, 0x00], 1, &t),
+            Err(FreqError::NonMinimal { offset: 1 })
+        );
+        assert_eq!(
+            decode_freq(&[0x05, 0x80, 0x80, 0x00], 2, &t),
+            Err(FreqError::NonMinimal { offset: 3 })
+        );
+    }
+
+    #[test]
+    fn rejects_a_rank_that_overflows_u32() {
+        let t = table();
+        // 2^32 needs 0x10 in the fifth byte; a sixth byte is over regardless.
+        assert_eq!(
+            decode_freq(&[0x80, 0x80, 0x80, 0x80, 0x10], 1, &t),
+            Err(FreqError::Overflow { offset: 4 })
+        );
+        assert_eq!(
+            decode_freq(&[0xFF, 0xFF, 0xFF, 0xFF, 0x8F, 0x00], 1, &t),
+            Err(FreqError::Overflow { offset: 4 })
+        );
+        assert!(decode_freq(&[0xFF, 0xFF, 0xFF, 0xFF, 0x0F], 1, &t).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_payload_that_disagrees_with_the_count() {
+        let t = table();
+        assert_eq!(
+            decode_freq(&[0, 1, 2], 2, &t),
+            Err(FreqError::CountMismatch { want: 2, got: 3 })
+        );
+        assert_eq!(
+            decode_freq(&[0x80, 0x01], 2, &t),
+            Err(FreqError::CountMismatch { want: 2, got: 1 })
+        );
     }
 }

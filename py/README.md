@@ -59,7 +59,7 @@ its header, so reads pick the right ranking by themselves.
 
 `vocab.encode` rejects an ID below 0 or at or above the vocabulary's size, and anything that is not
 a 1-D sequence of integers. This matters for `COPY BINARY`, because the server checks only the
-12-byte header of a binary value.
+header of a binary value.
 
 The server still checks that a value belongs to the column's vocabulary. Inserting an `o200k` value
 into a `tokens.cl100k` column fails.

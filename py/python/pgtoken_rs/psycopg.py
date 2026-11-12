@@ -33,7 +33,7 @@ from . import encode as _encode
 
 __all__ = ["Tokens", "Vocabulary", "register"]
 
-_FREQ = 2  # codec id of `freq` in the value header
+_FREQ_TAG = 0x12  # first byte of a `freq` value: format 1 << 4 | codec 2
 
 _STR_HINT = (
     "a str is text, not token ids; pass it as a query parameter as it is "
@@ -157,8 +157,9 @@ def _make_binary_loader(tables: dict) -> type[Loader]:
         def load(self, data: Buffer) -> np.ndarray:
             data = bytes(data)
             table = None
-            if len(data) >= 6 and data[2] == _FREQ:
-                vid = int.from_bytes(data[4:6], "little")
+            # Header: tag, flags, vocabulary id (u16 LE), then the token count.
+            if len(data) >= 4 and data[0] == _FREQ_TAG:
+                vid = int.from_bytes(data[2:4], "little")
                 if vid not in tables:
                     raise ValueError(
                         f"value uses vocabulary id {vid}, which is not registered on this "

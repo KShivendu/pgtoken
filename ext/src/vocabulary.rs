@@ -764,7 +764,7 @@ mod tests {
             .expect("query failed");
         assert_eq!(
             len,
-            Some(12 + 3),
+            Some(5 + 3),
             "raw8: one byte per token, proving the domain's typmod reached the encoder"
         );
     }

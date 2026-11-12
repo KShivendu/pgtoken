@@ -8,7 +8,7 @@
 //! A preset vocabulary depends on nothing in the database to encode, decode or detokenize:
 //!
 //! * The write path reads the preset from the column's typmod (bits 24-27, see `typmod.rs`).
-//! * The read paths see only a value's 12-byte header, which carries the vocabulary id and no
+//! * The read paths see only a value's header, which carries the vocabulary id and no
 //!   typmod. So each preset owns a fixed range of vocabulary ids, and an id in that range *is*
 //!   the preset. o200k owns 65280..=65535, room for 256 vocabularies built on it.
 //!
@@ -209,7 +209,10 @@ mod unit_tests {
         assert_eq!(back, ids);
     }
 
-    const GOLDEN: &str = "a701020000ff00000a00000051a001381f00280302010201e93b04d63b04bb5360";
+    /// Tag 12 (format 1, freq), flags 00, id 65280 LE (00ff), count 0a, then one LEB128 rank per
+    /// id: 7992, 0, 808, 258, 2, 1, 277481, 277462, 21435, 96. Those ranks are what the bundled
+    /// ranking gives these ids, and must never change.
+    const GOLDEN: &str = "120000ff0ab83e00a80682020201e9f710d6f710bba70160";
 
     #[test]
     fn ids_resolve_to_their_preset() {

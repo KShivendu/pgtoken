@@ -131,8 +131,8 @@ mod tests {
                     (SELECT length(pgtoken.tokens_send(body)) FROM c_big_t)",
         )
         .expect("query failed");
-        assert_eq!(small, Some(12 + 3), "raw8 via the target typmod");
-        assert_eq!(big, Some(12 + 9), "raw24 via the target typmod");
+        assert_eq!(small, Some(5 + 3), "raw8 via the target typmod");
+        assert_eq!(big, Some(5 + 9), "raw24 via the target typmod");
     }
 
     #[pg_test]

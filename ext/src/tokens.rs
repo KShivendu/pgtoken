@@ -67,7 +67,7 @@
 //! ## What is checked, and what is trusted
 //!
 //! Text input validates every id against the vocabulary's declared `vocab_size` (`encode_for`).
-//! The binary paths do not: they check the header — magic, version, codec, payload length,
+//! The binary paths do not: they check the header — tag, flags, token count, payload length,
 //! vocabulary — and hand the payload through untouched. Scanning ids there would put an O(n) pass
 //! on the operation this project exists to make fast, and the harm is bounded, since an
 //! out-of-vocabulary id decodes back to itself and a detokenizer that finds no mapping for it
@@ -256,7 +256,7 @@ fn encode_unresolved(ids: &[u32]) -> Vec<u8> {
 /// and `pgtoken.describe` deliberately do not: they are diagnostics, and refusing to describe an
 /// unresolved value would remove the only way to see that it *is* unresolved.
 ///
-/// Reads the 12-byte header and nothing else, which is what makes it affordable on `SEND`.
+/// Reads the header and nothing else, which is what makes it affordable on `SEND`.
 pub fn require_vocabulary(v: &[u8]) {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
     if h.vocabulary_id == UNRESOLVED {
@@ -320,7 +320,7 @@ pub fn is_id_list(s: &str) -> bool {
 fn encode_unresolved_text(text: &str) -> Vec<u8> {
     let n = u32::try_from(text.len())
         .unwrap_or_else(|_| bail("text input is longer than this format can hold"));
-    let mut out = Vec::with_capacity(pgtoken_core::header::HEADER_LEN + text.len());
+    let mut out = Vec::with_capacity(pgtoken_core::header::MAX_HEADER_LEN + text.len());
     pgtoken_core::header::Header::new(TEXT_CARRIER, UNRESOLVED, n).write_to(&mut out);
     out.extend_from_slice(text.as_bytes());
     out
@@ -429,10 +429,11 @@ pub fn decode_value(v: &[u8]) -> Vec<u32> {
     }
 }
 
-/// Whether a value is an unresolved carrier: one whose typmod was never applied. Reads two
-/// header bytes, so the comparison operators can afford it on every row.
+/// Whether a value is an unresolved carrier: one whose typmod was never applied. Reads the two
+/// vocabulary id bytes (offsets 2-3, after the tag and flags), so the comparison operators can
+/// afford it on every row.
 fn is_unresolved(v: &[u8]) -> bool {
-    v.len() >= pgtoken_core::header::HEADER_LEN && u16::from_le_bytes([v[4], v[5]]) == UNRESOLVED
+    v.len() >= pgtoken_core::header::MIN_LEN && u16::from_le_bytes([v[2], v[3]]) == UNRESOLVED
 }
 
 /// Give an unresolved carrier the vocabulary and width a typmod names: the one step that turns a
@@ -519,7 +520,7 @@ fn tokens_equal(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
 
 /// Check a blob's **header** and return it unchanged.
 ///
-/// What this guarantees: the magic, version, codec id and reserved bytes are sound, the raw
+/// What this guarantees: the tag (version and codec), flags and token count are sound, the raw
 /// codecs' payload length matches the token count exactly, and the vocabulary id is nonzero, i.e.
 /// not [`UNRESOLVED`]. Failing loudly on any of that beats storing something that decodes to
 /// plausible-looking wrong IDs.
@@ -615,7 +616,7 @@ fn tokens_out_impl(value: &[u8]) -> CString {
 /// refuse would leave a bare-column table unreadable in `psql` but readable over the wire, and the
 /// error would stop being the thing that makes someone fix their column declaration.
 ///
-/// Deliberately `require_vocabulary` and not `decode_value`: this parses 12 bytes, where a decode
+/// Deliberately `require_vocabulary` and not `decode_value`: this parses a few header bytes, where a decode
 /// would put the whole payload through the codec on every binary read.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_send_impl(value: &[u8]) -> Vec<u8> {
@@ -720,7 +721,7 @@ fn tokenize(text: &str, vocabulary: &str) -> Vec<i32> {
 //
 // Two stored values are equal exactly when their bytes are equal. The encoding is canonical
 // (pgtoken_core::value::tests::encoding_is_canonical): the same ids under one vocabulary and codec
-// pack to the same bytes, and the 12-byte header carries the vocabulary id and codec, so values
+// pack to the same bytes, and the header carries the vocabulary id and codec, so values
 // from different vocabularies never compare equal. Equality is therefore a memcmp with no decode,
 // and a hash opclass over the bytes lets GROUP BY, DISTINCT and hash joins use it. There is no
 // ORDER BY on purpose: the freq codec remaps ids to frequency rank before packing, so byte order
@@ -942,6 +943,10 @@ CREATE TYPE pgtoken.tokens (
     TYPMOD_IN      = pgtoken.tokens_typmod_in,
     TYPMOD_OUT     = pgtoken.tokens_typmod_out,
     INTERNALLENGTH = VARIABLE,
+    -- int4, because PostgreSQL refuses anything narrower for a variable-length type ("alignment
+    -- \"c\" is invalid for variable-length type"). It costs little: a value under 127 bytes is
+    -- stored with a 1-byte varlena header and packed unaligned anyway. Nothing in the format
+    -- relies on it either; every field is read with byte loads.
     ALIGNMENT      = int4,
     STORAGE        = external
 );
@@ -1156,8 +1161,8 @@ mod tests {
                     length(pgtoken.tokens_send('{1,2,3}'::pgtoken.tokens('t_big')))",
         )
         .expect("query failed");
-        assert_eq!(small, Some(12 + 3), "raw8: one byte per token");
-        assert_eq!(big, Some(12 + 9), "raw24: three bytes per token");
+        assert_eq!(small, Some(5 + 3), "raw8: one byte per token");
+        assert_eq!(big, Some(5 + 9), "raw24: three bytes per token");
     }
 
     #[pg_test]
@@ -1200,7 +1205,7 @@ mod tests {
         )
         .expect("query failed");
         assert_eq!(same, Some(true));
-        assert_eq!(len, Some(12 + 12), "raw24: four tokens at three bytes each");
+        assert_eq!(len, Some(5 + 12), "raw24: four tokens at three bytes each");
     }
 
     #[pg_test]
@@ -1274,7 +1279,7 @@ mod tests {
         assert_eq!(rendered, Some("{1,2,3}".to_string()));
         assert_eq!(
             len,
-            Some(12 + 3),
+            Some(5 + 3),
             "the column's typmod must reach tokens_in, giving raw8"
         );
     }
@@ -1293,13 +1298,13 @@ mod tests {
         // bytes and every other test here would still pass.
         //
         // The value is hand-framed so its header names `freq` against vocabulary 60002, which no
-        // test trains: a7 magic, version 1, codec 2 (freq), reserved 0, id 60002 LE, reserved,
-        // n_tokens 3 LE, then one payload byte. A header-only check accepts it and hands the bytes
+        // test trains: tag 12 (version 1, codec freq), flags 00, id 60002 as u16 LE (62ea), token
+        // count 01, then one payload byte. A header-only check accepts it and hands the bytes
         // back; anything that touches the codec must load a ranking that does not exist, and dies
         // with "has no ranking".
         let same = Spi::get_one::<bool>(
             "SELECT pgtoken.tokens_send(pgtoken.tokens_recv_bytes(v)) = v \
-             FROM (SELECT '\\xa701020062ea00000300000001'::bytea AS v) s",
+             FROM (SELECT '\\x120062ea0101'::bytea AS v) s",
         )
         .expect("query failed");
         assert_eq!(same, Some(true), "send must copy, never decode");
@@ -1389,12 +1394,12 @@ mod tests {
             Some("{1,2,3}".to_string()),
             "the ids must survive the repair"
         );
-        // Was raw24 (12 + 9) while unresolved, since `encode_unresolved` always picks the widest
-        // packing. raw8 (12 + 3) here proves the repair re-encoded at t_repair's own width rather
+        // Was raw24 (5 + 9) while unresolved, since `encode_unresolved` always picks the widest
+        // packing. raw8 (5 + 3) here proves the repair re-encoded at t_repair's own width rather
         // than merely re-labelling the same raw24 bytes under its vocabulary id.
         assert_eq!(
             len,
-            Some(12 + 3),
+            Some(5 + 3),
             "must re-encode to the vocabulary's own width (raw8), not relabel the raw24 carrier"
         );
     }
@@ -1417,7 +1422,7 @@ mod tests {
         Spi::run("INSERT INTO moved VALUES ('{1,2,3}')").expect("insert");
         let before = Spi::get_one::<i32>("SELECT length(pgtoken.tokens_send(body)) FROM moved")
             .expect("query failed");
-        assert_eq!(before, Some(12 + 9), "raw24 to start with");
+        assert_eq!(before, Some(5 + 9), "raw24 to start with");
 
         Spi::run(
             "ALTER TABLE moved ALTER COLUMN body TYPE tokens.t_to \
@@ -1429,7 +1434,7 @@ mod tests {
         )
         .expect("query failed");
         assert_eq!(rendered, Some("{1,2,3}".to_string()), "ids must survive");
-        assert_eq!(after, Some(12 + 3), "re-encoded to raw8");
+        assert_eq!(after, Some(5 + 3), "re-encoded to raw8");
     }
 
     #[pg_test]
@@ -1678,20 +1683,19 @@ mod tests {
         //
         // `pgtoken.encode` is gone, and `w_to`'s own width is raw24 (its vocab_size needs three
         // bytes), so a raw16 value under its id cannot come from the type itself — it is built by
-        // hand, one hex byte at a time: a7 (magic), 01 (version), 00 (codec raw16), 00 (reserved),
-        // the vocabulary id as a little-endian u16, 0000 (reserved), 03000000 (n_tokens = 3, LE),
-        // then ids 1, 2, 3 as little-endian u16 each.
+        // hand, one hex byte at a time: 10 (tag: version 1, codec raw16), 00 (flags), the
+        // vocabulary id as a little-endian u16, 03 (token count, LEB128), then ids 1, 2, 3 as
+        // little-endian u16 each.
         let loid = Spi::get_one::<String>(&format!(
             "SELECT lo_from_bytea(0, \
                  '\\x5047434f50590aff0d0a00'::bytea || int4send(0) || int4send(0) \
                  || int2send(1::smallint) || int4send(length(v)) || v \
                  || int2send((-1)::smallint))::text \
              FROM (SELECT decode( \
-                     'a7010000' || \
+                     '1000' || \
                      lpad(to_hex({id} & 255), 2, '0') || \
                      lpad(to_hex(({id} >> 8) & 255), 2, '0') || \
-                     '0000' || \
-                     '03000000' || \
+                     '03' || \
                      '010002000300', \
                      'hex') AS v) s"
         ))
@@ -1704,10 +1708,39 @@ mod tests {
         Spi::run("COPY w FROM '/tmp/pgtoken-recv-wrongwidth.bin' WITH (FORMAT binary)").unwrap();
     }
 
-    #[pg_test(error = "bad magic byte 0x00, expected 0xA7")]
+    #[pg_test(
+        error = "unknown value format tag 0x00, this build reads format version 1 (tags 0x10-0x13)"
+    )]
     fn recv_bytes_rejects_a_corrupt_buffer() {
         Spi::get_one::<String>(
             "SELECT pgtoken.tokens_recv_bytes('\\x000000000000000000000000'::bytea)::text",
+        )
+        .unwrap();
+    }
+
+    #[pg_test(
+        error = "unknown value format: tag 0xA7 is the pre-release 12-byte header, which this \
+                 build no longer reads; re-insert the data"
+    )]
+    fn recv_bytes_rejects_the_old_12_byte_format() {
+        // `'{1}'` under a raw24 vocabulary in the old layout: magic, version, codec, reserved,
+        // id 1 LE, reserved, count 1 LE, then the id.
+        Spi::get_one::<String>(
+            "SELECT pgtoken.tokens_recv_bytes('\\xa70101000100000001000000000001'::bytea)::text",
+        )
+        .unwrap();
+    }
+
+    #[pg_test(error = "value has flags 0x01, which this build does not understand")]
+    fn recv_bytes_rejects_an_unknown_flag() {
+        Spi::get_one::<String>("SELECT pgtoken.tokens_recv_bytes('\\x1301010001'::bytea)::text")
+            .unwrap();
+    }
+
+    #[pg_test(error = "payload is 2 bytes, expected 3")]
+    fn recv_bytes_rejects_a_count_that_disagrees_with_the_payload() {
+        Spi::get_one::<String>(
+            "SELECT pgtoken.tokens_recv_bytes('\\x13000100030102'::bytea)::text",
         )
         .unwrap();
     }

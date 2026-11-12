@@ -4,7 +4,9 @@
 //! with whatever tokenizer they already use — that stays outside this library on purpose.
 
 use crate::codec::{freq, raw};
-use crate::header::{Codec, Header, HeaderError, HEADER_LEN};
+#[cfg(test)]
+use crate::header::VarintError;
+use crate::header::{Codec, Header, HeaderError, MAX_HEADER_LEN};
 use crate::tables::RankTable;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,8 +70,7 @@ pub fn encode(
     table: Option<&RankTable>,
 ) -> Result<Vec<u8>, ValueError> {
     let n_tokens = u32::try_from(ids.len()).map_err(|_| ValueError::TooManyTokens(ids.len()))?;
-
-    let mut out = Vec::with_capacity(HEADER_LEN + ids.len() * 2);
+    let mut out = Vec::with_capacity(MAX_HEADER_LEN + ids.len() * 2);
     Header::new(codec, vocabulary_id, n_tokens).write_to(&mut out);
 
     match codec {
@@ -87,14 +88,13 @@ pub fn encode(
 /// Decode a stored value back to token IDs.
 pub fn decode(value: &[u8], table: Option<&RankTable>) -> Result<Vec<u32>, ValueError> {
     let (h, payload) = Header::parse(value)?;
-    let n = h.n_tokens as usize;
     Ok(match h.codec {
-        Codec::Raw8 => raw::decode8(payload, n)?,
-        Codec::Raw16 => raw::decode16(payload, n)?,
-        Codec::Raw24 => raw::decode24(payload, n)?,
+        Codec::Raw8 => raw::decode8(payload),
+        Codec::Raw16 => raw::decode16(payload)?,
+        Codec::Raw24 => raw::decode24(payload)?,
         Codec::Freq => {
             let t = table.ok_or(ValueError::MissingTable(h.codec))?;
-            freq::decode_freq(payload, n, t)?
+            freq::decode_freq(payload, h.n_tokens as usize, t)?
         }
     })
 }
@@ -111,7 +111,8 @@ pub fn recode(
     encode(&ids, to_codec, to_vocabulary_id, to_table)
 }
 
-/// Header-only inspection. O(1): reads 12 bytes and loads no table.
+/// Header-only inspection: the header and the payload length. O(1), loads no table; the
+/// token count comes from the header.
 pub fn describe(value: &[u8]) -> Result<(Header, usize), ValueError> {
     let (h, payload) = Header::parse(value)?;
     Ok((h, payload.len()))
@@ -212,12 +213,16 @@ mod tests {
     }
 
     #[test]
-    fn describe_reads_only_the_header() {
+    fn describe_counts_without_a_table() {
         let v = encode(&[1, 2, 3, 4, 5], Codec::Raw24, 0, None).unwrap();
         let (h, payload_len) = describe(&v).unwrap();
         assert_eq!(h.n_tokens, 5);
         assert_eq!(h.codec, Codec::Raw24);
         assert_eq!(payload_len, 15);
+
+        let v = encode(&[3, 1, 200_018, 0], Codec::Freq, 1, Some(&table())).unwrap();
+        let (h, _) = describe(&v).unwrap();
+        assert_eq!((h.codec, h.n_tokens), (Codec::Freq, 4));
     }
 
     #[test]
@@ -231,14 +236,18 @@ mod tests {
     #[test]
     fn empty_input_is_a_bare_header() {
         let v = encode(&[], Codec::Raw24, 0, None).unwrap();
-        assert_eq!(v.len(), HEADER_LEN);
+        assert_eq!(
+            v,
+            [0x11, 0, 0x00, 0x00, 0x00],
+            "header with a zero count only"
+        );
         assert_eq!(decode(&v, None).unwrap(), Vec::<u32>::new());
     }
 
     #[test]
     fn raw8_roundtrips_through_a_value() {
         let v = encode(&[0, 7, 255], Codec::Raw8, 0, None).expect("encode");
-        assert_eq!(v.len(), HEADER_LEN + 3);
+        assert_eq!(v, [0x13, 0, 0x00, 0x00, 3, 0, 7, 255]);
         assert_eq!(decode(&v, None).unwrap(), vec![0, 7, 255]);
     }
 
@@ -258,5 +267,92 @@ mod tests {
             raw.len()
         );
         assert_eq!(decode(&freq, Some(&t)).unwrap(), ids);
+    }
+
+    #[test]
+    fn golden_values_for_every_codec() {
+        // ids [3, 1, 200] under vocabulary 5, raw; [3, 1, 200, 0] under vocabulary 65280, freq.
+        // In the test table 3 is rank 0, 1 rank 1, 2 rank 2; unseen ids take k + id, k = 3.
+        let hex = |v: &[u8]| v.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let raw = [3u32, 1, 200];
+        //            tag flags id   n   payload
+        let r8 = "13000500".to_string() + "03" + "0301c8";
+        assert_eq!(hex(&encode(&raw, Codec::Raw8, 5, None).unwrap()), r8);
+        assert_eq!(
+            hex(&encode(&raw, Codec::Raw16, 5, None).unwrap()),
+            "10000500".to_string() + "03" + "03000100c800"
+        );
+        assert_eq!(
+            hex(&encode(&raw, Codec::Raw24, 5, None).unwrap()),
+            "11000500".to_string() + "03" + "0000030000010000c8"
+        );
+        let t = table();
+        let v = encode(&[3, 1, 200, 0], Codec::Freq, 65280, Some(&t)).unwrap();
+        // 200 -> rank 203 = 0xcb 0x01; 0 -> rank 3.
+        assert_eq!(hex(&v), "120000ff".to_string() + "04" + "0001cb0103");
+        assert_eq!(decode(&v, Some(&t)).unwrap(), [3, 1, 200, 0]);
+    }
+
+    #[test]
+    fn rejects_malformed_values() {
+        let t = table();
+        let cases: &[(&[u8], ValueError)] = &[
+            // The pre-release 12-byte header.
+            (
+                &[0xA7, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 7],
+                ValueError::Header(HeaderError::LegacyFormat),
+            ),
+            (
+                &[0x14, 0, 1, 0, 0],
+                ValueError::Header(HeaderError::UnknownTag(0x14)),
+            ),
+            (
+                &[0x21, 0, 1, 0, 0],
+                ValueError::Header(HeaderError::UnknownTag(0x21)),
+            ),
+            (
+                &[0xF1, 0, 1, 0, 0],
+                ValueError::Header(HeaderError::ReservedEscape(0xF1)),
+            ),
+            (
+                &[0x13, 0x80, 1, 0, 0],
+                ValueError::Header(HeaderError::UnknownFlags(0x80)),
+            ),
+            (
+                &[0x13, 0, 1, 0],
+                ValueError::Header(HeaderError::TooShort(4)),
+            ),
+            (
+                &[0x13, 0, 1, 0, 0x81, 0x00, 7],
+                ValueError::Header(HeaderError::Count(VarintError::NonMinimal)),
+            ),
+            (
+                &[0x12, 0, 1, 0, 2, 0x05, 0x81, 0x00],
+                ValueError::Freq(freq::FreqError::NonMinimal { offset: 2 }),
+            ),
+            (
+                &[0x12, 0, 1, 0, 2, 0x05, 0x81],
+                ValueError::Freq(freq::FreqError::Truncated),
+            ),
+            (
+                &[0x12, 0, 1, 0, 1, 0x80, 0x80, 0x80, 0x80, 0x10],
+                ValueError::Freq(freq::FreqError::Overflow { offset: 4 }),
+            ),
+            (
+                &[0x12, 0, 1, 0, 2, 0x05, 0x06, 0x07],
+                ValueError::Freq(freq::FreqError::CountMismatch { want: 2, got: 3 }),
+            ),
+            (
+                &[0x11, 0, 1, 0, 1, 0, 0, 0, 0],
+                ValueError::Header(HeaderError::PayloadLen { want: 3, got: 4 }),
+            ),
+            (
+                &[0x10, 0, 1, 0, 1, 0],
+                ValueError::Header(HeaderError::PayloadLen { want: 2, got: 1 }),
+            ),
+        ];
+        for (bytes, want) in cases {
+            assert_eq!(decode(bytes, Some(&t)).as_ref(), Err(want), "{bytes:02x?}");
+        }
     }
 }

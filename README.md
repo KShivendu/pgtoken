@@ -158,7 +158,7 @@ comes back as bytes from `pgtoken.vocabulary_codec`. Binary `COPY` works as well
 | `freq` (default for a preset) | ~1.9 B/token | 3.6 µs | yes, or bundled in a preset |
 
 `raw` packs IDs at the fixed width `vocab_size` implies. `freq` remaps them to frequency rank and
-varint-packs, so common tokens cost a single byte:
+packs each rank as a LEB128 varint, so common tokens cost a single byte:
 
 ```sql
 SELECT pgtoken.create_vocabulary('corpus', vocab_size => 200019, compression => 'freq');
@@ -170,6 +170,24 @@ your own when your data looks different. A ranking only stores the tokens the co
 For a skewed corpus that is tens of bytes, not the 800 KB a full vocabulary would need. Tokens it
 never saw still encode fine, just a little wider. A vocabulary is fixed once created, so to change one, make a new vocabulary and
 `ALTER TABLE ... TYPE tokens.<new>`.
+
+### Value format
+
+Every value is a small header and then the payload:
+
+```
+off  size  field
+  0     1  tag = (version 1 << 4) | codec    codec 0=raw16 1=raw24 2=freq 3=raw8
+  1     1  flags, all zero for now
+  2     2  vocabulary id (u16 little-endian)
+  4   1-5  token count (LEB128)
+  *     -  payload: raw = count x width bytes, freq = one LEB128 rank per token
+```
+
+The header is 5 bytes for a value under 128 tokens and 6 bytes up to 16383. `'Hello, world!'` in
+an o200k column is 13 bytes on disk, against 14 for `text`. A reader refuses an unknown tag or flag,
+and every field has exactly one encoding, so equal token sequences are equal bytes. See
+`core/src/header.rs` for the details.
 
 ## Benchmarks
 
@@ -235,7 +253,7 @@ makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding
   errors on read, because PostgreSQL applies the type modifier too late to reject them up front. Fix
   it with `ALTER TABLE ... TYPE tokens.<name>`.
 - **Binary writes are trusted.** Text and `int[]` input bounds-check every id. `COPY BINARY` and the
-  `bytea` cast check only the 12-byte header, to keep the write path fast.
+  `bytea` cast check only the header, to keep the write path fast.
 - **A vocabulary's name and id are reserved forever**, even after its domain is dropped.
 - **Rankings are corpus-specific.** The ratios drop as the ranking and your data drift apart.
 

@@ -12,5 +12,8 @@ license = "Apache-2.0"
 # no opinion about which vocabulary produced them.
 
 [dependencies]
-stream-vbyte = "0.4"
 sha2 = "0.10"
+
+# Only for `examples/leb_vs_svb.rs`, the benchmark that chose LEB128 over streamvbyte for `freq`.
+[dev-dependencies]
+stream-vbyte = "0.4"

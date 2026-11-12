@@ -103,7 +103,6 @@ name = "pgtoken-core"
 version = "0.1.0"
 dependencies = [
  "sha2",
- "stream-vbyte",
 ]
 
 [[package]]
@@ -215,12 +214,6 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
-
-[[package]]
-name = "stream-vbyte"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f04a005bc697f0aed603e32beaab46d4a69fc4f41503c3b1b0c2168201b9e51"
 
 [[package]]
 name = "syn"
