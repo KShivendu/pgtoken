@@ -45,11 +45,15 @@ import pgcommon as C
 import tnbench as T
 
 TABLES = ("text_plain", "text_pglz", "text_lz4", "tok_gpt2", "tok_o200k")
+# The o200k tokens column with PostgreSQL compression allowed on top of the codec
+# (STORAGE EXTENDED instead of the type's EXTERNAL), to see whether pglz or lz4 recovers
+# repetition the codec cannot see, e.g. repeated lines of code.
+TOK_COMPRESSED = ("tok_o200k_pglz", "tok_o200k_lz4")
 TEXT_BASELINES = ("text_plain", "text_pglz", "text_lz4")
 
 
 def create_tables(conn, gpt2_vocab: str) -> None:
-    conn.execute("DROP TABLE IF EXISTS " + ", ".join(TABLES))
+    conn.execute("DROP TABLE IF EXISTS " + ", ".join(TABLES + TOK_COMPRESSED))
     cols = "id integer PRIMARY KEY, domain text NOT NULL, bucket integer NOT NULL"
     conn.execute(f"CREATE TABLE text_plain ({cols}, body text NOT NULL)")
     conn.execute("ALTER TABLE text_plain ALTER COLUMN body SET STORAGE EXTERNAL")
@@ -57,6 +61,10 @@ def create_tables(conn, gpt2_vocab: str) -> None:
     conn.execute(f"CREATE TABLE text_lz4 ({cols}, body text COMPRESSION lz4 NOT NULL)")
     conn.execute(f"CREATE TABLE tok_gpt2 ({cols}, body tokens.{gpt2_vocab} NOT NULL)")
     conn.execute(f"CREATE TABLE tok_o200k ({cols}, body tokens.o200k NOT NULL)")
+    conn.execute(f"CREATE TABLE tok_o200k_pglz ({cols}, body tokens.o200k COMPRESSION pglz NOT NULL)")
+    conn.execute("ALTER TABLE tok_o200k_pglz ALTER COLUMN body SET STORAGE EXTENDED")
+    conn.execute(f"CREATE TABLE tok_o200k_lz4 ({cols}, body tokens.o200k COMPRESSION lz4 NOT NULL)")
+    conn.execute("ALTER TABLE tok_o200k_lz4 ALTER COLUMN body SET STORAGE EXTENDED")
 
 
 def ensure_o200k(conn) -> None:
@@ -112,10 +120,11 @@ def main() -> int:
                         "INSERT INTO tok_gpt2 (id, domain, bucket, body) VALUES (%s, %s, %s, %s::int[])",
                         [(r[0], r[1], r[2], r[4]) for r in rows],
                     )
-                    cur.executemany(
-                        "INSERT INTO tok_o200k (id, domain, bucket, body) VALUES (%s, %s, %s, %s)",
-                        [r[:4] for r in rows],
-                    )
+                    for tbl in ("tok_o200k", *TOK_COMPRESSED):
+                        cur.executemany(
+                            f"INSERT INTO {tbl} (id, domain, bucket, body) VALUES (%s, %s, %s, %s)",
+                            [r[:4] for r in rows],
+                        )
                 print(f"  loaded {domain} {b}-token bucket: {len(rows)} values", flush=True)
 
         # One row per value with every option's stored size side by side.
@@ -125,10 +134,12 @@ def main() -> int:
                    octet_length(p.body),
                    pgtoken.token_count(g.body), pgtoken.token_count(o.body),
                    pg_column_size(p.body), pg_column_size(z.body), pg_column_size(l.body),
-                   pg_column_size(g.body), pg_column_size(o.body)
+                   pg_column_size(g.body), pg_column_size(o.body),
+                   pg_column_size(oz.body), pg_column_size(ol.body)
             FROM text_plain p
             JOIN text_pglz z USING (id) JOIN text_lz4 l USING (id)
             JOIN tok_gpt2 g USING (id) JOIN tok_o200k o USING (id)
+            JOIN tok_o200k_pglz oz USING (id) JOIN tok_o200k_lz4 ol USING (id)
             ORDER BY p.id
             """
         ).fetchall()
@@ -139,6 +150,7 @@ def main() -> int:
             "n_gpt2": r[5], "n_o200k": r[6],
             "text_plain": r[7], "text_pglz": r[8], "text_lz4": r[9],
             "tok_gpt2": r[10], "tok_o200k": r[11],
+            "tok_o200k_pglz": r[12], "tok_o200k_lz4": r[13],
         }
         for r in data
     ]
@@ -153,7 +165,7 @@ def main() -> int:
     for domain in args.domains:
         for b in args.buckets:
             g = [x for x in recs if x["domain"] == domain and x["bucket"] == b]
-            m = {k: st.mean(x[k] for x in g) for k in ("utf8", "n_o200k", "n_gpt2", *TABLES)}
+            m = {k: st.mean(x[k] for x in g) for k in ("utf8", "n_o200k", "n_gpt2", *TABLES, *TOK_COMPRESSED)}
             lose = [x for x in g if x["tok_o200k"] >= min(x[t] for t in TEXT_BASELINES)]
             row = {
                 "domain": domain, "bucket": b, "rows": len(g), **{f"mean_{k}": v for k, v in m.items()},
@@ -165,6 +177,10 @@ def main() -> int:
                 "pglz_compressed": sum(x["text_pglz"] < x["text_plain"] for x in g),
                 "lz4_compressed": sum(x["text_lz4"] < x["text_plain"] for x in g),
             }
+            for t in TOK_COMPRESSED:
+                row[f"{t}_vs_best_text"] = min(m[b2] for b2 in TEXT_BASELINES) / m[t]
+                row[f"{t}_not_smaller"] = sum(x[t] >= min(x[b2] for b2 in TEXT_BASELINES) for x in g)
+                row[f"{t}_compressed"] = sum(x[t] < x["tok_o200k"] for x in g)
             summary.append(row)
             print(
                 f"{domain:<6} {b:>6} {m['n_o200k']:>9.0f} {m['utf8']:>6.0f} | {m['text_plain']:>6.0f} "
@@ -179,6 +195,15 @@ def main() -> int:
                 f"gpt2 vs pglz {row['gpt2_vs_pglz']:.2f}x, vs lz4 {row['gpt2_vs_lz4']:.2f}x",
                 flush=True,
             )
+            print(
+                f"{'':<14} o200k+pglz {m['tok_o200k_pglz']:.0f} B "
+                f"({row['tok_o200k_pglz_vs_best_text']:.2f}x vs best text, compressed "
+                f"{row['tok_o200k_pglz_compressed']}/{len(g)}, not smaller {row['tok_o200k_pglz_not_smaller']}/{len(g)}); "
+                f"o200k+lz4 {m['tok_o200k_lz4']:.0f} B "
+                f"({row['tok_o200k_lz4_vs_best_text']:.2f}x, compressed {row['tok_o200k_lz4_compressed']}/{len(g)}, "
+                f"not smaller {row['tok_o200k_lz4_not_smaller']}/{len(g)})",
+                flush=True,
+            )
 
     def show(x, why):
         best = min(TEXT_BASELINES, key=lambda t: x[t])
@@ -187,6 +212,7 @@ def main() -> int:
             f"({x['n_gpt2']} gpt2), {x['utf8']} B UTF-8\n"
             f"  stored: plain {x['text_plain']}  pglz {x['text_pglz']}  lz4 {x['text_lz4']}  "
             f"gpt2 freq {x['tok_gpt2']}  o200k {x['tok_o200k']}  "
+            f"o200k+pglz {x['tok_o200k_pglz']}  o200k+lz4 {x['tok_o200k_lz4']}  "
             f"(o200k vs best text {best}: {x[best] / x['tok_o200k']:.2f}x)\n"
             f"  text: {x['text'][:300]!r}{' ...' if len(x['text']) > 300 else ''}",
             flush=True,
