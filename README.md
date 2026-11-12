@@ -69,7 +69,8 @@ uv run python scripts/load_mapping.py --encoding cl100k_base --vocabulary cl100k
 ```
 
 The table maps IDs to bytes rather than strings, because one character can span two tokens. pgtoken
-joins the bytes and decodes them as UTF-8 once, at the end. The mapping is write-once, which is what
+joins the bytes and decodes them as UTF-8 once, at the end. Bytes that do not form whole characters, such as a chunk
+cut in the middle of 🦜 (three o200k tokens), come back as U+FFFD (`�`), never as an empty string. The mapping is write-once, which is what
 lets `pgtoken.text` be `IMMUTABLE` and back an index:
 
 ```sql
@@ -97,13 +98,17 @@ To match on content, pass the token IDs your tokenizer makes. For anything that 
 the column in `pgtoken.text(body)` (presets have a mapping; otherwise load one first):
 
 ```sql
-SELECT * FROM chunks WHERE body = '{24912,2375}'::tokens.o200k;   -- 'hello world'
+SELECT * FROM chunks WHERE body = '{24912,2375}';   -- 'hello world'
 SELECT * FROM chunks WHERE pgtoken.text(body) LIKE '%invoice%';
 CREATE INDEX ON chunks USING gin (to_tsvector('english', pgtoken.text(body)));
 ```
 
 Dedup and join compare token IDs, so a tokenizer that lowercases treats `'Hello'` and `'hello'` as
 the same. A `UNIQUE` constraint on the column is not supported.
+
+A literal compared with a column takes the column's vocabulary, so `body = '{24912,2375}'` needs
+no cast. The one exception is an `IN` list of nine or more literals, which PostgreSQL hashes before
+it knows the column: cast those, as in `body IN ('{1}'::tokens.o200k, ...)`.
 
 ## Use from Python
 
@@ -237,7 +242,8 @@ makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding
 Everything lives in the `pgtoken` schema. The casts are `int[] → tokens` (assignment) and
 `tokens → int[]` (explicit). For the raw stored bytes, call `pgtoken.tokens_send(body)`. The `=` and
 `<>` operators compare two values within one vocabulary, and a default hash operator class powers
-`DISTINCT`, `GROUP BY`, and hash joins (a bare `=` needs `pgtoken` on `search_path`).
+`DISTINCT`, `GROUP BY`, hash joins and hash indexes. The two operators are created in `pg_catalog`,
+so they work under any `search_path`.
 
 **Where rankings and mappings live.** A preset's are compiled into the extension, and its
 vocabularies take ids from a reserved range (65280-65535 for o200k), so a value is readable with

@@ -69,9 +69,12 @@ use pgrx::prelude::*;
 use pgtoken_core::header::Codec;
 use pgtoken_core::value;
 
+use crate::preset;
 use crate::registry::{bail, byte_map, rank_table, vocab_size};
-use crate::typmod::{codec_for, unpack};
-use crate::vocabulary::{name_for_id, MAX_VOCAB_SIZE};
+use crate::typmod::{codec_for, pack, unpack};
+use crate::vocabulary::{
+    name_for_id, width_for, Vocabulary, COMPRESSION_FREQ, COMPRESSION_RAW, MAX_VOCAB_SIZE,
+};
 
 /// `vocabulary_id` of a value whose typmod has not been applied yet. The header format already
 /// reserves 0 for "no vocabulary", and `create_vocabulary` never assigns it, so an unresolved
@@ -355,6 +358,84 @@ pub fn decode_value(v: &[u8]) -> Vec<u32> {
     }
 }
 
+/// Whether a value is an unresolved carrier: one whose typmod was never applied. Reads two
+/// header bytes, so the comparison operators can afford it on every row.
+fn is_unresolved(v: &[u8]) -> bool {
+    v.len() >= pgtoken_core::header::HEADER_LEN && u16::from_le_bytes([v[4], v[5]]) == UNRESOLVED
+}
+
+/// Give an unresolved carrier the vocabulary and width a typmod names: the one step that turns a
+/// string literal into a storable value. Ids are bound-checked exactly as on `INSERT`.
+pub fn resolve(unresolved: &[u8], typmod: i32) -> Vec<u8> {
+    encode_for(&decode_value(unresolved), typmod)
+}
+
+/// The typmod a stored value was written under, rebuilt from its header. The comparison
+/// operators see two values and no column, so this is how a literal compared against a column
+/// learns the column's vocabulary and codec.
+fn typmod_of(h: &pgtoken_core::header::Header) -> i32 {
+    let id = h.vocabulary_id;
+    let (compression, width) = match h.codec {
+        Codec::Raw8 => (COMPRESSION_RAW, 1),
+        Codec::Raw16 => (COMPRESSION_RAW, 2),
+        Codec::Raw24 => (COMPRESSION_RAW, 3),
+        // Freq ignores the width, except as the bound when the catalog row is missing.
+        Codec::Freq => (
+            COMPRESSION_FREQ,
+            vocab_size(id).map_or(3, |s| width_for(s as i32) as u8),
+        ),
+    };
+    pack(Vocabulary {
+        id,
+        compression,
+        width,
+        preset: preset::for_id(id).map_or(0, |p| p.code),
+    })
+}
+
+/// The last resolution a comparison operator made, kept in its `fn_extra` so that
+/// `WHERE body = '{...}'` resolves the constant once per query rather than once per row.
+#[derive(Default)]
+struct ResolvedConstant {
+    unresolved: Vec<u8>,
+    /// The resolved side's vocabulary id and codec, which together pick the encoding.
+    target: (u16, u8),
+    resolved: Vec<u8>,
+}
+
+/// Compare two values, resolving an unresolved one against the other's vocabulary first.
+///
+/// Two resolved values are equal exactly when their bytes are (see below). A literal in
+/// `WHERE body = '{13225,11,2375,0}'` reaches the operator unresolved, because PostgreSQL coerces
+/// it to the operator's argument type, which carries no typmod. Comparing its carrier bytes would
+/// never match, and the query would silently return no rows. So it takes the other operand's
+/// vocabulary from that operand's header and is encoded the way a column of that vocabulary
+/// would store it. Usually the planner has already done this (`tokens_cmp_support`); this path
+/// covers what it cannot see, such as a parameter in a generic plan.
+fn tokens_equal(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
+    let (unresolved, resolved) = match (is_unresolved(a), is_unresolved(b)) {
+        (false, false) | (true, true) => return a == b,
+        (true, false) => (a, b),
+        (false, true) => (b, a),
+    };
+    let (h, _) = value::describe(resolved).unwrap_or_else(|e| bail(e));
+    let target = (h.vocabulary_id, h.codec as u8);
+    // Safety: `fcinfo` is the live call's. `flinfo` is null only under `DirectFunctionCall`,
+    // where there is no call site to cache on.
+    let has_flinfo = !fcinfo.is_null() && unsafe { !(*fcinfo).flinfo.is_null() };
+    if !has_flinfo {
+        return resolve(unresolved, typmod_of(&h)) == resolved;
+    }
+    let mut cache = unsafe { pgrx::pg_func_extra(fcinfo, ResolvedConstant::default) };
+    if cache.target != target || cache.unresolved != unresolved {
+        let bytes = resolve(unresolved, typmod_of(&h));
+        cache.unresolved = unresolved.to_vec();
+        cache.target = target;
+        cache.resolved = bytes;
+    }
+    cache.resolved == resolved
+}
+
 /// Check a blob's **header** and return it unchanged.
 ///
 /// What this guarantees: the magic, version, codec id and reserved bytes are sound, the raw
@@ -431,7 +512,10 @@ fn tokens_typmod_apply_impl(value: &[u8], typmod: i32, is_explicit: bool) -> Vec
     // [`UNRESOLVED`] is exempt: that is every string literal on its way to acquiring a vocabulary
     // for the first time, and an INSERT of a literal is an assignment. It is not a
     // reinterpretation, because the value never had a vocabulary to be reinterpreted from.
-    if h.vocabulary_id != UNRESOLVED && h.vocabulary_id != target.id && !is_explicit {
+    if h.vocabulary_id == UNRESOLVED {
+        return resolve(value, typmod);
+    }
+    if h.vocabulary_id != target.id && !is_explicit {
         cross_vocabulary_assignment(h.vocabulary_id, target.id);
     }
     // Same vocabulary, different packing stays permissive in both contexts: a lossless recode
@@ -559,26 +643,184 @@ fn text_impl(value: &[u8]) -> String {
 // says nothing about the ids or the text. Sort on pgtoken.text(body) when you want alphabetical.
 
 #[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_eq_impl(a: &[u8], b: &[u8]) -> bool {
-    a == b
+fn tokens_eq_impl(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
+    tokens_equal(a, b, fcinfo)
 }
 
 #[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_ne_impl(a: &[u8], b: &[u8]) -> bool {
-    a != b
+fn tokens_ne_impl(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
+    !tokens_equal(a, b, fcinfo)
 }
 
 /// Hash the stored bytes so equal values land in the same bucket. FNV-1a, 32-bit: deterministic
 /// across backends, self-contained, and consistent with `tokens_eq` by construction, since that is
 /// a byte comparison too.
+///
+/// An unresolved value has no hash that agrees with its resolved form, because a hash sees one
+/// value and so has no other operand to borrow a vocabulary from. Hashing one is therefore an
+/// error rather than a silent miss. The planner resolves `body = '...'` before execution, so
+/// this is only reachable through a long `IN` list of literals, which PostgreSQL 14+ hashes.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_hash_impl(value: &[u8]) -> i32 {
+    if is_unresolved(value) {
+        pgrx::pg_sys::panic::ErrorReport::new(
+            PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+            "cannot hash a pgtoken.tokens value that has no vocabulary",
+            function_name!(),
+        )
+        .set_hint(
+            "Cast the literal to the column's type, e.g. body IN ('{1,2}'::tokens.o200k, ...).",
+        )
+        .report(PgLogLevel::ERROR);
+    }
     let mut h: u32 = 0x811c_9dc5;
     for &b in value {
         h ^= b as u32;
         h = h.wrapping_mul(0x0100_0193);
     }
     h as i32
+}
+
+/// Planner support for `=` and `<>`: resolve an unresolved constant at plan time.
+///
+/// `WHERE body = '{13225,11,2375,0}'` arrives as `tokens_eq(body, <unresolved constant>)`. If the
+/// other operand is a column whose type names a vocabulary (a `tokens.<name>` domain or a
+/// `pgtoken.tokens('<name>')` column), the constant is replaced by its resolved form. That way the
+/// constant is resolved once per plan, `EXPLAIN` can print it (an unresolved value has no output
+/// form), and the clause stays an operator, so a hash index can serve it. Anything else is left
+/// alone for [`tokens_equal`] to resolve at run time.
+///
+/// Hand-written rather than `#[pg_extern]`, because its argument and result are planner nodes.
+#[no_mangle]
+pub extern "C" fn pg_finfo_tokens_cmp_support() -> &'static pg_sys::Pg_finfo_record {
+    const V1: pg_sys::Pg_finfo_record = pg_sys::Pg_finfo_record { api_version: 1 };
+    &V1
+}
+
+/// # Safety
+/// Called by PostgreSQL's planner with a `SupportRequest*` node as its one argument.
+#[no_mangle]
+#[pg_guard]
+pub unsafe extern "C-unwind" fn tokens_cmp_support(
+    fcinfo: pg_sys::FunctionCallInfo,
+) -> pg_sys::Datum {
+    let none = pg_sys::Datum::from(0usize);
+    let Some(arg) = pgrx::pg_getarg_datum(fcinfo, 0) else {
+        return none;
+    };
+    let req = arg.cast_mut_ptr::<pg_sys::Node>();
+    if req.is_null() || (*req).type_ != pg_sys::NodeTag::T_SupportRequestSimplify {
+        return none;
+    }
+    let f = (*(req as *mut pg_sys::SupportRequestSimplify)).fcall;
+    let args = pgrx::PgList::<pg_sys::Node>::from_pg((*f).args);
+    if args.len() != 2 {
+        return none;
+    }
+    let (a, b) = (args.get_ptr(0).unwrap(), args.get_ptr(1).unwrap());
+    let (const_first, c, other) = if let Some(c) = unresolved_const(a) {
+        (true, c, b)
+    } else if let Some(c) = unresolved_const(b) {
+        (false, c, a)
+    } else {
+        return none;
+    };
+    let typmod = declared_typmod(other);
+    if typmod < 0 {
+        return none;
+    }
+    let bytes = <Vec<u8> as FromDatum>::from_datum((*c).constvalue, false)
+        .unwrap_or_else(|| bail("constant has no value"));
+    let resolved = resolve(&bytes, typmod)
+        .into_datum()
+        .unwrap_or_else(|| bail("resolved constant has no value"));
+    let new_const = pg_sys::makeConst(
+        (*c).consttype,
+        -1,
+        pg_sys::InvalidOid,
+        -1,
+        resolved,
+        false,
+        false,
+    )
+    .cast::<pg_sys::Node>();
+    let mut new_args = pgrx::PgList::<pg_sys::Node>::new();
+    if const_first {
+        new_args.push(new_const);
+        new_args.push(other);
+    } else {
+        new_args.push(other);
+        new_args.push(new_const);
+    }
+
+    // Rebuild the operator, not a function call, so the clause still reads `body = ...` and an
+    // index or selectivity estimate can recognise it.
+    let opno = operator_for((*f).funcid, (*c).consttype);
+    if opno == pg_sys::InvalidOid {
+        let fx = pg_sys::makeFuncExpr(
+            (*f).funcid,
+            (*f).funcresulttype,
+            new_args.into_pg(),
+            (*f).funccollid,
+            (*f).inputcollid,
+            pg_sys::CoercionForm::COERCE_EXPLICIT_CALL,
+        );
+        return pg_sys::Datum::from(fx);
+    }
+    let op = pg_sys::palloc0(std::mem::size_of::<pg_sys::OpExpr>()).cast::<pg_sys::OpExpr>();
+    (*op).xpr.type_ = pg_sys::NodeTag::T_OpExpr;
+    (*op).opno = opno;
+    (*op).opfuncid = (*f).funcid;
+    (*op).opresulttype = (*f).funcresulttype;
+    (*op).opretset = false;
+    (*op).opcollid = (*f).funccollid;
+    (*op).inputcollid = (*f).inputcollid;
+    (*op).args = new_args.into_pg();
+    (*op).location = (*f).location;
+    pg_sys::Datum::from(op)
+}
+
+/// `n` as a constant holding an unresolved value, if it is one.
+unsafe fn unresolved_const(n: *mut pg_sys::Node) -> Option<*mut pg_sys::Const> {
+    if (*n).type_ != pg_sys::NodeTag::T_Const {
+        return None;
+    }
+    let c = n.cast::<pg_sys::Const>();
+    if (*c).constisnull {
+        return None;
+    }
+    let bytes = <&[u8] as FromDatum>::from_datum((*c).constvalue, false)?;
+    is_unresolved(bytes).then_some(c)
+}
+
+/// The typmod an expression's declared type carries: a column's own, or its domain's. Looks
+/// through the relabelling PostgreSQL adds to pass a domain value to a base-type operator.
+unsafe fn declared_typmod(mut n: *mut pg_sys::Node) -> i32 {
+    while (*n).type_ == pg_sys::NodeTag::T_RelabelType {
+        n = (*n.cast::<pg_sys::RelabelType>()).arg.cast();
+    }
+    let mut typmod = pg_sys::exprTypmod(n);
+    pg_sys::getBaseTypeAndTypmod(pg_sys::exprType(n), &mut typmod);
+    typmod
+}
+
+/// `pg_catalog.=` or `pg_catalog.<>` on `pgtoken.tokens`, whichever `funcid` implements.
+unsafe fn operator_for(funcid: pg_sys::Oid, tokens: pg_sys::Oid) -> pg_sys::Oid {
+    let name = pg_sys::get_func_name(funcid);
+    if name.is_null() {
+        return pg_sys::InvalidOid;
+    }
+    let op = match CStr::from_ptr(name).to_bytes() {
+        b"tokens_eq" => c"=",
+        b"tokens_ne" => c"<>",
+        _ => return pg_sys::InvalidOid,
+    };
+    let mut names = std::ptr::null_mut::<pg_sys::List>();
+    for part in [c"pg_catalog", op] {
+        let s = pg_sys::makeString(pg_sys::pstrdup(part.as_ptr()));
+        names = pg_sys::lappend(names, s.cast());
+    }
+    pg_sys::OpernameGetOprid(names, tokens, tokens)
 }
 
 // ── the type ─────────────────────────────────────────────────────────────────────────
@@ -665,40 +907,47 @@ CREATE FUNCTION pgtoken.text(pgtoken.tokens) RETURNS text
 //
 // Re-declared against `pgtoken.tokens`, like the I/O functions above. `HASHES` on `=` plus a
 // default hash operator class is what lets GROUP BY, DISTINCT and hash joins work without the
-// caller naming an operator; a bare `a = b` still needs `pgtoken` on search_path, the same as
-// `pgtoken.text`. No btree class, so no ORDER BY: byte order is meaningless here.
+// caller naming an operator. The operators live in `pg_catalog`, which every search_path includes,
+// so `WHERE body = '...'` works without `pgtoken` on it: in schema `pgtoken` they were invisible
+// to a default search_path and the query failed with "operator does not exist". They are still
+// members of the extension and go with it on DROP EXTENSION. No btree class, so no ORDER BY:
+// byte order is meaningless here.
 extension_sql!(
     r#"
-CREATE FUNCTION pgtoken.tokens_eq(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
+CREATE FUNCTION pgtoken.tokens_cmp_support(internal) RETURNS internal
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_cmp_support';
+
+CREATE FUNCTION pgtoken.tokens_eq(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE SUPPORT pgtoken.tokens_cmp_support
     AS 'MODULE_PATHNAME', 'tokens_eq_impl_wrapper';
 
 CREATE FUNCTION pgtoken.tokens_ne(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
-    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE SUPPORT pgtoken.tokens_cmp_support
     AS 'MODULE_PATHNAME', 'tokens_ne_impl_wrapper';
 
 CREATE FUNCTION pgtoken.tokens_hash(pgtoken.tokens) RETURNS integer
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_hash_impl_wrapper';
 
-CREATE OPERATOR pgtoken.= (
+CREATE OPERATOR pg_catalog.= (
     LEFTARG = pgtoken.tokens, RIGHTARG = pgtoken.tokens,
     FUNCTION = pgtoken.tokens_eq,
-    COMMUTATOR = OPERATOR(pgtoken.=),
-    NEGATOR = OPERATOR(pgtoken.<>),
+    COMMUTATOR = OPERATOR(pg_catalog.=),
+    NEGATOR = OPERATOR(pg_catalog.<>),
     RESTRICT = eqsel, JOIN = eqjoinsel, HASHES
 );
 
-CREATE OPERATOR pgtoken.<> (
+CREATE OPERATOR pg_catalog.<> (
     LEFTARG = pgtoken.tokens, RIGHTARG = pgtoken.tokens,
     FUNCTION = pgtoken.tokens_ne,
-    COMMUTATOR = OPERATOR(pgtoken.<>),
-    NEGATOR = OPERATOR(pgtoken.=),
+    COMMUTATOR = OPERATOR(pg_catalog.<>),
+    NEGATOR = OPERATOR(pg_catalog.=),
     RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR CLASS pgtoken.tokens_hash_ops DEFAULT FOR TYPE pgtoken.tokens USING hash AS
-    OPERATOR 1 pgtoken.= (pgtoken.tokens, pgtoken.tokens),
+    OPERATOR 1 pg_catalog.= (pgtoken.tokens, pgtoken.tokens),
     FUNCTION 1 pgtoken.tokens_hash(pgtoken.tokens);
 "#,
     name = "tokens_equality",
@@ -1257,12 +1506,129 @@ mod tests {
     }
 
     #[pg_test]
-    fn text_drops_a_chunk_cut_mid_character() {
-        // An artefact of chunking by token count, not a fault: return what is readable.
+    fn text_replaces_a_chunk_cut_mid_character() {
+        // An artefact of chunking by token count: the partial character becomes U+FFFD.
         mapped_vocab("t_cut", 62103);
         let got = Spi::get_one::<String>("SELECT pgtoken.text('{0,4}'::pgtoken.tokens('t_cut'))")
             .expect("query failed");
-        assert_eq!(got, Some("Hello".to_string()));
+        assert_eq!(got, Some("Hello\u{FFFD}".to_string()));
+    }
+
+    #[pg_test]
+    fn text_of_part_of_a_character_is_a_replacement_character_not_empty() {
+        // 🦜 is o200k ids [4103, 99, 250]. The first alone is an incomplete character, which
+        // used to come back as '', indistinguishable from an empty chunk.
+        Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
+        let (first, whole) = Spi::get_two::<String, String>(
+            "SELECT pgtoken.text('{4103}'::tokens.o200k), \
+                    pgtoken.text('{4103,99,250}'::tokens.o200k)",
+        )
+        .expect("query failed");
+        assert_eq!(first.as_deref(), Some("\u{FFFD}"));
+        assert_eq!(whole.as_deref(), Some("🦜"));
+    }
+
+    /// A table `cmp_docs` with one o200k row, "Hello, world!".
+    fn o200k_docs() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE cmp_docs (id int, body tokens.o200k); \
+             INSERT INTO cmp_docs VALUES (1, '{13225,11,2375,0}'), (2, '{13225}');",
+        )
+        .expect("setup");
+    }
+
+    #[pg_test]
+    fn an_untyped_literal_compares_against_a_column() {
+        // The literal reaches `=` unresolved; it used to compare as raw24 carrier bytes and never
+        // match. It works with the default search_path, since the operators live in pg_catalog.
+        o200k_docs();
+        Spi::run("SET search_path = \"$user\", public").expect("search_path");
+        for (sql, want) in [
+            (
+                "SELECT count(*) FROM cmp_docs WHERE body = '{13225,11,2375,0}'",
+                1,
+            ),
+            (
+                "SELECT count(*) FROM cmp_docs WHERE '{13225,11,2375,0}' = body",
+                1,
+            ),
+            (
+                "SELECT count(*) FROM cmp_docs WHERE body <> '{13225,11,2375,0}'",
+                1,
+            ),
+            ("SELECT count(*) FROM cmp_docs WHERE body = '{ 13225 }'", 1),
+            ("SELECT count(*) FROM cmp_docs WHERE body = '{}'", 0),
+        ] {
+            assert_eq!(Spi::get_one::<i64>(sql).expect(sql), Some(want), "{sql}");
+        }
+        Spi::run("SET search_path = public, pgtoken").expect("search_path");
+        assert_eq!(
+            Spi::get_one::<i64>("SELECT count(*) FROM cmp_docs WHERE body = '{13225,11,2375,0}'")
+                .expect("query"),
+            Some(1)
+        );
+    }
+
+    #[pg_test]
+    fn explain_prints_the_resolved_constant() {
+        // An unresolved value has no output form, so EXPLAIN used to fail with "cannot read a
+        // pgtoken.tokens value that has no vocabulary". The planner now resolves it first.
+        o200k_docs();
+        let plan = Spi::connect(|c| {
+            c.select(
+                "EXPLAIN (COSTS OFF) SELECT * FROM cmp_docs WHERE body = '{13225,11,2375,0}'",
+                None,
+                &[],
+            )
+            .expect("explain")
+            .map(|row| row.get::<String>(1).expect("line").unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n")
+        });
+        assert!(plan.contains("{13225,11,2375,0}"), "{plan}");
+    }
+
+    #[pg_test]
+    fn a_parameter_resolves_at_run_time() {
+        // A generic plan keeps `$1` as a parameter, so the planner cannot resolve it; the operator
+        // does, once per call site.
+        o200k_docs();
+        Spi::run(
+            "SET plan_cache_mode = force_generic_plan; \
+             PREPARE q(pgtoken.tokens) AS SELECT count(*) FROM cmp_docs WHERE body = $1;",
+        )
+        .expect("prepare");
+        assert_eq!(
+            Spi::get_one::<i64>("EXECUTE q('{13225,11,2375,0}')").expect("execute"),
+            Some(1)
+        );
+        assert_eq!(
+            Spi::get_one::<i64>("EXECUTE q('{13225}')").expect("execute"),
+            Some(1)
+        );
+    }
+
+    #[pg_test]
+    fn a_literal_compares_inside_an_expression() {
+        // Neither side is a column here, so only the run-time path can resolve the literal.
+        o200k_docs();
+        let got = Spi::get_one::<bool>(
+            "SELECT bool_or(body = (SELECT '{13225}'::pgtoken.tokens)) FROM cmp_docs",
+        )
+        .expect("query");
+        assert_eq!(got, Some(true));
+    }
+
+    #[pg_test(error = "token id 999999 is outside vocabulary o200k (size 200019)")]
+    fn comparing_with_an_id_outside_the_vocabulary_says_so() {
+        o200k_docs();
+        Spi::get_one::<i64>("SELECT count(*) FROM cmp_docs WHERE body = '{999999}'").unwrap();
+    }
+
+    #[pg_test(error = "cannot hash a pgtoken.tokens value that has no vocabulary")]
+    fn hashing_an_unresolved_value_is_an_error_not_a_miss() {
+        Spi::get_one::<i32>("SELECT pgtoken.tokens_hash('{1,2}'::pgtoken.tokens)").unwrap();
     }
 
     #[pg_test]
