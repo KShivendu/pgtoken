@@ -606,12 +606,7 @@ fn tokens_recv_bytes(value: &[u8]) -> Vec<u8> {
 /// `tests::text_refuses_a_value_without_a_vocabulary` — delete the call above and only that test
 /// fails, with the nonsense message this guard exists to prevent.
 ///
-/// **Call this schema-qualified.** `pgtoken.text` shares a name with the built-in `text` type,
-/// and PostgreSQL's function-call cast syntax (`typename(expr)` for a single argument) wins over
-/// an in-scope function of the same name even when `pgtoken` is on `search_path`. A bare
-/// `text(body)` therefore silently resolves to `body::text` — the type's own `OUTPUT` function,
-/// i.e. the rendered id list `{1,2,3}` — with no error, not this function. Always write
-/// `pgtoken.text(body)`.
+/// It is also the `tokens → text` cast (see `casts.rs`), so `body::text` is the same call.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn text_impl(value: &[u8]) -> String {
     require_vocabulary(value);
@@ -875,10 +870,7 @@ CREATE FUNCTION pgtoken.tokens_recv_bytes(bytea) RETURNS pgtoken.tokens
 
 -- `IMMUTABLE` is the point: it depends only on the value's bytes and a write-once mapping,
 -- which is what lets it back a GIN index over `to_tsvector`.
---
--- Always call this schema-qualified: an unqualified `text(body)` is PostgreSQL's function-call
--- cast syntax for the `text` *type*, not a call to this function, so it silently returns the
--- rendered id list (`{1,2,3}`) instead of prose — see `text_impl`'s doc comment.
+-- Also the `pgtoken.tokens -> text` cast; see casts.rs.
 CREATE FUNCTION pgtoken.text(pgtoken.tokens) RETURNS text
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'text_impl_wrapper';
@@ -1040,15 +1032,16 @@ mod tests {
     #[pg_test]
     fn text_input_and_output_roundtrip() {
         vocab("t_rt", 200019);
-        let got = Spi::get_one::<String>("SELECT '{24912,2375}'::pgtoken.tokens('t_rt')::text")
-            .expect("query failed");
+        let got =
+            Spi::get_one::<String>("SELECT '{24912,2375}'::pgtoken.tokens('t_rt')::int[]::text")
+                .expect("query failed");
         assert_eq!(got, Some("{24912,2375}".to_string()));
     }
 
     #[pg_test]
     fn empty_sequence_roundtrips() {
         vocab("t_empty", 300);
-        let got = Spi::get_one::<String>("SELECT '{}'::pgtoken.tokens('t_empty')::text")
+        let got = Spi::get_one::<String>("SELECT '{}'::pgtoken.tokens('t_empty')::int[]::text")
             .expect("query failed");
         assert_eq!(got, Some("{}".to_string()));
     }
@@ -1056,8 +1049,9 @@ mod tests {
     #[pg_test]
     fn input_tolerates_whitespace_but_output_emits_none() {
         vocab("t_ws", 300);
-        let got = Spi::get_one::<String>("SELECT '{ 1, 2 , 3 }'::pgtoken.tokens('t_ws')::text")
-            .expect("query failed");
+        let got =
+            Spi::get_one::<String>("SELECT '{ 1, 2 , 3 }'::pgtoken.tokens('t_ws')::int[]::text")
+                .expect("query failed");
         assert_eq!(got, Some("{1,2,3}".to_string()));
     }
 
@@ -1125,7 +1119,7 @@ mod tests {
         vocab("t_recv", 200019);
         let got = Spi::get_one::<String>(
             "SELECT pgtoken.tokens_recv_bytes(\
-               pgtoken.tokens_send('{5,9,70000}'::pgtoken.tokens('t_recv')))::text",
+               pgtoken.tokens_send('{5,9,70000}'::pgtoken.tokens('t_recv')))::int[]::text",
         )
         .expect("query failed");
         assert_eq!(got, Some("{5,9,70000}".to_string()));
@@ -1146,7 +1140,7 @@ mod tests {
             .expect("copy in");
 
         let (rendered, same) = Spi::get_two::<String, bool>(
-            "SELECT d.body::text, pgtoken.tokens_send(d.body) = pgtoken.tokens_send(s.body) \
+            "SELECT d.body::int[]::text, pgtoken.tokens_send(d.body) = pgtoken.tokens_send(s.body) \
              FROM copy_dst d, copy_src s",
         )
         .expect("query failed");
@@ -1169,8 +1163,9 @@ mod tests {
                 .expect("create returned NULL");
         assert_eq!(id, 40000, "the vocabulary must land above smallint's range");
 
-        let got = Spi::get_one::<String>("SELECT '{1,70000}'::pgtoken.tokens('t_wide')::text")
-            .expect("query failed");
+        let got =
+            Spi::get_one::<String>("SELECT '{1,70000}'::pgtoken.tokens('t_wide')::int[]::text")
+                .expect("query failed");
         assert_eq!(got, Some("{1,70000}".to_string()));
     }
 
@@ -1184,7 +1179,7 @@ mod tests {
         Spi::run("CREATE TABLE ct (body pgtoken.tokens('t_copytext'))").expect("create");
         Spi::run("COPY ct FROM PROGRAM 'echo ''{1,2,3}'''").expect("copy in");
         let (rendered, len) = Spi::get_two::<String, i32>(
-            "SELECT body::text, length(pgtoken.tokens_send(body)) FROM ct",
+            "SELECT body::int[]::text, length(pgtoken.tokens_send(body)) FROM ct",
         )
         .expect("query failed");
         assert_eq!(rendered, Some("{1,2,3}".to_string()));
@@ -1199,7 +1194,7 @@ mod tests {
     fn a_value_without_a_vocabulary_cannot_be_read() {
         // No typmod means no length coercion, so this value stays unresolved. There is no auto
         // width to fall back to, so reading it is an error rather than a guess.
-        Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens::text").unwrap();
+        Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens::int[]::text").unwrap();
     }
 
     #[pg_test]
@@ -1226,7 +1221,8 @@ mod tests {
         // Caught before the carrier encode, so the message names the format rather than leaking
         // `raw24` — a codec the user never chose and cannot see from the column definition.
         vocab("t_huge", 200019);
-        Spi::get_one::<String>("SELECT '{16777216}'::pgtoken.tokens('t_huge')::text").unwrap();
+        Spi::get_one::<String>("SELECT '{16777216}'::pgtoken.tokens('t_huge')::int[]::text")
+            .unwrap();
     }
 
     #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
@@ -1258,7 +1254,7 @@ mod tests {
         // way out. Pinned here so it cannot change by accident.
         Spi::run("CREATE TABLE bare (x pgtoken.tokens)").expect("create table");
         Spi::run("INSERT INTO bare VALUES ('{1,2,3}')").expect("insert");
-        Spi::get_one::<String>("SELECT x::text FROM bare").unwrap();
+        Spi::get_one::<String>("SELECT x::int[]::text FROM bare").unwrap();
     }
 
     #[pg_test]
@@ -1296,7 +1292,7 @@ mod tests {
         Spi::run("ALTER TABLE unresolved_ur ALTER COLUMN x TYPE tokens.t_repair").expect("repair");
 
         let (rendered, len) = Spi::get_two::<String, i32>(
-            "SELECT x::text, length(pgtoken.tokens_send(x)) FROM unresolved_ur",
+            "SELECT x::int[]::text, length(pgtoken.tokens_send(x)) FROM unresolved_ur",
         )
         .expect("query failed");
         assert_eq!(
@@ -1340,7 +1336,7 @@ mod tests {
         )
         .expect("alter type");
         let (rendered, after) = Spi::get_two::<String, i32>(
-            "SELECT body::text, length(pgtoken.tokens_send(body)) FROM moved",
+            "SELECT body::int[]::text, length(pgtoken.tokens_send(body)) FROM moved",
         )
         .expect("query failed");
         assert_eq!(rendered, Some("{1,2,3}".to_string()), "ids must survive");
@@ -1353,7 +1349,7 @@ mod tests {
         vocab("x_from", 200019);
         vocab("x_to", 200019);
         let got = Spi::get_one::<String>(
-            "SELECT ('{1,2,70000}'::pgtoken.tokens('x_from'))::pgtoken.tokens('x_to')::text",
+            "SELECT ('{1,2,70000}'::pgtoken.tokens('x_from'))::pgtoken.tokens('x_to')::int[]::text",
         )
         .expect("query failed");
         assert_eq!(got, Some("{1,2,70000}".to_string()));
@@ -1376,19 +1372,19 @@ mod tests {
     #[pg_test(error = "token id 300 is outside vocabulary t_bound (size 256)")]
     fn rejects_an_id_outside_the_vocabulary() {
         vocab("t_bound", 256);
-        Spi::get_one::<String>("SELECT '{300}'::pgtoken.tokens('t_bound')::text").unwrap();
+        Spi::get_one::<String>("SELECT '{300}'::pgtoken.tokens('t_bound')::int[]::text").unwrap();
     }
 
     #[pg_test(error = "token id -1 is negative")]
     fn input_rejects_a_negative_id() {
         vocab("t_neg", 300);
-        Spi::get_one::<String>("SELECT '{1,-1}'::pgtoken.tokens('t_neg')::text").unwrap();
+        Spi::get_one::<String>("SELECT '{1,-1}'::pgtoken.tokens('t_neg')::int[]::text").unwrap();
     }
 
     #[pg_test(error = "expected '{' at the start of a token id list")]
     fn input_rejects_junk() {
         vocab("t_junk", 300);
-        Spi::get_one::<String>("SELECT 'nope'::pgtoken.tokens('t_junk')::text").unwrap();
+        Spi::get_one::<String>("SELECT 'nope'::pgtoken.tokens('t_junk')::int[]::text").unwrap();
     }
 
     #[pg_test(error = "vocabulary t_freq has no ranking; run pgtoken.train first")]
@@ -1400,7 +1396,7 @@ mod tests {
                                               id => 60001)",
         )
         .expect("create_vocabulary");
-        Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens('t_freq')::text").unwrap();
+        Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens('t_freq')::int[]::text").unwrap();
     }
 
     #[pg_test(error = "binary value belongs to vocabulary v_from, but the column is v_to")]

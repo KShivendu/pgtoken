@@ -293,7 +293,7 @@ def load_read_tables(conn, ctx: Ctx, texts, id_lists) -> dict:
             rows = [(i, ctx.to_wire(loader, ids)) for i, ids in enumerate(id_lists)]
         copy_rows(conn, name, loader, rows)
         conn.execute(f"VACUUM (ANALYZE) {name}")
-        conn.execute(f"SELECT count(*) FROM {name} WHERE length(body::text) >= 0")  # warm buffers
+        conn.execute(f"SELECT count(*) FROM {name} WHERE body IS NOT NULL")  # warm buffers
         tables[a.column] = name
     return tables
 

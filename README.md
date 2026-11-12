@@ -43,8 +43,11 @@ CREATE TABLE documents (id bigserial PRIMARY KEY, body tokens.o200k);
 
 INSERT INTO documents (body) VALUES ('{13225,11,2375,0}');   -- ids from tiktoken's o200k_base
 SELECT body FROM documents;                                  -- {13225,11,2375,0}
-SELECT pgtoken.text(body) FROM documents;                    -- Hello, world!
+SELECT body::text FROM documents;                            -- Hello, world!
 ```
+
+`SELECT body` shows token IDs, and so does `pg_dump`. `body::text` (or `pgtoken.text(body)`, the
+same function) gives the text back.
 
 `create_vocabulary` creates the domain `tokens.o200k` that you put on the column, and it sets
 `STORAGE EXTERNAL` for you. Each vocabulary is its own type, so PostgreSQL won't let you mix values
@@ -83,7 +86,7 @@ CREATE INDEX ON documents USING gin (to_tsvector('english', pgtoken.text(body)))
 | --- | --- | --- |
 | stored bytes, no server work | `SELECT body`, binary mode | none, the fast path |
 | token IDs for SQL or `train` | `body::int[]` | 4 B/token |
-| text for a human | `pgtoken.text(body)` | needs a mapping |
+| text for a human | `body::text` | needs a mapping |
 
 ### Coming from a text column
 
@@ -94,13 +97,13 @@ SELECT DISTINCT body FROM chunks;
 SELECT * FROM a JOIN b ON a.body = b.body;
 ```
 
-To match on content, pass the token IDs your tokenizer makes. For anything that reads the text, wrap
-the column in `pgtoken.text(body)` (presets have a mapping; otherwise load one first):
+To match on content, pass the token IDs your tokenizer makes. For anything that reads the text, cast
+the column with `body::text` (presets have a mapping; otherwise load one first):
 
 ```sql
 SELECT * FROM chunks WHERE body = '{24912,2375}';   -- 'hello world'
-SELECT * FROM chunks WHERE pgtoken.text(body) LIKE '%invoice%';
-CREATE INDEX ON chunks USING gin (to_tsvector('english', pgtoken.text(body)));
+SELECT * FROM chunks WHERE body::text LIKE '%invoice%';
+CREATE INDEX ON chunks USING gin (to_tsvector('english', body::text));
 ```
 
 Dedup and join compare token IDs, so a tokenizer that lowercases treats `'Hello'` and `'hello'` as
@@ -232,15 +235,17 @@ makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding
 | `create_vocabulary(name [, vocab_size] [, compression] [, id] [, preset])` | `int` | also creates `tokens.<name>` |
 | `train(name, query [, max_ranks])` | `text` | ranking for `freq`, write-once; not for presets |
 | `load_mapping(name, query)` | `text` | `token_id -> bytes`, write-once; not for presets |
-| `text(tokens)` | `text` | detokenize; needs a mapping; `IMMUTABLE` |
+| `text(tokens)` | `text` | detokenize, same as `body::text`; needs a mapping; `IMMUTABLE` |
 | `vocabulary_info(name)` | record | size, compression, width, preset, per-artefact stats |
 | `vocabulary_codec(name)` | record | id, codec and ranking bytes, for a client codec |
 | `drop_vocabulary(name)` | | drops the domain; the id stays reserved |
 | `token_count(tokens)` | `int` | header only, no decode |
 | `describe(tokens)` | record | codec, vocabulary, sizes |
 
-Everything lives in the `pgtoken` schema. The casts are `int[] → tokens` (assignment) and
-`tokens → int[]` (explicit). For the raw stored bytes, call `pgtoken.tokens_send(body)`. The `=` and
+Everything lives in the `pgtoken` schema. The casts are `int[] → tokens` (assignment),
+`tokens → int[]` (explicit) and `tokens → text` (explicit, detokenizes like `pgtoken.text`). A
+bare `text(body)` works only with `pgtoken` on `search_path`; without it PostgreSQL reports that
+`text(tokens.o200k)` does not exist, so write `body::text`. For the raw stored bytes, call `pgtoken.tokens_send(body)`. The `=` and
 `<>` operators compare two values within one vocabulary, and a default hash operator class powers
 `DISTINCT`, `GROUP BY`, hash joins and hash indexes. The two operators are created in `pg_catalog`,
 so they work under any `search_path`.

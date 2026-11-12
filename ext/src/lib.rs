@@ -307,7 +307,7 @@ mod tests {
         Spi::run("SELECT pgtoken.create_vocabulary('dump', 60000)").expect("create");
         let same = Spi::get_one::<bool>(
             "SELECT pgtoken.tokens_send(v) \
-             = pgtoken.tokens_send((v::text)::pgtoken.tokens('dump')) \
+             = pgtoken.tokens_send((pgtoken.tokens_out(v)::text)::pgtoken.tokens('dump')) \
              FROM (SELECT ('{' || string_agg((i % 60000)::text, ',') || '}') \
                             ::pgtoken.tokens('dump') AS v \
                    FROM generate_series(1,512) i) s",
