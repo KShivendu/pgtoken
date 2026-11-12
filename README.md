@@ -5,9 +5,9 @@
 Store text in PostgreSQL as token IDs instead of UTF-8.
 
 A model has to tokenize text before it can use it. `pgtoken` stores the text already tokenized, as
-a compressed column of token IDs. That column is about 2.1x smaller than the text on disk, in WAL,
-and in the buffer cache, and it reads straight back as IDs, with nothing to re-tokenize. When you
-need the characters, `pgtoken.text()` hands them back.
+a compressed column of token IDs. For 512-token chunks of English, that column is about 2.3x smaller
+than a compressed `text` column on disk, in WAL, and in the buffer cache. It reads straight back as
+IDs, with nothing to re-tokenize. When you need the characters, `pgtoken.text()` hands them back.
 
 You bring the tokenizer: tiktoken, HuggingFace, SentencePiece, or your own. The database only needs
 its vocabulary size, plus a `token_id -> bytes` table if you want text back. For OpenAI's
@@ -154,8 +154,8 @@ comes back as bytes from `pgtoken.vocabulary_codec`. Binary `COPY` works as well
 
 | method | size | decode | training |
 | --- | --: | --: | --- |
-| `raw` (default without a preset) | 1-3 B/token | 0.2-0.4 µs | no |
-| `freq` (default for a preset) | ~1.9 B/token | 3.6 µs | yes, or bundled in a preset |
+| `raw` (default without a preset) | 1-3 B/token | 0.1-0.4 µs | no |
+| `freq` (default for a preset) | ~1.85 B/token | 1.6 µs | yes, or bundled in a preset |
 
 `raw` packs IDs at the fixed width `vocab_size` implies. `freq` remaps them to frequency rank and
 packs each rank as a LEB128 varint, so common tokens cost a single byte:
@@ -195,26 +195,59 @@ C4 English text, 512-token chunks, gpt2 ids from HuggingFace `tokenizers` v1, Po
 pgtoken number below uses a real `tokens.<name>` column. Regenerate with the scripts in
 `benchmarks/`.
 
-**Storage.** With 20000 rows, pgtoken is about 2.1x smaller on disk, in WAL, and in the cache:
+**Storage.** With 20000 rows, pgtoken is about 2.3x smaller on disk, in WAL, and in the cache. The
+`text` rows are what PostgreSQL really stores, after its own pglz or lz4 compression:
 
 | column | payload/row | relation | WAL/row | docs/page | past TOAST |
 | --- | --: | --: | --: | --: | --: |
 | `text` (pglz) | 1893 B | 45.9 MB | 2091 B | 6.32 | 7000 / 20000 |
 | `text` (lz4) | 1832 B | 42.6 MB | 1953 B | 4.32 | 1500 / 20000 |
-| `pgtoken` freq | **901 B** (2.10x) | **21.0 MB** (2.19x) | **993 B** (2.10x) | **8.00** | **0** / 20000 |
+| `pgtoken` freq | **836 B** (2.27x) | **18.7 MB** (2.45x) | **927 B** (2.26x) | **9.00** | **0** / 20000 |
 
 Every token value stays inline. A third of the text rows spill to TOAST instead, and each spill
 costs an extra fetch on every read. A 4 KB embedding column dilutes the ratios to about 1.2x, since
 it is TOASTed in every table anyway.
+
+**Size by value length.** PostgreSQL compresses a `text` value only once its row passes about 2 KB.
+Below that it stores the plain UTF-8, with any compression setting. pglz also keeps a value
+uncompressed unless it saves at least 25%. A tokens column is compressed at every length. So the
+gap depends on length and content. The table gives the mean `pg_column_size` per value, over 300
+values per row, with the o200k preset. It comes from `benchmarks/bench_length_buckets.py`.
+
+| content | o200k tokens | `text` uncompressed | `text` pglz | `text` lz4 | `tokens.o200k` | vs smaller text |
+| --- | --: | --: | --: | --: | --: | --: |
+| English | 15 | 74 B | 74 B | 74 B | 33 B | 2.23x |
+| English | 123 | 591 B | 591 B | 591 B | 226 B | 2.61x |
+| English | 183 | 870 B | 870 B | 870 B | 335 B | 2.60x |
+| English | 488 | 2314 B | 1830 B | 1815 B | 878 B | 2.07x |
+| English | 1952 | 9249 B | 5538 B | 6344 B | 3468 B | 1.60x |
+| code | 68 | 281 B | 281 B | 281 B | 130 B | 2.16x |
+| code | 1102 | 4508 B | 1723 B | 2039 B | 1986 B | **0.87x** |
+| Hindi | 30 | 220 B | 220 B | 220 B | 56 B | 3.92x |
+| Hindi | 447 | 3446 B | 1213 B | 1816 B | 759 B | 1.60x |
+
+Three values from that run:
+
+- 183 tokens of English, starting `old copy of Mr. Popper’s Penguins and we are having a lot of fun`:
+  855 B of UTF-8. `text` stores 859 B under all three options, since the row is under 2 KB.
+  `tokens.o200k` stores 330 B, 2.60x smaller.
+- 1466 tokens of code, line after line of
+  `CThostFtdcLimitPosiSField["OpenVolume"] = "int"`: 4398 B of UTF-8. pglz stores 871 B, lz4
+  1149 B, `tokens.o200k` 3121 B, 3.6x larger than pglz. pglz and lz4 find the repeated lines. The
+  freq codec packs each token on its own and cannot see repeats. In the 1102-token code row,
+  tokens lose to pglz on 167 of 300 values.
+- 14 tokens, `4): p. 332.\nGobburu, J.V.,`: 26 B of UTF-8. `text` stores 27 B, `tokens.o200k`
+  32 B. Short strings of digits and punctuation cost about one token per two characters, and
+  the header adds 5 bytes. A one-token value like `'hi'` is 3 B as `text` and 8 B as tokens.
 
 **Codec cost** with no database in the way (`cargo run --release --example codec_bench`, one
 dedicated CPU):
 
 | codec | encode | decode | bytes/token |
 | --- | --: | --: | --: |
-| `raw16` | 0.36 µs | 0.22 µs | 2.02 |
-| `raw24` | 0.98 µs | 0.39 µs | 3.02 |
-| `freq` | 5.12 µs | **3.60 µs** | **1.89** |
+| `raw16` | 0.52 µs | 0.10 µs | 2.01 |
+| `raw24` | 1.15 µs | 0.35 µs | 3.01 |
+| `freq` | 4.93 µs | **1.56 µs** | **1.85** |
 
 **Read and write speed.** pgtoken suits agent workloads, where an LLM reads and writes token IDs.
 With a `text` column, every write has to detokenize and every read has to tokenize again. With
@@ -226,18 +259,18 @@ flushed before every timed call. Times are the median, end to end, as the client
 
 | column | read 1 row | read 10 rows | read 100 rows | write 1 row | write 100 rows, per row |
 | --- | --: | --: | --: | --: | --: |
-| `text` (lz4) | 332 µs | 734 µs | 3311 µs | 341 µs | 55.6 µs |
-| `text` (pglz) | 346 µs | 755 µs | 3705 µs | 414 µs | 104.5 µs |
-| `pgtoken` raw | 290 µs | 417 µs | 1273 µs | 280 µs | **12.6 µs** |
-| `pgtoken` freq | **286 µs** | **415 µs** | **1265 µs** | **276 µs** | 19.2 µs |
+| `text` (lz4) | 349 µs | 769 µs | 3369 µs | 319 µs | 56.8 µs |
+| `text` (pglz) | 362 µs | 823 µs | 3804 µs | 386 µs | 104.7 µs |
+| `pgtoken` raw | 307 µs | 446 µs | 1307 µs | **267 µs** | **12.6 µs** |
+| `pgtoken` freq | **304 µs** | **432 µs** | **1199 µs** | 271 µs | 21.4 µs |
 
-Reading 100 rows shows where the time goes. The lz4 text column spends 1.06 ms fetching 233 KB and
-2.24 ms tokenizing it. pgtoken freq spends 0.68 ms fetching 90 KB and 0.58 ms decoding it. That is
-2.6x faster, and it was faster in all 300 repeats. A single row gains less (1.16x), because the round
+Reading 100 rows shows where the time goes. The lz4 text column spends 1.10 ms fetching 233 KB and
+2.25 ms tokenizing it. pgtoken freq spends 0.71 ms fetching 83 KB and 0.49 ms decoding it. That is
+2.8x faster, and it was faster in all 300 repeats. A single row gains less (1.16x), because the round
 trip to the server dominates.
 
 The client codec matters. The same freq reads through the pure-Python reference codec
-(`benchmarks/pgtoken_client.py`) take 6.1 ms for 100 rows, slower than text. Reading `body::int[]`
+(`benchmarks/pgtoken_client.py`) take 8.2 ms for 100 rows, slower than text. Reading `body::int[]`
 with no client codec takes 7.0 ms. The server builds an array (about 14 µs a row), and psycopg then
 makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding of `pgtoken-core`.
 `uv sync` builds `pgtoken_rs`, or run `pip install ./py`.

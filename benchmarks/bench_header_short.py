@@ -3,6 +3,10 @@ import numpy as np, tiktoken
 import pgtoken_rs
 
 # Size model for candidate value-header layouts on short texts, using the bundled o200k ranking.
+# "cur12+svb" is the old pre-v1 format (12-byte header, streamvbyte ranks), kept for comparison.
+# "v1 committed" is the format the extension writes today (core/src/header.rs): tag, flags,
+# u16 vocabulary id, LEB128 token count, then one LEB128 rank per token. The check below
+# asserts the real Rust codec matches the v1 model byte for byte.
 # Usage: uv run python benchmarks/bench_header_short.py
 import os, zstandard
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -116,7 +120,8 @@ def layouts(ids):
     n = len(rs); p_svb = svb(rs); p_leb = sum(leb(r) for r in rs)
     return {
         "text": None,
-        "cur12+svb": 12 + p_svb,
+        "v1 committed": 1 + 1 + 2 + leb(n) + p_leb,  # tag, flags, u16 vocab, LEB128 n, LEB128 ranks
+        "cur12+svb": 12 + p_svb,  # old pre-v1 format
         "8B+svb": 8 + p_svb,        # magic/ver/codec, u16 vocab, u32 n... (compacted fixed)
         "tag+v2+n16+svb": 5 + p_svb,
         "tag+v2+vn+svb": 1 + 2 + leb(n) + p_svb,
@@ -124,11 +129,12 @@ def layouts(ids):
         "tag+v1+leb": 1 + 1 + p_leb,
     }
 
-# check my svb model matches the real codec
-for t in ex:
+# check the v1 model matches the real codec (the old 12 + streamvbyte format is no longer written)
+for t in ex + chat + jsons + multi:
     ids = enc.encode(t)
+    rs = [rank(i) for i in ids]
     real = pgtoken_rs.encode(np.array(ids, dtype=np.uint32), "freq", 65280, table)
-    assert len(real) == 12 + svb([rank(i) for i in ids]), (t, len(real))
+    assert len(real) == 4 + leb(len(ids)) + sum(leb(r) for r in rs), (t, len(real))
 
 allrows = []
 for c, texts in cats.items():
