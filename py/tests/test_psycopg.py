@@ -119,6 +119,24 @@ def main() -> int:
         assert o200k.codec == "freq" and got.tolist() == hello and text == "Hello, world!"
         print(f"ok: o200k preset ({o200k.codec}) encodes on the client and reads {text!r}", flush=True)
 
+        # A str is text: psycopg sends it as text (unknown or text oid), the server tokenizes it.
+        conn.execute("DELETE FROM docs_o200k")
+        conn.execute("INSERT INTO docs_o200k VALUES (%s)", ["Hello, world!"])
+        conn.execute("INSERT INTO docs_o200k VALUES (%s)", ["Hello, world!"], binary=True)
+        rows = conn.execute("SELECT body FROM docs_o200k", binary=True).fetchall()
+        assert [r[0].tolist() for r in rows] == [hello, hello], rows
+        n = conn.execute(
+            "SELECT count(*) FROM docs_o200k WHERE body = %s", ["Hello, world!"]
+        ).fetchone()[0]
+        assert n == 2, n
+        print("ok: str parameters are tokenized by the server (text and binary), also in WHERE", flush=True)
+        expect_error(TypeError, lambda: o200k.encode("Hello"), "str passed to encode")
+        expect_error(
+            psycopg.Error,
+            lambda: conn.execute("INSERT INTO docs_py_raw VALUES (998, %s)", ["Hello"]),
+            "str into a vocabulary without a server tokenizer",
+        )
+
         raw, freq = register(conn, "py_raw"), register(conn, "py_freq")
         expect_error(ValueError, lambda: raw.encode([1, 60000]), "id past vocab_size")
         expect_error(ValueError, lambda: raw.encode([-1]), "negative id")

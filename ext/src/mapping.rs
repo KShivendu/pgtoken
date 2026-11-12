@@ -6,8 +6,8 @@
 //!
 //! The extension receives plain `id -> bytes` and concatenates. Every tokenizer-specific decoding
 //! step — SentencePiece's `▁`, HuggingFace's ByteLevel, leading-space stripping — is resolved by
-//! the user at export time, which is what lets this exist while the server still has no
-//! tokenizer.
+//! the user at export time, which is what lets this work for any tokenizer, whether or not the
+//! server has one for it.
 
 use pgrx::prelude::*;
 

@@ -1,9 +1,10 @@
 //! `pgtoken`: store text in PostgreSQL as the token IDs your models already use.
 //!
-//! The extension compresses sequences of token IDs. It contains no tokenizer, and takes no
-//! position on which one you use — tokenizers are widely available client-side, and a database
-//! has no reason to hold an opinion about vocabularies. In exchange, any tokenizer works, the
-//! server never spends CPU tokenizing, and no backend carries a multi-megabyte merge table.
+//! The extension compresses sequences of token IDs. Bring any tokenizer: the server needs only a
+//! vocabulary's size, plus a `token_id -> bytes` mapping to give text back. A vocabulary may also
+//! have a server tokenizer (today only the o200k preset, built from its own mapping; see
+//! `tokenizer.rs`), which lets plain text be inserted and compared. Values are always stored and
+//! dumped as token IDs, so nothing on the read or restore path tokenizes.
 //!
 //! ```sql
 //! SELECT pgtoken.create_vocabulary('cl100k', 100277);
@@ -30,6 +31,7 @@ mod casts;
 mod mapping;
 mod preset;
 mod registry;
+mod tokenizer;
 mod tokens;
 mod typmod;
 mod vocabulary;
@@ -77,7 +79,12 @@ fn describe(
     let (h, payload_len) = value::describe(v).unwrap_or_else(|e| bail(e));
     TableIterator::once((
         pgtoken_core::VERSION as i32,
-        h.codec.as_str().to_string(),
+        // An unresolved text carrier is `raw8` with no vocabulary; see tokens.rs.
+        if h.vocabulary_id == 0 && h.codec == pgtoken_core::header::Codec::Raw8 {
+            "text".to_string()
+        } else {
+            h.codec.as_str().to_string()
+        },
         h.vocabulary_id as i32,
         h.n_tokens as i32,
         payload_len as i32,

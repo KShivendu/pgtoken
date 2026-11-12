@@ -42,6 +42,7 @@ use pgrx::prelude::*;
 use pgtoken_core::tables::{digest_hex, table_digest, ByteMap, RankTable};
 
 use crate::preset;
+use crate::tokenizer::Tokenizer;
 
 /// Which artefact. The `&str` is both the function-name suffix and the word in messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,6 +229,16 @@ pub fn byte_map(vocabulary_id: u16) -> Result<Option<Rc<ByteMap>>, String> {
     );
     put(&MAPPINGS, vocabulary_id, stamp, m.clone());
     Ok(Some(m))
+}
+
+/// A vocabulary's server tokenizer, or `Ok(None)` if text for it has to be tokenized by the client.
+///
+/// The one place every text path asks — text input, the `text -> tokens` cast, comparing a column
+/// with a text literal, `pgtoken.tokenize` — so none of them names a particular tokenizer. Only
+/// the o200k preset has one today. A tokenizer stored in the database (an artefact function, like
+/// a ranking) would be fetched and cached here, keyed by vocabulary id.
+pub fn tokenizer(vocabulary_id: u16) -> Result<Option<Rc<dyn Tokenizer>>, String> {
+    Ok(preset::for_id(vocabulary_id).and_then(|p| p.tokenizer()))
 }
 
 /// A vocabulary's declared `vocab_size`, for the bound check on text and `int[]` input.

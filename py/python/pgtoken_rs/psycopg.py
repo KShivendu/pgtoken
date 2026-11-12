@@ -6,7 +6,12 @@
     conn = psycopg.connect("postgresql://...")
     vocab = register(conn, "o200k")
     conn.execute("INSERT INTO docs (body) VALUES (%s)", [vocab.encode([9906, 11, 1917])])
+    conn.execute("INSERT INTO docs (body) VALUES (%s)", ["Hello, world!"])  # o200k: server tokenizes
     ids = conn.execute("SELECT body FROM docs", binary=True).fetchone()[0]
+
+A plain `str` parameter needs nothing from this module: psycopg sends it as text, and a vocabulary
+with a server tokenizer (the o200k preset) tokenizes it on the way in. Binary COPY cannot carry
+text, so there a `str` is refused; tokenize on the client, or INSERT the strings.
 
 `register` asks the server for the vocabulary's id, codec and ranking with
 `pgtoken.vocabulary_codec(name)`, so it works over any connection. It never reads the server's
@@ -30,6 +35,12 @@ __all__ = ["Tokens", "Vocabulary", "register"]
 
 _FREQ = 2  # codec id of `freq` in the value header
 
+_STR_HINT = (
+    "a str is text, not token ids; pass it as a query parameter as it is "
+    "(INSERT ... VALUES (%s)) and the server tokenizes it, which works for vocabularies "
+    "with a server tokenizer such as o200k"
+)
+
 
 class Tokens(bytes):
     """An encoded value, ready to send as a query parameter. Made by `Vocabulary.encode`."""
@@ -48,6 +59,8 @@ class Vocabulary:
 
     def encode(self, ids) -> Tokens:
         """Token ids (list or numpy array) -> an encoded value for this vocabulary."""
+        if isinstance(ids, str):
+            raise TypeError(_STR_HINT)
         arr = np.asarray(ids)
         if arr.ndim != 1:
             raise ValueError(f"expected a 1-D sequence of token ids, got shape {arr.shape}")

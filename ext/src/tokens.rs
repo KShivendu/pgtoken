@@ -28,6 +28,17 @@
 //! auto width — nothing looks at the ids to pick `raw24`; it is used unconditionally, and a
 //! value still wearing it cannot be read back.
 //!
+//! ## Text input
+//!
+//! Input that is not a strict id list — `{`, digits separated by commas, `}`, with optional
+//! whitespace, or `{}` — is text: `'Hello, world!'`, and also `'{"role": "user"}'`, are text, while
+//! `'{1,2,3}'` is ids. Text rides the same two steps. With no typmod it becomes an unresolved *text*
+//! carrier (`raw8` with `vocabulary_id = 0`, the UTF-8 bytes as payload; the id carrier is always
+//! `raw24`, so the two cannot be confused), and wherever a vocabulary is known — the length
+//! coercion, `COPY` with the column's typmod, or the other operand of `=` — it is tokenized with
+//! that vocabulary's server tokenizer ([`crate::registry::tokenizer`]). A vocabulary without one
+//! refuses text. Output is always the id list, so `pg_dump` never needs a tokenizer to restore.
+//!
 //! Reading an unresolved value is an error, so `'{1,2,3}'::pgtoken.tokens` (no typmod, hence no
 //! length coercion) fails rather than silently picking a width. The one asymmetry, and it is only
 //! on the text path: an `INSERT` of a *literal* into a column declared as a bare `pgtoken.tokens`
@@ -289,6 +300,66 @@ fn check_against_typmod(v: &[u8], typmod: i32) {
     }
 }
 
+/// The unresolved carrier for text: `raw8`, no vocabulary, the UTF-8 bytes as payload.
+const TEXT_CARRIER: Codec = Codec::Raw8;
+
+/// Whether input is a strict token id list: `{`, digits separated by commas, `}`, with optional
+/// whitespace, or `{}`. Anything else is text. Deliberately narrow, so that text which happens to
+/// start with a brace (`{"role": "user"}`, `{1,-1}`) is tokenized rather than rejected.
+pub fn is_id_list(s: &str) -> bool {
+    let Some(inner) = s.trim().strip_prefix('{').and_then(|t| t.strip_suffix('}')) else {
+        return false;
+    };
+    inner.trim().is_empty()
+        || inner.split(',').all(|f| {
+            let f = f.trim();
+            !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit())
+        })
+}
+
+fn encode_unresolved_text(text: &str) -> Vec<u8> {
+    let n = u32::try_from(text.len())
+        .unwrap_or_else(|_| bail("text input is longer than this format can hold"));
+    let mut out = Vec::with_capacity(pgtoken_core::header::HEADER_LEN + text.len());
+    pgtoken_core::header::Header::new(TEXT_CARRIER, UNRESOLVED, n).write_to(&mut out);
+    out.extend_from_slice(text.as_bytes());
+    out
+}
+
+/// Tokenize text with a vocabulary's server tokenizer, or explain that it has none.
+pub fn tokenize_for(text: &str, vocabulary_id: u16) -> Vec<u32> {
+    match crate::registry::tokenizer(vocabulary_id) {
+        Ok(Some(t)) => t.tokenize(text).unwrap_or_else(|e| bail(e)),
+        Ok(None) => {
+            let name = vocabulary_label(vocabulary_id);
+            pgrx::pg_sys::panic::ErrorReport::new(
+                PgSqlErrorCode::ERRCODE_FEATURE_NOT_SUPPORTED,
+                format!("vocabulary \"{name}\" has no server tokenizer; send token ids"),
+                function_name!(),
+            )
+            .set_detail(
+                "Input that is not a token id list such as '{1,2,3}' is text, and only a \
+                 vocabulary with a server tokenizer can store text. Tokenize on the client and \
+                 send the ids, or use a vocabulary built on the o200k preset.",
+            )
+            .report(PgLogLevel::ERROR);
+            unreachable!("ErrorReport at ERROR does not return")
+        }
+        Err(e) => bail(e),
+    }
+}
+
+/// Text or an id list, as `tokens_in` and the `text -> tokens` cast receive it, to a value:
+/// encoded under `typmod` when there is one, otherwise an unresolved carrier.
+pub fn value_from_input(s: &str, typmod: i32) -> Vec<u8> {
+    match (is_id_list(s), unpack(typmod)) {
+        (true, Some(_)) => encode_for(&parse_ids(s), typmod),
+        (true, None) => encode_unresolved(&parse_ids(s)),
+        (false, Some(v)) => encode_for(&tokenize_for(s, v.id), typmod),
+        (false, None) => encode_unresolved_text(s),
+    }
+}
+
 /// Encode token IDs under a column's typmod.
 ///
 /// The typmod is the only source of a codec and width. A missing one is an error, not a default:
@@ -365,8 +436,18 @@ fn is_unresolved(v: &[u8]) -> bool {
 }
 
 /// Give an unresolved carrier the vocabulary and width a typmod names: the one step that turns a
-/// string literal into a storable value. Ids are bound-checked exactly as on `INSERT`.
+/// string literal into a storable value. Ids are bound-checked exactly as on `INSERT`; text is
+/// tokenized with the vocabulary's server tokenizer.
 pub fn resolve(unresolved: &[u8], typmod: i32) -> Vec<u8> {
+    let Some(v) = unpack(typmod) else {
+        no_vocabulary_typmod()
+    };
+    let (h, payload) = pgtoken_core::header::Header::parse(unresolved).unwrap_or_else(|e| bail(e));
+    if h.codec == TEXT_CARRIER {
+        let text = std::str::from_utf8(payload)
+            .unwrap_or_else(|_| bail("unresolved text value is not valid UTF-8"));
+        return encode_for(&tokenize_for(text, v.id), typmod);
+    }
     encode_for(&decode_value(unresolved), typmod)
 }
 
@@ -464,15 +545,11 @@ pub fn validate(v: &[u8]) -> Vec<u8> {
 fn tokens_in_impl(input: &CStr, _oid: pg_sys::Oid, typmod: i32) -> Vec<u8> {
     let s = input
         .to_str()
-        .unwrap_or_else(|_| bail("token id input is not valid UTF-8"));
-    let ids = parse_ids(s);
+        .unwrap_or_else(|_| bail("token input is not valid UTF-8"));
     // `COPY … FROM` in text format — how `pg_dump` restores — hands over the column's real
     // typmod, so encode straight to its width and skip the length coercion entirely. Every
-    // string literal and every text cast arrives with -1 instead; see the module docs.
-    match unpack(typmod) {
-        Some(_) => encode_for(&ids, typmod),
-        None => encode_unresolved(&ids),
-    }
+    // string literal arrives with -1 instead; see the module docs.
+    value_from_input(s, typmod)
 }
 
 /// Length coercion: `pg_cast`'s `pgtoken.tokens -> pgtoken.tokens` function.
@@ -625,6 +702,18 @@ fn text_impl(value: &[u8]) -> String {
         Err(e) => bail(e),
     };
     pgtoken_core::detok::to_text(&ids, &map).unwrap_or_else(|e| bail(e))
+}
+
+/// `pgtoken.tokenize(text, vocabulary)`: the ids a vocabulary's server tokenizer gives `text`.
+/// `STABLE`, not `IMMUTABLE`, because it looks the vocabulary up by name.
+#[pg_extern(stable, parallel_safe, strict)]
+fn tokenize(text: &str, vocabulary: &str) -> Vec<i32> {
+    let v = crate::vocabulary::lookup_by_name(vocabulary)
+        .unwrap_or_else(|| bail(format!("vocabulary {vocabulary:?} does not exist")));
+    tokenize_for(text, v.id)
+        .into_iter()
+        .map(|id| id as i32)
+        .collect()
 }
 
 // ── equality and hashing ──────────────────────────────────────────────────────────────
@@ -1375,16 +1464,174 @@ mod tests {
         Spi::get_one::<String>("SELECT '{300}'::pgtoken.tokens('t_bound')::int[]::text").unwrap();
     }
 
-    #[pg_test(error = "token id -1 is negative")]
-    fn input_rejects_a_negative_id() {
+    #[pg_test(error = "vocabulary \"t_neg\" has no server tokenizer; send token ids")]
+    fn a_negative_id_is_not_an_id_list() {
+        // '{1,-1}' is not a strict id list, so it is text, which t_neg cannot tokenize.
         vocab("t_neg", 300);
         Spi::get_one::<String>("SELECT '{1,-1}'::pgtoken.tokens('t_neg')::int[]::text").unwrap();
     }
 
-    #[pg_test(error = "expected '{' at the start of a token id list")]
-    fn input_rejects_junk() {
+    #[pg_test(error = "vocabulary \"t_junk\" has no server tokenizer; send token ids")]
+    fn a_vocabulary_without_a_tokenizer_rejects_text() {
         vocab("t_junk", 300);
-        Spi::get_one::<String>("SELECT 'nope'::pgtoken.tokens('t_junk')::int[]::text").unwrap();
+        Spi::run("CREATE TABLE junk_t (body tokens.t_junk)").expect("create");
+        Spi::run("INSERT INTO junk_t VALUES ('nope')").unwrap();
+    }
+
+    fn ids(sql: &str) -> Vec<i32> {
+        Spi::get_one::<Vec<i32>>(sql).expect(sql).expect("NULL")
+    }
+
+    #[pg_test]
+    fn text_inserted_into_an_o200k_column_is_tokenized_on_the_server() {
+        o200k_docs();
+        Spi::run("INSERT INTO cmp_docs VALUES (3, 'Hello, world!')").expect("insert");
+        let (out, text) = Spi::get_two::<String, String>(
+            "SELECT pgtoken.tokens_out(body)::text, body::text FROM cmp_docs WHERE id = 3",
+        )
+        .expect("query");
+        assert_eq!(
+            out.as_deref(),
+            Some("{13225,11,2375,0}"),
+            "output stays ids"
+        );
+        assert_eq!(text.as_deref(), Some("Hello, world!"));
+        // Stored exactly as if the ids had been sent.
+        assert_eq!(
+            Spi::get_one::<bool>(
+                "SELECT a.body = b.body AND pgtoken.tokens_send(a.body) = pgtoken.tokens_send(b.body) \
+                 FROM cmp_docs a, cmp_docs b WHERE a.id = 1 AND b.id = 3"
+            )
+            .expect("query"),
+            Some(true)
+        );
+    }
+
+    #[pg_test]
+    fn braces_alone_do_not_make_an_id_list() {
+        Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
+        assert_eq!(ids("SELECT '{1,2,3}'::tokens.o200k::int[]"), [1, 2, 3]);
+        assert_eq!(ids("SELECT ' { 1 , 2 } '::tokens.o200k::int[]"), [1, 2]);
+        assert_eq!(ids("SELECT '{}'::tokens.o200k::int[]"), Vec::<i32>::new());
+        assert_eq!(ids("SELECT ''::tokens.o200k::int[]"), Vec::<i32>::new());
+        for text in [
+            "{\"role\": \"user\"}",
+            "{1,-1}",
+            "{1,,2}",
+            "{a}",
+            "1,2,3",
+            "{1 2}",
+        ] {
+            let lit = text.replace('\'', "''");
+            let got = ids(&format!("SELECT '{lit}'::tokens.o200k::int[]"));
+            let want = ids(&format!("SELECT pgtoken.tokenize('{lit}', 'o200k')"));
+            assert_eq!(got, want, "{text} is text");
+            assert_eq!(
+                Spi::get_one::<String>(&format!("SELECT '{lit}'::tokens.o200k::text"))
+                    .expect("query")
+                    .as_deref(),
+                Some(text),
+                "{text} round-trips as text"
+            );
+        }
+    }
+
+    #[pg_test]
+    fn copy_text_input_tokenizes_with_the_columns_vocabulary() {
+        // COPY hands tokens_in the column's typmod, so text is tokenized there and then.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE copy_txt (id int, body tokens.o200k); \
+             COPY copy_txt FROM PROGRAM 'printf \"1\\tHello, world!\\n2\\t{13225,11,2375,0}\\n\"';",
+        )
+        .expect("copy");
+        let (n, same) = Spi::get_two::<i64, bool>(
+            "SELECT count(*), bool_and(body = '{13225,11,2375,0}') FROM copy_txt",
+        )
+        .expect("query");
+        assert_eq!((n, same), (Some(2), Some(true)));
+    }
+
+    #[pg_test]
+    fn a_text_literal_compares_against_a_column() {
+        o200k_docs();
+        for sql in [
+            "SELECT count(*) FROM cmp_docs WHERE body = 'Hello, world!'",
+            "SELECT count(*) FROM cmp_docs WHERE body <> 'Hello'",
+        ] {
+            assert_eq!(Spi::get_one::<i64>(sql).expect(sql), Some(1), "{sql}");
+        }
+        Spi::run(
+            "SET plan_cache_mode = force_generic_plan; \
+             PREPARE qt(pgtoken.tokens) AS SELECT count(*) FROM cmp_docs WHERE body = $1;",
+        )
+        .expect("prepare");
+        assert_eq!(
+            Spi::get_one::<i64>("EXECUTE qt('Hello, world!')").expect("execute"),
+            Some(1)
+        );
+    }
+
+    #[pg_test(error = "vocabulary \"t_cmp_raw\" has no server tokenizer; send token ids")]
+    fn comparing_text_with_a_column_that_has_no_tokenizer_says_so() {
+        vocab("t_cmp_raw", 300);
+        Spi::run(
+            "CREATE TABLE cmp_raw (body tokens.t_cmp_raw); INSERT INTO cmp_raw VALUES ('{1}')",
+        )
+        .expect("setup");
+        Spi::get_one::<i64>("SELECT count(*) FROM cmp_raw WHERE body = 'hello'").unwrap();
+    }
+
+    #[pg_test]
+    fn the_text_cast_tokenizes_on_assignment() {
+        // What a driver does when it types a string parameter as text rather than unknown.
+        o200k_docs();
+        Spi::run(
+            "INSERT INTO cmp_docs SELECT 4, 'Hello, world!'::text; \
+             INSERT INTO cmp_docs SELECT 5, '{13225}'::text;",
+        )
+        .expect("insert");
+        assert_eq!(
+            ids("SELECT body::int[] FROM cmp_docs WHERE id = 4"),
+            [13225, 11, 2375, 0]
+        );
+        assert_eq!(
+            ids("SELECT body::int[] FROM cmp_docs WHERE id = 5"),
+            [13225]
+        );
+    }
+
+    #[pg_test]
+    fn a_bare_columns_text_repairs_by_tokenizing() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE bare_txt (x pgtoken.tokens); \
+             INSERT INTO bare_txt VALUES ('Hello, world!');",
+        )
+        .expect("setup");
+        let codec = Spi::get_one::<String>("SELECT codec FROM bare_txt b, pgtoken.describe(b.x)")
+            .expect("describe");
+        assert_eq!(codec.as_deref(), Some("text"));
+        Spi::run("ALTER TABLE bare_txt ALTER COLUMN x TYPE tokens.o200k").expect("repair");
+        assert_eq!(ids("SELECT x::int[] FROM bare_txt"), [13225, 11, 2375, 0]);
+    }
+
+    #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
+    fn unresolved_text_cannot_be_read() {
+        Spi::get_one::<String>("SELECT pgtoken.tokens_out('Hello'::pgtoken.tokens)::text").unwrap();
+    }
+
+    #[pg_test]
+    fn tokenize_matches_tiktoken() {
+        Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
+        assert_eq!(
+            ids("SELECT pgtoken.tokenize('Hello, world!', 'o200k')"),
+            [13225, 11, 2375, 0]
+        );
+        assert_eq!(
+            ids("SELECT pgtoken.tokenize('🦜', 'o200k')"),
+            [4103, 99, 250]
+        );
     }
 
     #[pg_test(error = "vocabulary t_freq has no ranking; run pgtoken.train first")]

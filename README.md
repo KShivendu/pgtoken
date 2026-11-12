@@ -10,8 +10,9 @@ and in the buffer cache, and it reads straight back as IDs, with nothing to re-t
 need the characters, `pgtoken.text()` hands them back.
 
 You bring the tokenizer: tiktoken, HuggingFace, SentencePiece, or your own. The database only needs
-its vocabulary size, plus a `token_id -> bytes` table if you want text back. It never tokenizes
-anything itself. For OpenAI's `o200k_base`, both come bundled, so there is nothing to set up.
+its vocabulary size, plus a `token_id -> bytes` table if you want text back. For OpenAI's
+`o200k_base`, both come bundled, and so does a server-side tokenizer, so you can also insert plain
+text and let the database tokenize it.
 
 <sub>Background: [blog](https://www.kshivendu.dev/blog/token-storage) ·
 [paper](https://arxiv.org/abs/2608.02376)</sub>
@@ -42,12 +43,22 @@ SELECT pgtoken.create_vocabulary('o200k');   -- bundled: o200k_base, freq compre
 CREATE TABLE documents (id bigserial PRIMARY KEY, body tokens.o200k);
 
 INSERT INTO documents (body) VALUES ('{13225,11,2375,0}');   -- ids from tiktoken's o200k_base
-SELECT body FROM documents;                                  -- {13225,11,2375,0}
-SELECT body::text FROM documents;                            -- Hello, world!
+INSERT INTO documents (body) VALUES ('Hello, world!');       -- or text: the server tokenizes it
+SELECT body FROM documents;                                  -- {13225,11,2375,0}, twice
+SELECT body::text FROM documents;                            -- Hello, world!, twice
+SELECT * FROM documents WHERE body = 'Hello, world!';        -- both rows
 ```
 
-`SELECT body` shows token IDs, and so does `pg_dump`. `body::text` (or `pgtoken.text(body)`, the
-same function) gives the text back.
+`SELECT body` shows token IDs, and so does `pg_dump`, so restoring a dump never tokenizes anything.
+`body::text` (or `pgtoken.text(body)`, the same function) gives the text back.
+
+Input is read as token IDs only when it is a plain ID list: `{`, numbers separated by commas, `}`,
+spaces allowed. Anything else is text, so `'{1,2,3}'` is three IDs while `'{"role": "user"}'` is
+text. Only a vocabulary with a server tokenizer accepts text; today that is the o200k preset, which
+matches tiktoken's `o200k_base` ID for ID (`scripts/test_tokenizer_parity.py`). Special tokens are
+not recognised in text: `'<|endoftext|>'` is stored as the tokens of those 13 characters. Any other
+vocabulary refuses text with `vocabulary "gpt2" has no server tokenizer; send token ids`.
+`pgtoken.tokenize('Hello, world!', 'o200k')` returns the IDs without storing anything.
 
 `create_vocabulary` creates the domain `tokens.o200k` that you put on the column, and it sets
 `STORAGE EXTERNAL` for you. Each vocabulary is its own type, so PostgreSQL won't let you mix values
@@ -236,6 +247,7 @@ makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding
 | `train(name, query [, max_ranks])` | `text` | ranking for `freq`, write-once; not for presets |
 | `load_mapping(name, query)` | `text` | `token_id -> bytes`, write-once; not for presets |
 | `text(tokens)` | `text` | detokenize, same as `body::text`; needs a mapping; `IMMUTABLE` |
+| `tokenize(text, vocabulary)` | `int[]` | server tokenizer; o200k preset only |
 | `vocabulary_info(name)` | record | size, compression, width, preset, per-artefact stats |
 | `vocabulary_codec(name)` | record | id, codec and ranking bytes, for a client codec |
 | `drop_vocabulary(name)` | | drops the domain; the id stays reserved |
@@ -243,7 +255,8 @@ makes 512 Python ints a row (about 34 µs). Use `pgtoken_rs` or your own binding
 | `describe(tokens)` | record | codec, vocabulary, sizes |
 
 Everything lives in the `pgtoken` schema. The casts are `int[] → tokens` (assignment),
-`tokens → int[]` (explicit) and `tokens → text` (explicit, detokenizes like `pgtoken.text`). A
+`text → tokens` (assignment, tokenizes like a text literal), `tokens → int[]` (explicit) and
+`tokens → text` (explicit, detokenizes like `pgtoken.text`). A
 bare `text(body)` works only with `pgtoken` on `search_path`; without it PostgreSQL reports that
 `text(tokens.o200k)` does not exist, so write `body::text`. For the raw stored bytes, call `pgtoken.tokens_send(body)`. The `=` and
 `<>` operators compare two values within one vocabulary, and a default hash operator class powers
@@ -269,6 +282,7 @@ cd core && cargo test          # codecs, no PostgreSQL
 cd ext  && cargo pgrx test pg14
 uv run python py/tests/test_psycopg.py   # Python client, against a running server
 bash scripts/test_dump_restore.sh        # pg_dump and pg_restore -j, against a running server
+uv run python scripts/test_tokenizer_parity.py   # server o200k tokenizer vs tiktoken, 600 docs
 ```
 
 CI runs both cargo suites across PostgreSQL 14 through 18, plus `cargo fmt`, `clippy -D warnings`,

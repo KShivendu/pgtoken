@@ -44,16 +44,24 @@ INSERT INTO public.docs VALUES
     (2, ARRAY[]::int[]::tokens.dr_raw,               ARRAY[13, 13, 0]::int[]::tokens.dr_freq,
         '{}'),
     (3, NULL, NULL, NULL);
+-- Text, tokenized by the server on the way in (o200k has a server tokenizer). The dump holds the
+-- ids, so restoring these rows needs no tokenizer.
+INSERT INTO public.docs (id, c) VALUES
+    (4, 'Inserted as text: {"role": "user"}, 🦜 and नमस्ते'),
+    (5, E'  two\n\nlines   <|endoftext|>');
 INSERT INTO aaa.docs SELECT * FROM public.docs;
 CREATE VIEW public.v AS SELECT id, ARRAY[1, 2]::int[]::tokens.dr_freq AS c FROM public.docs;
 SQL
 
 snapshot() {
-  q -d "$1" -c "SELECT 'public', id, a::int[], b::int[], c::int[], pgtoken.text(b), pgtoken.text(c)
+  q -d "$1" -c "SELECT 'public', id, a::int[], b::int[], c::int[], pgtoken.text(b), pgtoken.text(c),
+                       md5(coalesce(pgtoken.tokens_send(a), '') || coalesce(pgtoken.tokens_send(b), '') || coalesce(pgtoken.tokens_send(c), ''))
                 FROM public.docs
                 UNION ALL SELECT 'aaa', id, a::int[], b::int[], c::int[], pgtoken.text(b),
-                                 pgtoken.text(c) FROM aaa.docs
-                UNION ALL SELECT 'view', id, NULL, c::int[], NULL, NULL, NULL FROM public.v
+                                 pgtoken.text(c),
+                                 md5(coalesce(pgtoken.tokens_send(a), '') || coalesce(pgtoken.tokens_send(b), '')
+                                     || coalesce(pgtoken.tokens_send(c), '')) FROM aaa.docs
+                UNION ALL SELECT 'view', id, NULL, c::int[], NULL, NULL, NULL, NULL FROM public.v
                 ORDER BY 1, 2"
   q -d "$1" -c "SELECT v.name, i.id, i.compression, i.preset, i.rank_sha256, i.map_sha256
                 FROM pgtoken.vocabulary v, pgtoken.vocabulary_info(v.name) i ORDER BY i.id"
@@ -72,6 +80,10 @@ check() {  # check <restored db> <how>
 }
 
 pg_dump -d "$SRC" -f "$WORK/dump.sql"
+if grep -q "Inserted as text" "$WORK/dump.sql"; then
+  echo "FAIL: the dump holds text, not token ids" >&2
+  exit 1
+fi
 echo "domains and artefact functions in the dump:"
 grep -n -E "CREATE DOMAIN|CREATE FUNCTION pgtoken\.artefact_" "$WORK/dump.sql" | cut -c1-110 | sed 's/^/  /'
 

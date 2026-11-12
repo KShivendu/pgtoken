@@ -8,7 +8,7 @@
 use pgrx::prelude::*;
 
 use crate::registry::bail;
-use crate::tokens::{decode_value, encode_for, require_vocabulary};
+use crate::tokens::{decode_value, encode_for, require_vocabulary, value_from_input};
 
 /// SQL `int[]` to token IDs. Rejects NULLs and negatives rather than coercing them, since either
 /// would silently store a different sequence than the caller meant.
@@ -27,6 +27,14 @@ pub fn ids_from_sql(ids: Vec<Option<i32>>) -> Vec<u32> {
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_from_int4array_impl(ids: Vec<Option<i32>>, typmod: i32, _explicit: bool) -> Vec<u8> {
     encode_for(&ids_from_sql(ids), typmod)
+}
+
+/// `text → pgtoken.tokens`, for drivers that send a string parameter typed as `text` rather than
+/// unknown. Same rules as a literal: an id list is ids, anything else is tokenized with the target
+/// column's vocabulary, which needs a server tokenizer.
+#[pg_extern(immutable, parallel_safe, strict)]
+fn tokens_from_text_impl(input: &str, typmod: i32, _explicit: bool) -> Vec<u8> {
+    value_from_input(input, typmod)
 }
 
 /// `pgtoken.tokens → int[]`: the direct replacement for the deleted `pgtoken.decode`.
@@ -50,6 +58,11 @@ CREATE FUNCTION pgtoken.tokens_from_int4array(int[], integer, boolean)
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_from_int4array_impl_wrapper';
 
+CREATE FUNCTION pgtoken.tokens_from_text(text, integer, boolean)
+    RETURNS pgtoken.tokens
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_from_text_impl_wrapper';
+
 CREATE FUNCTION pgtoken.tokens_to_int4array(pgtoken.tokens) RETURNS int[]
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_to_int4array_impl_wrapper';
@@ -61,6 +74,11 @@ CREATE CAST (int[] AS pgtoken.tokens)
 
 CREATE CAST (pgtoken.tokens AS int[])
     WITH FUNCTION pgtoken.tokens_to_int4array(pgtoken.tokens);
+
+-- Assignment, like int[]: an INSERT of a `text`-typed parameter tokenizes it with the column's
+-- vocabulary (or reads it as ids, if it is an id list).
+CREATE CAST (text AS pgtoken.tokens)
+    WITH FUNCTION pgtoken.tokens_from_text(text, integer, boolean) AS ASSIGNMENT;
 
 -- Explicit: `body::text` is the text, through the vocabulary's mapping. Without this row
 -- PostgreSQL would fall back to an I/O cast and print the id list, which is what `SELECT body`
@@ -74,6 +92,7 @@ CREATE CAST (pgtoken.tokens AS text)
     requires = [
         "tokens_type",
         tokens_from_int4array_impl,
+        tokens_from_text_impl,
         tokens_to_int4array_impl,
     ],
 );

@@ -27,6 +27,17 @@ use std::rc::Rc;
 
 use pgtoken_core::tables::{ByteMap, RankTable};
 
+use crate::tokenizer::{TiktokenBpe, Tokenizer, O200K_PATTERN};
+
+/// How to build a preset's server tokenizer from its own mapping.
+#[derive(Debug)]
+pub struct TokenizerSpec {
+    /// The pre-tokenizer regex.
+    pub pattern: &'static str,
+    /// Ids below this are mergeable ranks; the rest are special tokens, never produced from text.
+    pub mergeable: u32,
+}
+
 /// One bundled vocabulary.
 #[derive(Debug)]
 pub struct Preset {
@@ -38,6 +49,8 @@ pub struct Preset {
     pub ids: RangeInclusive<u16>,
     ranking_zst: &'static [u8],
     mapping_zst: &'static [u8],
+    /// `None` for a preset whose text must be tokenized client-side.
+    tokenizer: Option<TokenizerSpec>,
 }
 
 pub const O200K: Preset = Preset {
@@ -47,6 +60,11 @@ pub const O200K: Preset = Preset {
     ids: 65280..=65535,
     ranking_zst: include_bytes!("../presets/o200k.tntt.zst"),
     mapping_zst: include_bytes!("../presets/o200k.tnmap.zst"),
+    // tiktoken's o200k_base: ranks 0..=199997, then special tokens (<|endoftext|> is 199999).
+    tokenizer: Some(TokenizerSpec {
+        pattern: O200K_PATTERN,
+        mergeable: 199_998,
+    }),
 };
 
 pub const ALL: &[&Preset] = &[&O200K];
@@ -76,6 +94,7 @@ pub fn names() -> String {
 thread_local! {
     static RANKINGS: RefCell<HashMap<u8, Rc<RankTable>>> = RefCell::new(HashMap::new());
     static MAPPINGS: RefCell<HashMap<u8, Rc<ByteMap>>> = RefCell::new(HashMap::new());
+    static TOKENIZERS: RefCell<HashMap<u8, Rc<dyn Tokenizer>>> = RefCell::new(HashMap::new());
 }
 
 fn unzstd(what: &str, compressed: &[u8]) -> Vec<u8> {
@@ -129,6 +148,21 @@ impl Preset {
         );
         MAPPINGS.with(|c| c.borrow_mut().insert(self.code, m.clone()));
         m
+    }
+
+    /// The server tokenizer, built from the bundled mapping at most once per backend, or `None`
+    /// if this preset has none.
+    pub fn tokenizer(&self) -> Option<Rc<dyn Tokenizer>> {
+        let spec = self.tokenizer.as_ref()?;
+        if let Some(hit) = TOKENIZERS.with(|c| c.borrow().get(&self.code).cloned()) {
+            return Some(hit);
+        }
+        let t: Rc<dyn Tokenizer> = Rc::new(
+            TiktokenBpe::from_mapping(&self.mapping(), spec.mergeable, spec.pattern)
+                .unwrap_or_else(|e| panic!("bundled {} tokenizer is not valid: {e}", self.name)),
+        );
+        TOKENIZERS.with(|c| c.borrow_mut().insert(self.code, t.clone()));
+        Some(t)
     }
 }
 
