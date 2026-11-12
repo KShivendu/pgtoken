@@ -546,7 +546,11 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "numpy" }]
+requires-dist = [
+    { name = "numpy" },
+    { name = "psycopg", marker = "extra == 'psycopg'", specifier = ">=3.1" },
+]
+provides-extras = ["psycopg"]
 
 [[package]]
 name = "psycopg"

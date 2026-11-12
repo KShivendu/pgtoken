@@ -5,9 +5,23 @@ build-backend = "maturin"
 [project]
 name = "pgtoken-rs"
 version = "0.1.0"
-description = "Rust-speed client codec for pgtoken values."
+description = "Python client for pgtoken: read and write token-id columns with the extension's Rust codec."
+readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = ["numpy"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Database",
+]
+
+[project.optional-dependencies]
+# `pgtoken_rs.psycopg` needs psycopg 3. The codec itself does not.
+psycopg = ["psycopg>=3.1"]
+
+[project.urls]
+Repository = "https://github.com/KShivendu/pgtoken"
 
 [tool.maturin]
 python-source = "python"

@@ -10,7 +10,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-/// A trained `freq` ranking, loaded from the `<id>.tntt` file the extension writes.
+/// A trained `freq` ranking, from the bytes `pgtoken.vocabulary_codec(name)` returns.
 #[pyclass(frozen)]
 struct Table(RankTable);
 

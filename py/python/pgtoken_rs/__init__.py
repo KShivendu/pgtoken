@@ -10,7 +10,11 @@ __all__ = ["Table", "load_table", "decode", "encode"]
 
 
 def load_table(path: str) -> Table:
-    """Load a trained `freq` ranking from the extension's `<vocabulary id>.tntt` file."""
+    """Load a `freq` ranking saved to a file.
+
+    The server keeps rankings in the database. Fetch one with
+    `SELECT ranking FROM pgtoken.vocabulary_codec(name)` and pass the bytes to `Table.from_bytes`.
+    """
     with open(path, "rb") as f:
         return Table.from_bytes(f.read())
 
