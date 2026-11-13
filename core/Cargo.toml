@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Lossless compression for token-ID sequences."
 license = "Apache-2.0"
+repository = "https://github.com/KShivendu/pgtoken"
+# `<[T]>::as_chunks`, stable since 1.88.
+rust-version = "1.88"
 
 # No pgrx dependency, so the codecs test without a running Postgres and the same crate can be
 # linked by a client wanting to decode values it read out of the database.

@@ -26,7 +26,9 @@ import tiktoken
 import zstandard
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CORPUS = os.path.expanduser("~/projects/token-storage/data/corpus")
+CORPUS = os.path.join(
+    os.environ.get("TOKEN_STORAGE_REPO", os.path.expanduser("~/projects/token-storage")), "data/corpus"
+)
 DOMAINS = ("prose", "code", "hindi")
 TEST_SIZES = ((128, 400), (512, 300), (2000, 60))
 TRAIN_WINDOWS = 1500  # per domain, 512 ids each

@@ -4,13 +4,15 @@ version = "0.1.0"
 edition = "2021"
 description = "Token-native storage for PostgreSQL: store text as BPE token IDs."
 license = "Apache-2.0"
+repository = "https://github.com/KShivendu/pgtoken"
+# `<[T]>::as_chunks`, stable since 1.88.
+rust-version = "1.88"
 
 [lib]
 crate-type = ["cdylib", "lib"]
 
 [features]
 default = ["pg14"]
-pg13 = ["pgrx/pg13", "pgrx-tests/pg13"]
 pg14 = ["pgrx/pg14", "pgrx-tests/pg14"]
 pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
 pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
