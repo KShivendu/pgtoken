@@ -72,7 +72,7 @@ pub fn codec_for(v: Vocabulary) -> Codec {
 /// Parse a type modifier: `('name')` as users write it, or the long form
 /// `('name', id, 'compression', width [, 'preset'])` that [`tokens_typmod_out`] prints.
 ///
-/// The long form exists for `pg_dump`. A dump creates the `tokens.<name>` domains in its schema
+/// The long form exists for `pg_dump`. A dump creates the `pgtoken.<name>` domains in its schema
 /// section, but the `pgtoken.vocabulary` rows they name only load later, in the data section
 /// (that is how `pg_extension_config_dump` tables restore). So during a restore the name does not
 /// resolve yet, and the long form carries everything the typmod packs. When the name does

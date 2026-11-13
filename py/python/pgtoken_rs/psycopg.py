@@ -55,7 +55,7 @@ class Vocabulary:
     vocab_size: int
     codec: str
     table: Table | None
-    type_name: str  # the column type, e.g. 'tokens.o200k'; usable in `Copy.set_types`
+    type_name: str  # the column type, e.g. 'pgtoken.o200k'; usable in `Copy.set_types`
 
     def encode(self, ids) -> Tokens:
         """Token ids (list or numpy array) -> an encoded value for this vocabulary."""
@@ -103,7 +103,7 @@ def register(conn, name: str) -> Vocabulary:
 
     domain_oid, domain, base_oid = conn.execute(
         "SELECT t::oid, t::text, 'pgtoken.tokens'::regtype::oid"
-        " FROM (SELECT format('tokens.%%I', %s::text)::regtype AS t) s",
+        " FROM (SELECT format('pgtoken.%%I', %s::text)::regtype AS t) s",
         [name],
     ).fetchone()
     vocab = Vocabulary(name, vid, vocab_size, codec, table, domain)

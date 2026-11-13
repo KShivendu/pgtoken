@@ -168,7 +168,7 @@ fn no_vocabulary_typmod() -> ! {
 /// The one error here a user can hit in bulk: a million rows can go into a column declared as a
 /// bare `pgtoken.tokens` before anything reads one back, because nothing in the write path can
 /// tell that column from a value about to be length-coerced. Those rows are recoverable in place,
-/// though, not just by re-inserting: `ALTER TABLE t ALTER COLUMN x TYPE tokens.<name>` works,
+/// though, not just by re-inserting: `ALTER TABLE t ALTER COLUMN x TYPE pgtoken.<name>` works,
 /// because the unresolved-value exemption in [`tokens_typmod_apply_impl`] lets this bare
 /// assignment form through, and `encode_for`'s `vocab_size` bound still applies on the way through.
 /// So this names the symptom, the cause and the cheap fix, rather than only the symptom.
@@ -188,7 +188,7 @@ fn unresolved_value() -> ! {
          therefore no storage width, so it was stored unresolved.",
     )
     .set_hint(
-        "Repair in place: ALTER TABLE t ALTER COLUMN x TYPE tokens.<name>. If the stored ids \
+        "Repair in place: ALTER TABLE t ALTER COLUMN x TYPE pgtoken.<name>. If the stored ids \
          turn out to be wrong for that vocabulary, re-insert the rows instead.",
     )
     .report(PgLogLevel::ERROR);
@@ -201,7 +201,7 @@ fn unresolved_value() -> ! {
 /// A user who reaches this from the vocabulary catalog's immutability error has already followed
 /// one hint to get here, so this one has to end the chain: it names the target vocabulary and the
 /// statement that works, rather than only explaining the refusal. The statement shape it prints —
-/// the `tokens.<name>` domain spelling, not the `pgtoken.tokens('<name>')` base-type one, since the
+/// the `pgtoken.<name>` domain spelling, not the `pgtoken.tokens('<name>')` base-type one, since the
 /// docs call the domain the intended surface — is executed by
 /// `tests::an_explicit_cast_moves_a_value_to_another_vocabulary`, and matches the one
 /// `pgtoken.vocabulary_is_immutable`'s HINT prints.
@@ -221,8 +221,8 @@ fn cross_vocabulary_assignment(from: u16, to: u16) -> ! {
     )
     .set_hint(format!(
         "token ids are only meaningful to the vocabulary that produced them; to reinterpret them \
-         anyway, cast explicitly: ALTER TABLE t ALTER COLUMN c TYPE tokens.{to} \
-         USING c::tokens.{to}"
+         anyway, cast explicitly: ALTER TABLE t ALTER COLUMN c TYPE pgtoken.{to} \
+         USING c::pgtoken.{to}"
     ))
     .report(PgLogLevel::ERROR);
     unreachable!("cross_vocabulary_assignment must not return")
@@ -809,7 +809,7 @@ fn hash_input(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
             function_name!(),
         )
         .set_hint(
-            "Cast the literal to the column's type, e.g. body IN ('{1,2}'::tokens.o200k, ...).",
+            "Cast the literal to the column's type, e.g. body IN ('{1,2}'::pgtoken.o200k, ...).",
         )
         .report(PgLogLevel::ERROR);
     }
@@ -819,7 +819,7 @@ fn hash_input(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 /// Planner support for `=` and `<>`: resolve an unresolved constant at plan time.
 ///
 /// `WHERE body = '{13225,11,2375,0}'` arrives as `tokens_eq(body, <unresolved constant>)`. If the
-/// other operand is a column whose type names a vocabulary (a `tokens.<name>` domain or a
+/// other operand is a column whose type names a vocabulary (a `pgtoken.<name>` domain or a
 /// `pgtoken.tokens('<name>')` column), the constant is replaced by its resolved form. That way the
 /// constant is resolved once per plan, `EXPLAIN` can print it (an unresolved value has no output
 /// form), and the clause stays an operator, so a hash index can serve it. Anything else is left
@@ -1143,7 +1143,7 @@ mod tests {
     fn equality_powers_dedup_and_group_by() {
         vocab("eq", 300);
         Spi::run("SET search_path TO pgtoken, tokens, public").expect("search_path");
-        Spi::run("CREATE TABLE eq_t (body tokens.eq)").expect("create table");
+        Spi::run("CREATE TABLE eq_t (body pgtoken.eq)").expect("create table");
         Spi::run("INSERT INTO eq_t VALUES ('{1,2,3}'), ('{1,2,3}'), ('{4,5}')").expect("insert");
 
         // Equal ids compare equal, different ids compare unequal, within one vocabulary.
@@ -1401,7 +1401,7 @@ mod tests {
         // equal the plain hash, or hash indexes and partitions would disagree.
         vocab("t_part", 300);
         Spi::run(
-            "CREATE TABLE parts (body tokens.t_part) PARTITION BY HASH (body);
+            "CREATE TABLE parts (body pgtoken.t_part) PARTITION BY HASH (body);
              CREATE TABLE parts_0 PARTITION OF parts FOR VALUES WITH (MODULUS 2, REMAINDER 0);
              CREATE TABLE parts_1 PARTITION OF parts FOR VALUES WITH (MODULUS 2, REMAINDER 1);
              INSERT INTO parts SELECT ('{' || i || ',' || (i * 7 % 300) || '}')
@@ -1495,7 +1495,7 @@ mod tests {
         // that a resolved cross-vocabulary value would have refused (see
         // `assignment_refuses_a_value_from_another_vocabulary`); it goes through here only because
         // `tokens_typmod_apply_impl` exempts [`UNRESOLVED`] from that refusal.
-        Spi::run("ALTER TABLE unresolved_ur ALTER COLUMN x TYPE tokens.t_repair").expect("repair");
+        Spi::run("ALTER TABLE unresolved_ur ALTER COLUMN x TYPE pgtoken.t_repair").expect("repair");
 
         let (rendered, len) = Spi::get_two::<String, i32>(
             "SELECT x::int[]::text, length(pgtoken.tokens_send(x)) FROM unresolved_ur",
@@ -1520,7 +1520,7 @@ mod tests {
     fn an_explicit_cast_moves_a_value_to_another_vocabulary() {
         // The migration path, and the guarantee that the syntax we print is the syntax that works:
         // the statement below is the shape both `pgtoken.vocabulary_is_immutable`'s HINT and
-        // `cross_vocabulary_assignment`'s HINT tell the user to run — the `tokens.<name>` domain
+        // `cross_vocabulary_assignment`'s HINT tell the user to run — the `pgtoken.<name>` domain
         // spelling, not the `pgtoken.tokens('<name>')` base-type one. Change either hint and change
         // this together.
         //
@@ -1537,8 +1537,8 @@ mod tests {
         assert_eq!(before, Some(5 + 9), "raw24 to start with");
 
         Spi::run(
-            "ALTER TABLE moved ALTER COLUMN body TYPE tokens.t_to \
-             USING body::tokens.t_to",
+            "ALTER TABLE moved ALTER COLUMN body TYPE pgtoken.t_to \
+             USING body::pgtoken.t_to",
         )
         .expect("alter type");
         let (rendered, after) = Spi::get_two::<String, i32>(
@@ -1591,7 +1591,7 @@ mod tests {
     #[pg_test(error = "vocabulary \"t_junk\" has no server tokenizer; send token ids")]
     fn a_vocabulary_without_a_tokenizer_rejects_text() {
         vocab("t_junk", 300);
-        Spi::run("CREATE TABLE junk_t (body tokens.t_junk)").expect("create");
+        Spi::run("CREATE TABLE junk_t (body pgtoken.t_junk)").expect("create");
         Spi::run("INSERT INTO junk_t VALUES ('nope')").unwrap();
     }
 
@@ -1631,7 +1631,7 @@ mod tests {
     fn repeated_text_is_stored_as_freq_lz4_and_still_compares_by_tokens() {
         Spi::run(
             "SELECT pgtoken.create_vocabulary('o200k'); \
-             CREATE TABLE rep (id int, body tokens.o200k); \
+             CREATE TABLE rep (id int, body pgtoken.o200k); \
              INSERT INTO rep VALUES (1, repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100))",
         )
         .expect("setup");
@@ -1688,7 +1688,7 @@ mod tests {
         // Text cast to the column's type encodes to the lz4 form and matches both rows.
         assert_eq!(
             Spi::get_one::<i64>(
-                "SELECT count(*) FROM rep WHERE body = repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100)::tokens.o200k"
+                "SELECT count(*) FROM rep WHERE body = repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100)::pgtoken.o200k"
             )
             .expect("where"),
             Some(2)
@@ -1698,10 +1698,10 @@ mod tests {
     #[pg_test]
     fn braces_alone_do_not_make_an_id_list() {
         Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
-        assert_eq!(ids("SELECT '{1,2,3}'::tokens.o200k::int[]"), [1, 2, 3]);
-        assert_eq!(ids("SELECT ' { 1 , 2 } '::tokens.o200k::int[]"), [1, 2]);
-        assert_eq!(ids("SELECT '{}'::tokens.o200k::int[]"), Vec::<i32>::new());
-        assert_eq!(ids("SELECT ''::tokens.o200k::int[]"), Vec::<i32>::new());
+        assert_eq!(ids("SELECT '{1,2,3}'::pgtoken.o200k::int[]"), [1, 2, 3]);
+        assert_eq!(ids("SELECT ' { 1 , 2 } '::pgtoken.o200k::int[]"), [1, 2]);
+        assert_eq!(ids("SELECT '{}'::pgtoken.o200k::int[]"), Vec::<i32>::new());
+        assert_eq!(ids("SELECT ''::pgtoken.o200k::int[]"), Vec::<i32>::new());
         for text in [
             "{\"role\": \"user\"}",
             "{1,-1}",
@@ -1711,11 +1711,11 @@ mod tests {
             "{1 2}",
         ] {
             let lit = text.replace('\'', "''");
-            let got = ids(&format!("SELECT '{lit}'::tokens.o200k::int[]"));
+            let got = ids(&format!("SELECT '{lit}'::pgtoken.o200k::int[]"));
             let want = ids(&format!("SELECT pgtoken.tokenize('{lit}', 'o200k')"));
             assert_eq!(got, want, "{text} is text");
             assert_eq!(
-                Spi::get_one::<String>(&format!("SELECT '{lit}'::tokens.o200k::text"))
+                Spi::get_one::<String>(&format!("SELECT '{lit}'::pgtoken.o200k::text"))
                     .expect("query")
                     .as_deref(),
                 Some(text),
@@ -1729,7 +1729,7 @@ mod tests {
         // COPY hands tokens_in the column's typmod, so text is tokenized there and then.
         Spi::run(
             "SELECT pgtoken.create_vocabulary('o200k'); \
-             CREATE TABLE copy_txt (id int, body tokens.o200k); \
+             CREATE TABLE copy_txt (id int, body pgtoken.o200k); \
              COPY copy_txt FROM PROGRAM 'printf \"1\\tHello, world!\\n2\\t{13225,11,2375,0}\\n\"';",
         )
         .expect("copy");
@@ -1764,7 +1764,7 @@ mod tests {
     fn comparing_text_with_a_column_that_has_no_tokenizer_says_so() {
         vocab("t_cmp_raw", 300);
         Spi::run(
-            "CREATE TABLE cmp_raw (body tokens.t_cmp_raw); INSERT INTO cmp_raw VALUES ('{1}')",
+            "CREATE TABLE cmp_raw (body pgtoken.t_cmp_raw); INSERT INTO cmp_raw VALUES ('{1}')",
         )
         .expect("setup");
         Spi::get_one::<i64>("SELECT count(*) FROM cmp_raw WHERE body = 'hello'").unwrap();
@@ -1800,7 +1800,7 @@ mod tests {
         let codec = Spi::get_one::<String>("SELECT codec FROM bare_txt b, pgtoken.describe(b.x)")
             .expect("describe");
         assert_eq!(codec.as_deref(), Some("text"));
-        Spi::run("ALTER TABLE bare_txt ALTER COLUMN x TYPE tokens.o200k").expect("repair");
+        Spi::run("ALTER TABLE bare_txt ALTER COLUMN x TYPE pgtoken.o200k").expect("repair");
         assert_eq!(ids("SELECT x::int[] FROM bare_txt"), [13225, 11, 2375, 0]);
     }
 
@@ -1979,8 +1979,8 @@ mod tests {
         // used to come back as '', indistinguishable from an empty chunk.
         Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
         let (first, whole) = Spi::get_two::<String, String>(
-            "SELECT pgtoken.text('{4103}'::tokens.o200k), \
-                    pgtoken.text('{4103,99,250}'::tokens.o200k)",
+            "SELECT pgtoken.text('{4103}'::pgtoken.o200k), \
+                    pgtoken.text('{4103,99,250}'::pgtoken.o200k)",
         )
         .expect("query failed");
         assert_eq!(first.as_deref(), Some("\u{FFFD}"));
@@ -1991,7 +1991,7 @@ mod tests {
     fn o200k_docs() {
         Spi::run(
             "SELECT pgtoken.create_vocabulary('o200k'); \
-             CREATE TABLE cmp_docs (id int, body tokens.o200k); \
+             CREATE TABLE cmp_docs (id int, body pgtoken.o200k); \
              INSERT INTO cmp_docs VALUES (1, '{13225,11,2375,0}'), (2, '{13225}');",
         )
         .expect("setup");
@@ -2105,7 +2105,7 @@ mod tests {
     fn text_backs_a_full_text_index() {
         mapped_vocab("t_idx", 62104);
         Spi::run(
-            "CREATE TABLE idx_docs (body tokens.t_idx);
+            "CREATE TABLE idx_docs (body pgtoken.t_idx);
              INSERT INTO idx_docs VALUES ('{0,1,2,3}');
              CREATE INDEX ON idx_docs USING gin (to_tsvector('english', pgtoken.text(body)));",
         )

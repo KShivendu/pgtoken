@@ -106,7 +106,7 @@ mod tests {
     fn insert_from_an_int_array_needs_no_explicit_cast() {
         Spi::run(
             "SELECT pgtoken.create_vocabulary('c1', 32000); \
-             CREATE TABLE c1_docs (body tokens.c1); \
+             CREATE TABLE c1_docs (body pgtoken.c1); \
              INSERT INTO c1_docs (body) VALUES (ARRAY[1,2,3]);",
         )
         .expect("insert failed");
@@ -120,8 +120,8 @@ mod tests {
         Spi::run(
             "SELECT pgtoken.create_vocabulary('c_small', 256); \
              SELECT pgtoken.create_vocabulary('c_big', 200019); \
-             CREATE TABLE c_small_t (body tokens.c_small); \
-             CREATE TABLE c_big_t (body tokens.c_big); \
+             CREATE TABLE c_small_t (body pgtoken.c_small); \
+             CREATE TABLE c_big_t (body pgtoken.c_big); \
              INSERT INTO c_small_t (body) VALUES (ARRAY[1,2,3]); \
              INSERT INTO c_big_t (body) VALUES (ARRAY[1,2,3]);",
         )
@@ -151,7 +151,7 @@ mod tests {
         // int[] costs 4 bytes per element plus array overhead; raw16 costs 2.
         Spi::run(
             "SELECT pgtoken.create_vocabulary('c3', 60000); \
-             CREATE TABLE c3_docs (body tokens.c3); \
+             CREATE TABLE c3_docs (body pgtoken.c3); \
              INSERT INTO c3_docs (body) \
                SELECT array_agg(i % 60000)::int[] FROM generate_series(1,512) i;",
         )
@@ -171,7 +171,7 @@ mod tests {
     fn the_text_cast_detokenizes_while_select_shows_ids() {
         Spi::run(
             "SELECT pgtoken.create_vocabulary('o200k'); \
-             CREATE TABLE c_txt (body tokens.o200k); \
+             CREATE TABLE c_txt (body pgtoken.o200k); \
              INSERT INTO c_txt VALUES ('{13225,11,2375,0}');",
         )
         .expect("setup");

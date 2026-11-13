@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read and write latency: a UTF-8 `text` column vs a real `tokens.<vocabulary>` column.
+"""Read and write latency: a UTF-8 `text` column vs a real `pgtoken.<vocabulary>` column.
 
 The workload is an agent, which holds token IDs and wants token IDs back. Every path is
 measured end to end from the client, because that is where the difference lives:
@@ -94,8 +94,8 @@ class Ctx:
         self.tbl_py = K.RankTable.from_bytes(ranking)
         self.tbl_rs = R.Table.from_bytes(ranking)
         self.domain = {
-            "raw": f"tokens.{C._vocab_name('raw')}",
-            "freq": f"tokens.{C._vocab_name('freq')}",
+            "raw": f"pgtoken.{C._vocab_name('raw')}",
+            "freq": f"pgtoken.{C._vocab_name('freq')}",
         }
 
         class TokDumper(Dumper):

@@ -35,13 +35,13 @@ SELECT pgtoken.load_mapping('dr_freq',
                             (13, '.'), (0, '!'), (50256, '<|endoftext|>')) m$$);
 SELECT pgtoken.create_vocabulary('o200k');
 
-CREATE TABLE public.docs (id int PRIMARY KEY, a tokens.dr_raw, b tokens.dr_freq, c tokens.o200k);
+CREATE TABLE public.docs (id int PRIMARY KEY, a pgtoken.dr_raw, b pgtoken.dr_freq, c pgtoken.o200k);
 CREATE SCHEMA aaa;
 CREATE TABLE aaa.docs (LIKE public.docs);
 INSERT INTO public.docs VALUES
-    (1, ARRAY[464, 262, 50256]::int[]::tokens.dr_raw, ARRAY[464, 262, 50256]::int[]::tokens.dr_freq,
+    (1, ARRAY[464, 262, 50256]::int[]::pgtoken.dr_raw, ARRAY[464, 262, 50256]::int[]::pgtoken.dr_freq,
         '{13225,11,2375,0}'),
-    (2, ARRAY[]::int[]::tokens.dr_raw,               ARRAY[13, 13, 0]::int[]::tokens.dr_freq,
+    (2, ARRAY[]::int[]::pgtoken.dr_raw,               ARRAY[13, 13, 0]::int[]::pgtoken.dr_freq,
         '{}'),
     (3, NULL, NULL, NULL);
 -- Text, tokenized by the server on the way in (o200k has a server tokenizer). The dump holds the
@@ -50,7 +50,7 @@ INSERT INTO public.docs (id, c) VALUES
     (4, 'Inserted as text: {"role": "user"}, 🦜 and नमस्ते'),
     (5, E'  two\n\nlines   <|endoftext|>');
 INSERT INTO aaa.docs SELECT * FROM public.docs;
-CREATE VIEW public.v AS SELECT id, ARRAY[1, 2]::int[]::tokens.dr_freq AS c FROM public.docs;
+CREATE VIEW public.v AS SELECT id, ARRAY[1, 2]::int[]::pgtoken.dr_freq AS c FROM public.docs;
 SQL
 
 snapshot() {
