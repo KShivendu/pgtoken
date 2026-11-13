@@ -14,7 +14,7 @@
 # Caveat: this pins PostgreSQL 14, Ubuntu 22.04's default. 14 is new enough for everything
 # the harness needs (per-column `COMPRESSION lz4` landed in 14, and pg_buffercache /
 # pg_prewarm / pg_stat_statements all ship with it). Testing against 16/17/18 needs either
-# the PGDG apt repository or a source build; see README.md.
+# the PGDG apt repository or a source build (`cargo pgrx init --pg16 download`).
 #
 # Usage:
 #   bash setup_pg.sh            # install and initialise

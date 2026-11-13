@@ -29,26 +29,29 @@ compiled extension on the server, which hosted services such as RDS or Supabase 
 
 You need:
 
-- Rust: [rustup.rs](https://rustup.rs)
-- PostgreSQL with its development files, so that `pg_config` exists. On Ubuntu that is
-  `postgresql-server-dev-16` for PostgreSQL 16.
+- Rust 1.88 or newer: [rustup.rs](https://rustup.rs)
+- PostgreSQL with its development files, so that `pg_config` exists, plus a C toolchain and clang.
+  On Ubuntu with PostgreSQL 16:
+  `sudo apt install postgresql-server-dev-16 build-essential libclang-dev pkg-config`
 - [cargo-pgrx](https://github.com/pgcentralfoundation/pgrx), the tool that builds Rust extensions.
+  Installing it compiles for a few minutes.
 
 ```sh
 cargo install cargo-pgrx --version 0.19.2 --locked
-cargo pgrx init --pg16 $(which pg_config)     # use your version: --pg14 ... --pg18
+cargo pgrx init --pg16 $(which pg_config)     # tells cargo-pgrx which PostgreSQL to build for
 
 git clone https://github.com/KShivendu/pgtoken.git
 cd pgtoken/ext && cargo pgrx install --release --sudo
 ```
 
-`--sudo` is needed when PostgreSQL's folders belong to root, as with the Ubuntu packages. To try it
-without root, `bash setup_pg.sh` installs PostgreSQL 14 under `~/.local/share`, then
+Use `--pg14` to `--pg18` to match your PostgreSQL. Keep `--sudo` for a PostgreSQL installed from
+packages, whose folders belong to root. To try it without root, `bash setup_pg.sh` installs PostgreSQL 14 under `~/.local/share`, then
 `bash setup_pg.sh --start` starts it and `bash setup_pg.sh --psql` opens a shell.
 
 `CREATE EXTENSION pgtoken` needs a superuser, because the extension is compiled C code. There is
-nothing to configure. `DROP EXTENSION pgtoken CASCADE` removes it, along with every
-column of a `tokens` type.
+nothing to configure. The quick start below doubles as a check that the install worked.
+`DROP EXTENSION pgtoken CASCADE` removes it, along with every column of a pgtoken type such as
+`pgtoken.o200k`.
 
 ## Quick start
 
@@ -89,10 +92,12 @@ This stores each ID in 2 bytes. Only the o200k preset accepts text. Any other vo
 it with `vocabulary "gpt2" has no server tokenizer; send token ids`.
 
 **To get text back**, load the tokenizer's ID-to-bytes table once. `scripts/load_mapping.py` does
-this for any tiktoken encoding:
+this for any tiktoken encoding. Create the vocabulary first, then point the script at your
+database with `--dsn` or `PGTOKEN_DSN`:
 
 ```sh
-uv run python scripts/load_mapping.py --encoding cl100k_base --vocabulary cl100k
+psql -c "SELECT pgtoken.create_vocabulary('cl100k', vocab_size => 100277)"
+PGTOKEN_DSN='dbname=mydb' uv run python scripts/load_mapping.py --encoding cl100k_base --vocabulary cl100k
 ```
 
 **To store less**, use `freq` compression and train it on a sample of your data. It gives common
@@ -100,7 +105,7 @@ tokens 1 byte (more in [Compression](#compression)):
 
 ```sql
 SELECT pgtoken.create_vocabulary('corpus', vocab_size => 200019, compression => 'freq');
-SELECT pgtoken.train('corpus', 'SELECT ids FROM my_corpus');   -- ids is an int[] column
+SELECT pgtoken.train('corpus', 'SELECT ids FROM my_corpus');   -- ids: int[] of token IDs
 ```
 
 The mapping and the training are write-once. A vocabulary can't change after that, so to change
@@ -242,8 +247,6 @@ your data looks different. Tokens the table never saw still work, just a byte or
 - **No sorting and no `UNIQUE`** on the column. See [Coming from a text column](#coming-from-a-text-column).
 - **A column must name a vocabulary.** A column typed as bare `pgtoken.tokens` accepts inserts but
   fails on read. Use `pgtoken.<name>`.
-- **Binary writes are trusted.** Text and `int[]` input check every ID. Binary `COPY` and the
-  `bytea` cast check only the header, to keep writes fast.
 - **One value holds at most 67,108,864 tokens** (2^26). That is far past any model's context
   window, and it keeps a small corrupt value from claiming a huge size.
 - **A vocabulary's name and number are reserved forever**, even after you drop it.
@@ -310,8 +313,8 @@ plain `freq`, which compares equal to the `freq_lz4` form. `benchmarks/test_clie
 ## Tests
 
 ```sh
-cd core && cargo test                            # codecs, no PostgreSQL
-cd ext  && cargo pgrx test pg14
+(cd core && cargo test)                          # codecs, no PostgreSQL
+(cd ext && cargo pgrx test pg14)
 uv run python py/tests/test_psycopg.py           # Python client, needs a running server
 bash scripts/test_dump_restore.sh                # pg_dump and pg_restore -j, needs a running server
 uv run python scripts/test_tokenizer_parity.py   # server tokenizer vs tiktoken, 600 docs
