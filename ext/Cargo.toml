@@ -19,13 +19,17 @@ pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
 pg_test = []
 
 [dependencies]
+# The o200k server tokenizer: the same regex engine and version tiktoken uses, so the
+# pre-tokenizer (with its `\s+(?!\S)` lookahead) splits text identically.
+fancy-regex = "0.13"
 pgrx = "=0.19.2"
-# All codec and tokenizer logic lives in the pgrx-free core crate, so it can be tested
-# without a running Postgres and reused as the client-side decoder.
+# All codec logic lives in the pgrx-free core crate, so it can be tested without a running
+# Postgres and reused as the client-side decoder.
 pgtoken-core = { path = "../core" }
-# Coding tables are mmap'd read-only so their pages are shared across backends via the OS
-# page cache rather than duplicated per connection.
-memmap2 = "0.9"
+rustc-hash = "2"
+# Pure-Rust zstd decoder for the bundled presets (ext/presets/*.zst), so the build needs no
+# C zstd library.
+ruzstd = "0.8"
 
 [dev-dependencies]
 pgrx-tests = "=0.19.2"

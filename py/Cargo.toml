@@ -1,0 +1,18 @@
+[package]
+name = "pgtoken-py"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for pgtoken-core: decode stored pgtoken values client-side."
+license = "Apache-2.0"
+publish = false
+
+# A client reading a pgtoken column in binary mode gets the stored value bytes. This decodes
+# them with the same Rust codec the extension uses, so the client is as fast as the server.
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pgtoken-core = { path = "../core" }
+pyo3 = { version = "0.26", features = ["extension-module"] }

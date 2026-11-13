@@ -16,8 +16,6 @@ pub enum DetokError {
     /// A stored id has no entry in the mapping. The mapping and the ids disagree about which
     /// tokenizer produced them, which is a fault rather than an empty string.
     UnmappedId(u32),
-    /// A byte was invalid where it stood, rather than the input merely ending mid-character.
-    InvalidUtf8 { at: usize },
 }
 
 impl fmt::Display for DetokError {
@@ -26,23 +24,20 @@ impl fmt::Display for DetokError {
             DetokError::UnmappedId(id) => {
                 write!(f, "token id {id} has no entry in the mapping")
             }
-            DetokError::InvalidUtf8 { at } => write!(
-                f,
-                "detokenized bytes are not valid UTF-8 at byte {at}, and not merely cut short"
-            ),
         }
     }
 }
 
 impl std::error::Error for DetokError {}
 
-/// Concatenate the mapped bytes for `ids` and interpret them as UTF-8.
+/// Concatenate the mapped bytes for `ids` and interpret them as UTF-8, lossily.
 ///
-/// An incomplete sequence at the **end** is dropped: the chunk was cut by token count and a
-/// multi-byte character straddled the boundary, which is an artefact of chunking rather than a
-/// fault. An invalid byte **anywhere else** is an error — it means the mapping is wrong, the ids
-/// came from another tokenizer, or the data is corrupt, and rendering it would hand back
-/// plausible-looking garbage.
+/// Any byte sequence that is not valid UTF-8 becomes U+FFFD, the replacement character, the same
+/// as `bytes.decode("utf-8", errors="replace")` in Python and tiktoken's own `decode`. The usual
+/// cause is a chunk cut by token count in the middle of a character: 🦜 is three o200k tokens,
+/// and the first one alone is two bytes of a four-byte character. Dropping those bytes would turn
+/// that one-token chunk into an empty string, which reads like "nothing here"; a replacement
+/// character says "something here that is not a whole character".
 pub fn to_text(ids: &[u32], map: &ByteMap) -> Result<String, DetokError> {
     let mut bytes = Vec::with_capacity(ids.len() * 4);
     for &id in ids {
@@ -51,22 +46,10 @@ pub fn to_text(ids: &[u32], map: &ByteMap) -> Result<String, DetokError> {
             None => return Err(DetokError::UnmappedId(id)),
         }
     }
-
-    match core::str::from_utf8(&bytes) {
-        Ok(s) => Ok(s.to_owned()),
-        Err(e) => match e.error_len() {
-            // `None` means the input ended mid-character: the only failure a correctly-mapped
-            // chunk boundary can produce. Keep what is readable. The prefix up to
-            // `valid_up_to()` is valid UTF-8 by construction (that is what the field means), so
-            // this can only be a no-op conversion, never a substitution.
-            None => Ok(core::str::from_utf8(&bytes[..e.valid_up_to()])
-                .expect("prefix up to valid_up_to() is valid UTF-8 by construction")
-                .to_owned()),
-            Some(_) => Err(DetokError::InvalidUtf8 {
-                at: e.valid_up_to(),
-            }),
-        },
-    }
+    Ok(match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -104,18 +87,14 @@ mod tests {
     }
 
     #[test]
-    fn drops_an_incomplete_trailing_character() {
-        // The chunk ended mid-character, which is an artefact of chunking by token count, not a
-        // fault. Return what is readable.
-        assert_eq!(to_text(&[0, 4], &map()).unwrap(), "Hello");
+    fn replaces_an_incomplete_trailing_character() {
+        // The chunk ended mid-character, an artefact of chunking by token count.
+        assert_eq!(to_text(&[0, 4], &map()).unwrap(), "Hello\u{FFFD}");
     }
 
     #[test]
-    fn errors_on_invalid_bytes_in_the_middle() {
-        // A stray continuation byte followed by more text cannot be a chunk boundary artefact —
-        // it means the mapping or the ids are wrong.
-        let err = to_text(&[5, 0], &map()).expect_err("must not be papered over");
-        assert!(matches!(err, DetokError::InvalidUtf8 { .. }), "got {err:?}");
+    fn replaces_invalid_bytes_in_the_middle() {
+        assert_eq!(to_text(&[5, 0], &map()).unwrap(), "\u{FFFD}Hello");
     }
 
     #[test]
@@ -130,9 +109,8 @@ mod tests {
     }
 
     #[test]
-    fn a_wholly_unreadable_chunk_is_empty_not_an_error() {
-        // One token that is only the first half of a character: everything is an incomplete
-        // trailing sequence, so there is nothing readable and nothing wrong.
-        assert_eq!(to_text(&[4], &map()).unwrap(), "");
+    fn a_wholly_unreadable_chunk_is_a_replacement_character_not_empty() {
+        // One token that is only the first half of a character must not read as "".
+        assert_eq!(to_text(&[4], &map()).unwrap(), "\u{FFFD}");
     }
 }

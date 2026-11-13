@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Export a tiktoken encoding's token -> bytes table into a pgtoken vocabulary.
 
-    uv run python scripts/load_mapping.py --encoding o200k_base --vocabulary o200k
+    uv run python scripts/load_mapping.py --encoding cl100k_base --vocabulary cl100k
+
+You do not need this for o200k: `pgtoken.create_vocabulary('o200k')` ships with its mapping.
 
 This is the client half of `pgtoken.text()`. The extension has no tokenizer: it takes a
 `token_id -> bytes` table and concatenates, so producing that table is your job. Swap tiktoken for
@@ -52,8 +54,8 @@ def check_vocab_size(cur: psycopg.Cursor, vocabulary: str, n_vocab: int) -> None
         )
         row = cur.fetchone()
     except psycopg.Error as e:
-        # vocabulary_info raises for an unknown name, and would also raise if pgtoken.table_dir
-        # were unset. Both are the operator's to fix, so report them rather than a traceback.
+        # vocabulary_info raises for an unknown name. That is the operator's to fix, so report it
+        # rather than a traceback.
         sys.exit(str(e).strip())
     if row is None:
         sys.exit(f"vocabulary {vocabulary!r} does not exist")
@@ -72,7 +74,7 @@ def check_vocab_size(cur: psycopg.Cursor, vocabulary: str, n_vocab: int) -> None
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--encoding", default="o200k_base", help="tiktoken encoding name")
+    ap.add_argument("--encoding", default="cl100k_base", help="tiktoken encoding name")
     ap.add_argument("--vocabulary", required=True, help="pgtoken vocabulary to load into")
     ap.add_argument(
         "--dsn",

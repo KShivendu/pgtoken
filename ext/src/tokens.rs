@@ -28,6 +28,17 @@
 //! auto width — nothing looks at the ids to pick `raw24`; it is used unconditionally, and a
 //! value still wearing it cannot be read back.
 //!
+//! ## Text input
+//!
+//! Input that is not a strict id list — `{`, digits separated by commas, `}`, with optional
+//! whitespace, or `{}` — is text: `'Hello, world!'`, and also `'{"role": "user"}'`, are text, while
+//! `'{1,2,3}'` is ids. Text rides the same two steps. With no typmod it becomes an unresolved *text*
+//! carrier (`raw8` with `vocabulary_id = 0`, the UTF-8 bytes as payload; the id carrier is always
+//! `raw24`, so the two cannot be confused), and wherever a vocabulary is known — the length
+//! coercion, `COPY` with the column's typmod, or the other operand of `=` — it is tokenized with
+//! that vocabulary's server tokenizer ([`crate::registry::tokenizer`]). A vocabulary without one
+//! refuses text. Output is always the id list, so `pg_dump` never needs a tokenizer to restore.
+//!
 //! Reading an unresolved value is an error, so `'{1,2,3}'::pgtoken.tokens` (no typmod, hence no
 //! length coercion) fails rather than silently picking a width. The one asymmetry, and it is only
 //! on the text path: an `INSERT` of a *literal* into a column declared as a bare `pgtoken.tokens`
@@ -56,7 +67,7 @@
 //! ## What is checked, and what is trusted
 //!
 //! Text input validates every id against the vocabulary's declared `vocab_size` (`encode_for`).
-//! The binary paths do not: they check the header — magic, version, codec, payload length,
+//! The binary paths do not: they check the header — tag, flags, token count, payload length,
 //! vocabulary — and hand the payload through untouched. Scanning ids there would put an O(n) pass
 //! on the operation this project exists to make fast, and the harm is bounded, since an
 //! out-of-vocabulary id decodes back to itself and a detokenizer that finds no mapping for it
@@ -69,9 +80,12 @@ use pgrx::prelude::*;
 use pgtoken_core::header::Codec;
 use pgtoken_core::value;
 
-use crate::registry::{bail, byte_map, rank_table};
-use crate::typmod::{codec_for, unpack};
-use crate::vocabulary::{name_for_id, vocab_size_for, MAX_VOCAB_SIZE};
+use crate::preset;
+use crate::registry::{bail, byte_map, rank_table, vocab_size};
+use crate::typmod::{codec_for, pack, unpack};
+use crate::vocabulary::{
+    name_for_id, width_for, Vocabulary, COMPRESSION_FREQ, COMPRESSION_RAW, MAX_VOCAB_SIZE,
+};
 
 /// `vocabulary_id` of a value whose typmod has not been applied yet. The header format already
 /// reserves 0 for "no vocabulary", and `create_vocabulary` never assigns it, so an unresolved
@@ -242,7 +256,7 @@ fn encode_unresolved(ids: &[u32]) -> Vec<u8> {
 /// and `pgtoken.describe` deliberately do not: they are diagnostics, and refusing to describe an
 /// unresolved value would remove the only way to see that it *is* unresolved.
 ///
-/// Reads the 12-byte header and nothing else, which is what makes it affordable on `SEND`.
+/// Reads the header and nothing else, which is what makes it affordable on `SEND`.
 pub fn require_vocabulary(v: &[u8]) {
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
     if h.vocabulary_id == UNRESOLVED {
@@ -275,14 +289,75 @@ fn check_against_typmod(v: &[u8], typmod: i32) {
     }
     // Right vocabulary, wrong packing is equally wrong: a column's stride has to be uniform for
     // the header's width to mean anything.
+    // `freq_lz4` is how a `freq` column stores values that lz4 shrinks, so it counts as `freq`.
     let want = codec_for(target);
-    if h.codec != want {
+    if h.codec.family() != want {
         bail(format!(
             "binary value is encoded {}, but vocabulary {} stores {}",
             h.codec.as_str(),
             vocabulary_label(target.id),
             want.as_str()
         ));
+    }
+}
+
+/// The unresolved carrier for text: `raw8`, no vocabulary, the UTF-8 bytes as payload.
+const TEXT_CARRIER: Codec = Codec::Raw8;
+
+/// Whether input is a strict token id list: `{`, digits separated by commas, `}`, with optional
+/// whitespace, or `{}`. Anything else is text. Deliberately narrow, so that text which happens to
+/// start with a brace (`{"role": "user"}`, `{1,-1}`) is tokenized rather than rejected.
+pub fn is_id_list(s: &str) -> bool {
+    let Some(inner) = s.trim().strip_prefix('{').and_then(|t| t.strip_suffix('}')) else {
+        return false;
+    };
+    inner.trim().is_empty()
+        || inner.split(',').all(|f| {
+            let f = f.trim();
+            !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit())
+        })
+}
+
+fn encode_unresolved_text(text: &str) -> Vec<u8> {
+    let n = u32::try_from(text.len())
+        .unwrap_or_else(|_| bail("text input is longer than this format can hold"));
+    let mut out = Vec::with_capacity(pgtoken_core::header::MAX_HEADER_LEN + text.len());
+    pgtoken_core::header::Header::new(TEXT_CARRIER, UNRESOLVED, n).write_to(&mut out);
+    out.extend_from_slice(text.as_bytes());
+    out
+}
+
+/// Tokenize text with a vocabulary's server tokenizer, or explain that it has none.
+pub fn tokenize_for(text: &str, vocabulary_id: u16) -> Vec<u32> {
+    match crate::registry::tokenizer(vocabulary_id) {
+        Ok(Some(t)) => t.tokenize(text).unwrap_or_else(|e| bail(e)),
+        Ok(None) => {
+            let name = vocabulary_label(vocabulary_id);
+            pgrx::pg_sys::panic::ErrorReport::new(
+                PgSqlErrorCode::ERRCODE_FEATURE_NOT_SUPPORTED,
+                format!("vocabulary \"{name}\" has no server tokenizer; send token ids"),
+                function_name!(),
+            )
+            .set_detail(
+                "Input that is not a token id list such as '{1,2,3}' is text, and only a \
+                 vocabulary with a server tokenizer can store text. Tokenize on the client and \
+                 send the ids, or use a vocabulary built on the o200k preset.",
+            )
+            .report(PgLogLevel::ERROR);
+            unreachable!("ErrorReport at ERROR does not return")
+        }
+        Err(e) => bail(e),
+    }
+}
+
+/// Text or an id list, as `tokens_in` and the `text -> tokens` cast receive it, to a value:
+/// encoded under `typmod` when there is one, otherwise an unresolved carrier.
+pub fn value_from_input(s: &str, typmod: i32) -> Vec<u8> {
+    match (is_id_list(s), unpack(typmod)) {
+        (true, Some(_)) => encode_for(&parse_ids(s), typmod),
+        (true, None) => encode_unresolved(&parse_ids(s)),
+        (false, Some(v)) => encode_for(&tokenize_for(s, v.id), typmod),
+        (false, None) => encode_unresolved_text(s),
     }
 }
 
@@ -305,8 +380,14 @@ pub fn encode_for(ids: &[u32], typmod: i32) -> Vec<u8> {
     // bounded — an out-of-vocabulary id decodes back to itself, the stride stays uniform, and a
     // detokenizer that later finds no mapping for it fails loudly. So: text and `int[]` input
     // validate ids against `vocab_size`; the binary paths trust the client that framed the bytes.
-    let size = vocab_size_for(v.id)
-        .unwrap_or_else(|| bail(format!("vocabulary id {} is not registered", v.id)));
+    //
+    // A missing catalog row means a pg_dump restore is still running: its schema section created
+    // the column's type from the long typmod form, and tables in a schema that sorts before
+    // `pgtoken` load their rows before `pgtoken.vocabulary`'s (rows are never deleted otherwise;
+    // see `vocabulary_is_immutable`). Those values passed the real check when first written, so
+    // fall back to what the typmod's width can address rather than refuse the restore. A preset
+    // knows its size without the catalog. `vocab_size` is cached, so a warm encode runs no SPI.
+    let size = vocab_size(v.id).unwrap_or(1u32 << (8 * u32::from(v.width.min(3))));
     if let Some(&bad) = ids.iter().find(|&&id| id >= size) {
         let name = vocabulary_label(v.id);
         bail(format!(
@@ -316,11 +397,8 @@ pub fn encode_for(ids: &[u32], typmod: i32) -> Vec<u8> {
 
     let codec = codec_for(v);
     if codec.needs_table() {
-        // No `table_path(...).exists()` first: `rank_table` reports absence through `Ok(None)`
-        // from the same `open` it needs anyway, so asking separately would spend a `stat()` per
-        // encoded row for an answer already in hand — and would answer it wrongly when
-        // `pgtoken.table_dir` is unset, since the bare relative path resolves against the data
-        // directory. Name the vocabulary rather than a path: the vocabulary is what the user typed.
+        // `rank_table` answers from the per-backend cache when warm, and reports absence as
+        // `Ok(None)`. Name the vocabulary in the error: that is what the user typed.
         let t = rank_table(v.id)
             .unwrap_or_else(|e| bail(e))
             .unwrap_or_else(|| missing_ranking(v.id));
@@ -352,9 +430,105 @@ pub fn decode_value(v: &[u8]) -> Vec<u32> {
     }
 }
 
+/// Whether a value is an unresolved carrier: one whose typmod was never applied. Reads the two
+/// vocabulary id bytes (offsets 2-3, after the tag and flags), so the comparison operators can
+/// afford it on every row.
+fn is_unresolved(v: &[u8]) -> bool {
+    v.len() >= pgtoken_core::header::MIN_LEN && u16::from_le_bytes([v[2], v[3]]) == UNRESOLVED
+}
+
+/// Give an unresolved carrier the vocabulary and width a typmod names: the one step that turns a
+/// string literal into a storable value. Ids are bound-checked exactly as on `INSERT`; text is
+/// tokenized with the vocabulary's server tokenizer.
+pub fn resolve(unresolved: &[u8], typmod: i32) -> Vec<u8> {
+    let Some(v) = unpack(typmod) else {
+        no_vocabulary_typmod()
+    };
+    let (h, payload) = pgtoken_core::header::Header::parse(unresolved).unwrap_or_else(|e| bail(e));
+    if h.codec == TEXT_CARRIER {
+        let text = std::str::from_utf8(payload)
+            .unwrap_or_else(|_| bail("unresolved text value is not valid UTF-8"));
+        return encode_for(&tokenize_for(text, v.id), typmod);
+    }
+    encode_for(&decode_value(unresolved), typmod)
+}
+
+/// The typmod a stored value was written under, rebuilt from its header. The comparison
+/// operators see two values and no column, so this is how a literal compared against a column
+/// learns the column's vocabulary and codec.
+fn typmod_of(h: &pgtoken_core::header::Header) -> i32 {
+    let id = h.vocabulary_id;
+    let (compression, width) = match h.codec {
+        Codec::Raw8 => (COMPRESSION_RAW, 1),
+        Codec::Raw16 => (COMPRESSION_RAW, 2),
+        Codec::Raw24 => (COMPRESSION_RAW, 3),
+        // Freq ignores the width, except as the bound when the catalog row is missing.
+        Codec::Freq | Codec::FreqLz4 => (
+            COMPRESSION_FREQ,
+            vocab_size(id).map_or(3, |s| width_for(s as i32) as u8),
+        ),
+    };
+    pack(Vocabulary {
+        id,
+        compression,
+        width,
+        preset: preset::for_id(id).map_or(0, |p| p.code),
+    })
+}
+
+/// The last resolution a comparison operator made, kept in its `fn_extra` so that
+/// `WHERE body = '{...}'` resolves the constant once per query rather than once per row.
+#[derive(Default)]
+struct ResolvedConstant {
+    unresolved: Vec<u8>,
+    /// The resolved side's vocabulary id and codec, which together pick the encoding.
+    target: (u16, u8),
+    resolved: Vec<u8>,
+}
+
+/// Compare two values, resolving an unresolved one against the other's vocabulary first.
+///
+/// Two resolved values are equal exactly when their bytes are (see below). A literal in
+/// `WHERE body = '{13225,11,2375,0}'` reaches the operator unresolved, because PostgreSQL coerces
+/// it to the operator's argument type, which carries no typmod. Comparing its carrier bytes would
+/// never match, and the query would silently return no rows. So it takes the other operand's
+/// vocabulary from that operand's header and is encoded the way a column of that vocabulary
+/// would store it. Usually the planner has already done this (`tokens_cmp_support`); this path
+/// covers what it cannot see, such as a parameter in a generic plan.
+fn tokens_equal(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
+    let (unresolved, resolved) = match (is_unresolved(a), is_unresolved(b)) {
+        (true, true) => return a == b,
+        (false, false) => return same(a, b),
+        (true, false) => (a, b),
+        (false, true) => (b, a),
+    };
+    let (h, _) = value::describe(resolved).unwrap_or_else(|e| bail(e));
+    let target = (h.vocabulary_id, h.codec.family() as u8);
+    // Safety: `fcinfo` is the live call's. `flinfo` is null only under `DirectFunctionCall`,
+    // where there is no call site to cache on.
+    let has_flinfo = !fcinfo.is_null() && unsafe { !(*fcinfo).flinfo.is_null() };
+    if !has_flinfo {
+        return same(&resolve(unresolved, typmod_of(&h)), resolved);
+    }
+    let mut cache = unsafe { pgrx::pg_func_extra(fcinfo, ResolvedConstant::default) };
+    if cache.target != target || cache.unresolved != unresolved {
+        let bytes = resolve(unresolved, typmod_of(&h));
+        cache.unresolved = unresolved.to_vec();
+        cache.target = target;
+        cache.resolved = bytes;
+    }
+    same(&cache.resolved, resolved)
+}
+
+/// Whether two resolved values hold the same tokens: equal bytes, or equal once any `freq_lz4`
+/// side is decompressed (see `pgtoken_core::value::canonical`).
+fn same(a: &[u8], b: &[u8]) -> bool {
+    value::same(a, b).unwrap_or_else(|e| bail(e))
+}
+
 /// Check a blob's **header** and return it unchanged.
 ///
-/// What this guarantees: the magic, version, codec id and reserved bytes are sound, the raw
+/// What this guarantees: the tag (version and codec), flags and token count are sound, the raw
 /// codecs' payload length matches the token count exactly, and the vocabulary id is nonzero, i.e.
 /// not [`UNRESOLVED`]. Failing loudly on any of that beats storing something that decodes to
 /// plausible-looking wrong IDs.
@@ -380,15 +554,11 @@ pub fn validate(v: &[u8]) -> Vec<u8> {
 fn tokens_in_impl(input: &CStr, _oid: pg_sys::Oid, typmod: i32) -> Vec<u8> {
     let s = input
         .to_str()
-        .unwrap_or_else(|_| bail("token id input is not valid UTF-8"));
-    let ids = parse_ids(s);
+        .unwrap_or_else(|_| bail("token input is not valid UTF-8"));
     // `COPY … FROM` in text format — how `pg_dump` restores — hands over the column's real
     // typmod, so encode straight to its width and skip the length coercion entirely. Every
-    // string literal and every text cast arrives with -1 instead; see the module docs.
-    match unpack(typmod) {
-        Some(_) => encode_for(&ids, typmod),
-        None => encode_unresolved(&ids),
-    }
+    // string literal arrives with -1 instead; see the module docs.
+    value_from_input(s, typmod)
 }
 
 /// Length coercion: `pg_cast`'s `pgtoken.tokens -> pgtoken.tokens` function.
@@ -421,14 +591,17 @@ fn tokens_typmod_apply_impl(value: &[u8], typmod: i32, is_explicit: bool) -> Vec
         no_vocabulary_typmod()
     };
     let (h, _) = value::describe(value).unwrap_or_else(|e| bail(e));
-    if h.vocabulary_id == target.id && h.codec == codec_for(target) {
+    if h.vocabulary_id == target.id && h.codec.family() == codec_for(target) {
         // Already in the column's encoding, so re-encoding could only produce the same bytes.
         return value.to_vec();
     }
     // [`UNRESOLVED`] is exempt: that is every string literal on its way to acquiring a vocabulary
     // for the first time, and an INSERT of a literal is an assignment. It is not a
     // reinterpretation, because the value never had a vocabulary to be reinterpreted from.
-    if h.vocabulary_id != UNRESOLVED && h.vocabulary_id != target.id && !is_explicit {
+    if h.vocabulary_id == UNRESOLVED {
+        return resolve(value, typmod);
+    }
+    if h.vocabulary_id != target.id && !is_explicit {
         cross_vocabulary_assignment(h.vocabulary_id, target.id);
     }
     // Same vocabulary, different packing stays permissive in both contexts: a lossless recode
@@ -451,7 +624,7 @@ fn tokens_out_impl(value: &[u8]) -> CString {
 /// refuse would leave a bare-column table unreadable in `psql` but readable over the wire, and the
 /// error would stop being the thing that makes someone fix their column declaration.
 ///
-/// Deliberately `require_vocabulary` and not `decode_value`: this parses 12 bytes, where a decode
+/// Deliberately `require_vocabulary` and not `decode_value`: this parses a few header bytes, where a decode
 /// would put the whole payload through the codec on every binary read.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_send_impl(value: &[u8]) -> Vec<u8> {
@@ -509,7 +682,7 @@ fn tokens_recv_bytes(value: &[u8]) -> Vec<u8> {
 /// Detokenize a stored value, for serving an interface that knows nothing about token IDs.
 ///
 /// `IMMUTABLE` on the same grounds as the read paths: it depends only on the value's bytes and a
-/// write-once file. That is what lets it back a full-text index.
+/// write-once mapping. That is what lets it back a full-text index.
 ///
 /// `decode_value` does not itself refuse an unresolved value — the raw codecs decode a
 /// `vocabulary_id` of 0 the same as any other, and only `freq`'s header check cares about it — so
@@ -519,24 +692,14 @@ fn tokens_recv_bytes(value: &[u8]) -> Vec<u8> {
 /// `tests::text_refuses_a_value_without_a_vocabulary` — delete the call above and only that test
 /// fails, with the nonsense message this guard exists to prevent.
 ///
-/// **Call this schema-qualified.** `pgtoken.text` shares a name with the built-in `text` type,
-/// and PostgreSQL's function-call cast syntax (`typename(expr)` for a single argument) wins over
-/// an in-scope function of the same name even when `pgtoken` is on `search_path`. A bare
-/// `text(body)` therefore silently resolves to `body::text` — the type's own `OUTPUT` function,
-/// i.e. the rendered id list `{1,2,3}` — with no error, not this function. Always write
-/// `pgtoken.text(body)`.
+/// It is also the `tokens → text` cast (see `casts.rs`), so `body::text` is the same call.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn text_impl(value: &[u8]) -> String {
     require_vocabulary(value);
     let ids = decode_value(value);
     let (h, _) = value::describe(value).unwrap_or_else(|e| bail(e));
-    // `byte_map` distinguishes "no mapping" from "cannot look" itself, which is why there is no
-    // `map_path(...).exists()` here. Two reasons it must not come back. It cost a `stat()` per
-    // row even on a warm backend, where the answer is already cached — a million wasted syscalls
-    // on a large index build. And it was wrong: with `pgtoken.table_dir` unset the path is a bare
-    // relative name resolved against the data directory, so it answered "no mapping; run
-    // pgtoken.load_mapping first" for a vocabulary that has one — advice that, followed after
-    // pointing `table_dir` somewhere fresh, seals a second mapping and strands the real one.
+    // `byte_map` answers from the per-backend cache when warm, so a large index build looks the
+    // mapping up once, not once per row.
     let map = match byte_map(h.vocabulary_id) {
         Ok(Some(m)) => m,
         Ok(None) => {
@@ -550,37 +713,249 @@ fn text_impl(value: &[u8]) -> String {
     pgtoken_core::detok::to_text(&ids, &map).unwrap_or_else(|e| bail(e))
 }
 
+/// `pgtoken.tokenize(text, vocabulary)`: the ids a vocabulary's server tokenizer gives `text`.
+/// `STABLE`, not `IMMUTABLE`, because it looks the vocabulary up by name.
+#[pg_extern(stable, parallel_safe, strict)]
+fn tokenize(text: &str, vocabulary: &str) -> Vec<i32> {
+    let v = crate::vocabulary::lookup_by_name(vocabulary)
+        .unwrap_or_else(|| bail(format!("vocabulary {vocabulary:?} does not exist")));
+    tokenize_for(text, v.id)
+        .into_iter()
+        .map(|id| id as i32)
+        .collect()
+}
+
 // ── equality and hashing ──────────────────────────────────────────────────────────────
 //
-// Two stored values are equal exactly when their bytes are equal. The encoding is canonical
-// (pgtoken_core::value::tests::encoding_is_canonical): the same ids under one vocabulary and codec
-// pack to the same bytes, and the 12-byte header carries the vocabulary id and codec, so values
-// from different vocabularies never compare equal. Equality is therefore a memcmp with no decode,
-// and a hash opclass over the bytes lets GROUP BY, DISTINCT and hash joins use it. There is no
+// Two stored values are equal exactly when their canonical bytes are equal. Every codec but
+// `freq_lz4` has one byte form per token list (pgtoken_core::value::tests::encoding_is_canonical),
+// and the header carries the vocabulary id, so values from different vocabularies never compare
+// equal. `freq_lz4` does not: lz4 can write the same bytes as many different blocks, and a newer
+// lz4 library may pick another. So its canonical form is the plain `freq` value it decompresses
+// to (pgtoken_core::value::canonical). Equality is a memcmp, decompressing only when the bytes
+// differ and a side is `freq_lz4`; the hash opclass hashes the canonical bytes, so GROUP BY,
+// DISTINCT and hash joins agree with it. There is no
 // ORDER BY on purpose: the freq codec remaps ids to frequency rank before packing, so byte order
 // says nothing about the ids or the text. Sort on pgtoken.text(body) when you want alphabetical.
 
 #[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_eq_impl(a: &[u8], b: &[u8]) -> bool {
-    a == b
+fn tokens_eq_impl(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
+    tokens_equal(a, b, fcinfo)
 }
 
 #[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_ne_impl(a: &[u8], b: &[u8]) -> bool {
-    a != b
+fn tokens_ne_impl(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
+    !tokens_equal(a, b, fcinfo)
 }
 
-/// Hash the stored bytes so equal values land in the same bucket. FNV-1a, 32-bit: deterministic
-/// across backends, self-contained, and consistent with `tokens_eq` by construction, since that is
-/// a byte comparison too.
+/// Hash the canonical bytes so equal values land in the same bucket. FNV-1a, 32-bit:
+/// deterministic across backends, self-contained, and consistent with `tokens_eq` by
+/// construction, since that compares canonical bytes too. Only a `freq_lz4` value is rewritten
+/// first; every other value hashes its stored bytes, as before.
+///
+/// An unresolved value has no hash that agrees with its resolved form, because a hash sees one
+/// value and so has no other operand to borrow a vocabulary from. Hashing one is therefore an
+/// error rather than a silent miss. The planner resolves `body = '...'` before execution, so
+/// this is only reachable through a long `IN` list of literals, which PostgreSQL 14+ hashes.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_hash_impl(value: &[u8]) -> i32 {
-    let mut h: u32 = 0x811c_9dc5;
-    for &b in value {
+    mix(fnv1a(FNV_BASIS, &hash_input(value))) as i32
+}
+
+/// The hash operator class's `FUNCTION 2`, which `PARTITION BY HASH` needs: a 64-bit hash with a
+/// seed. PostgreSQL requires that with seed 0 its low 32 bits equal [`tokens_hash_impl`]'s
+/// result, so the low half is that same hash with the seed folded into its starting value, and
+/// the high half is a second pass from a different starting value.
+#[pg_extern(immutable, parallel_safe, strict)]
+fn tokens_hash_extended_impl(value: &[u8], seed: i64) -> i64 {
+    let bytes = hash_input(value);
+    let seed = seed as u64;
+    let lo = mix(fnv1a(FNV_BASIS ^ seed as u32, &bytes));
+    let hi = mix(fnv1a(
+        0x050c_5d1f ^ (seed >> 32) as u32 ^ (seed as u32).rotate_left(16),
+        &bytes,
+    ));
+    (((hi as u64) << 32) | lo as u64) as i64
+}
+
+const FNV_BASIS: u32 = 0x811c_9dc5;
+
+/// murmur3's `fmix32`. FNV-1a alone has weak low bits (its lowest bit is just the XOR of the
+/// input bytes' lowest bits), and PostgreSQL picks hash-index buckets, hash-join buckets and hash
+/// partitions from the low bits. This spreads every input bit over every output bit.
+fn mix(mut h: u32) -> u32 {
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^ (h >> 16)
+}
+
+fn fnv1a(basis: u32, bytes: &[u8]) -> u32 {
+    let mut h = basis;
+    for &b in bytes {
         h ^= b as u32;
         h = h.wrapping_mul(0x0100_0193);
     }
-    h as i32
+    h
+}
+
+/// What both hash functions hash: the canonical form, so values `=` calls equal hash equal.
+fn hash_input(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if is_unresolved(value) {
+        pgrx::pg_sys::panic::ErrorReport::new(
+            PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+            "cannot hash a pgtoken.tokens value that has no vocabulary",
+            function_name!(),
+        )
+        .set_hint(
+            "Cast the literal to the column's type, e.g. body IN ('{1,2}'::tokens.o200k, ...).",
+        )
+        .report(PgLogLevel::ERROR);
+    }
+    value::canonical(value).unwrap_or_else(|e| bail(e))
+}
+
+/// Planner support for `=` and `<>`: resolve an unresolved constant at plan time.
+///
+/// `WHERE body = '{13225,11,2375,0}'` arrives as `tokens_eq(body, <unresolved constant>)`. If the
+/// other operand is a column whose type names a vocabulary (a `tokens.<name>` domain or a
+/// `pgtoken.tokens('<name>')` column), the constant is replaced by its resolved form. That way the
+/// constant is resolved once per plan, `EXPLAIN` can print it (an unresolved value has no output
+/// form), and the clause stays an operator, so a hash index can serve it. Anything else is left
+/// alone for [`tokens_equal`] to resolve at run time.
+///
+/// Hand-written rather than `#[pg_extern]`, because its argument and result are planner nodes.
+#[no_mangle]
+pub extern "C" fn pg_finfo_tokens_cmp_support() -> &'static pg_sys::Pg_finfo_record {
+    const V1: pg_sys::Pg_finfo_record = pg_sys::Pg_finfo_record { api_version: 1 };
+    &V1
+}
+
+/// # Safety
+/// Called by PostgreSQL's planner with a `SupportRequest*` node as its one argument.
+#[no_mangle]
+#[pg_guard]
+pub unsafe extern "C-unwind" fn tokens_cmp_support(
+    fcinfo: pg_sys::FunctionCallInfo,
+) -> pg_sys::Datum {
+    let none = pg_sys::Datum::from(0usize);
+    let Some(arg) = pgrx::pg_getarg_datum(fcinfo, 0) else {
+        return none;
+    };
+    let req = arg.cast_mut_ptr::<pg_sys::Node>();
+    if req.is_null() || (*req).type_ != pg_sys::NodeTag::T_SupportRequestSimplify {
+        return none;
+    }
+    let f = (*(req as *mut pg_sys::SupportRequestSimplify)).fcall;
+    let args = pgrx::PgList::<pg_sys::Node>::from_pg((*f).args);
+    if args.len() != 2 {
+        return none;
+    }
+    let (a, b) = (args.get_ptr(0).unwrap(), args.get_ptr(1).unwrap());
+    let (const_first, c, other) = if let Some(c) = unresolved_const(a) {
+        (true, c, b)
+    } else if let Some(c) = unresolved_const(b) {
+        (false, c, a)
+    } else {
+        return none;
+    };
+    let typmod = declared_typmod(other);
+    if typmod < 0 {
+        return none;
+    }
+    let bytes = <Vec<u8> as FromDatum>::from_datum((*c).constvalue, false)
+        .unwrap_or_else(|| bail("constant has no value"));
+    let resolved = resolve(&bytes, typmod)
+        .into_datum()
+        .unwrap_or_else(|| bail("resolved constant has no value"));
+    let new_const = pg_sys::makeConst(
+        (*c).consttype,
+        -1,
+        pg_sys::InvalidOid,
+        -1,
+        resolved,
+        false,
+        false,
+    )
+    .cast::<pg_sys::Node>();
+    let mut new_args = pgrx::PgList::<pg_sys::Node>::new();
+    if const_first {
+        new_args.push(new_const);
+        new_args.push(other);
+    } else {
+        new_args.push(other);
+        new_args.push(new_const);
+    }
+
+    // Rebuild the operator, not a function call, so the clause still reads `body = ...` and an
+    // index or selectivity estimate can recognise it.
+    let opno = operator_for((*f).funcid, (*c).consttype);
+    if opno == pg_sys::InvalidOid {
+        let fx = pg_sys::makeFuncExpr(
+            (*f).funcid,
+            (*f).funcresulttype,
+            new_args.into_pg(),
+            (*f).funccollid,
+            (*f).inputcollid,
+            pg_sys::CoercionForm::COERCE_EXPLICIT_CALL,
+        );
+        return pg_sys::Datum::from(fx);
+    }
+    let op = pg_sys::palloc0(std::mem::size_of::<pg_sys::OpExpr>()).cast::<pg_sys::OpExpr>();
+    (*op).xpr.type_ = pg_sys::NodeTag::T_OpExpr;
+    (*op).opno = opno;
+    (*op).opfuncid = (*f).funcid;
+    (*op).opresulttype = (*f).funcresulttype;
+    (*op).opretset = false;
+    (*op).opcollid = (*f).funccollid;
+    (*op).inputcollid = (*f).inputcollid;
+    (*op).args = new_args.into_pg();
+    (*op).location = (*f).location;
+    pg_sys::Datum::from(op)
+}
+
+/// `n` as a constant holding an unresolved value, if it is one.
+unsafe fn unresolved_const(n: *mut pg_sys::Node) -> Option<*mut pg_sys::Const> {
+    if (*n).type_ != pg_sys::NodeTag::T_Const {
+        return None;
+    }
+    let c = n.cast::<pg_sys::Const>();
+    if (*c).constisnull {
+        return None;
+    }
+    let bytes = <&[u8] as FromDatum>::from_datum((*c).constvalue, false)?;
+    is_unresolved(bytes).then_some(c)
+}
+
+/// The typmod an expression's declared type carries: a column's own, or its domain's. Looks
+/// through the relabelling PostgreSQL adds to pass a domain value to a base-type operator.
+unsafe fn declared_typmod(mut n: *mut pg_sys::Node) -> i32 {
+    while (*n).type_ == pg_sys::NodeTag::T_RelabelType {
+        n = (*n.cast::<pg_sys::RelabelType>()).arg.cast();
+    }
+    let mut typmod = pg_sys::exprTypmod(n);
+    pg_sys::getBaseTypeAndTypmod(pg_sys::exprType(n), &mut typmod);
+    typmod
+}
+
+/// `pg_catalog.=` or `pg_catalog.<>` on `pgtoken.tokens`, whichever `funcid` implements.
+unsafe fn operator_for(funcid: pg_sys::Oid, tokens: pg_sys::Oid) -> pg_sys::Oid {
+    let name = pg_sys::get_func_name(funcid);
+    if name.is_null() {
+        return pg_sys::InvalidOid;
+    }
+    let op = match CStr::from_ptr(name).to_bytes() {
+        b"tokens_eq" => c"=",
+        b"tokens_ne" => c"<>",
+        _ => return pg_sys::InvalidOid,
+    };
+    let mut names = std::ptr::null_mut::<pg_sys::List>();
+    for part in [c"pg_catalog", op] {
+        let s = pg_sys::makeString(pg_sys::pstrdup(part.as_ptr()));
+        names = pg_sys::lappend(names, s.cast());
+    }
+    pg_sys::OpernameGetOprid(names, tokens, tokens)
 }
 
 // ── the type ─────────────────────────────────────────────────────────────────────────
@@ -618,6 +993,10 @@ CREATE TYPE pgtoken.tokens (
     TYPMOD_IN      = pgtoken.tokens_typmod_in,
     TYPMOD_OUT     = pgtoken.tokens_typmod_out,
     INTERNALLENGTH = VARIABLE,
+    -- int4, because PostgreSQL refuses anything narrower for a variable-length type ("alignment
+    -- \"c\" is invalid for variable-length type"). It costs little: a value under 127 bytes is
+    -- stored with a 1-byte varlena header and packed unaligned anyway. Nothing in the format
+    -- relies on it either; every field is read with byte loads.
     ALIGNMENT      = int4,
     STORAGE        = external
 );
@@ -633,12 +1012,9 @@ CREATE FUNCTION pgtoken.tokens_recv_bytes(bytea) RETURNS pgtoken.tokens
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_recv_bytes_wrapper';
 
--- `IMMUTABLE` is the point: it depends only on the value's bytes and a write-once mapping file,
+-- `IMMUTABLE` is the point: it depends only on the value's bytes and a write-once mapping,
 -- which is what lets it back a GIN index over `to_tsvector`.
---
--- Always call this schema-qualified: an unqualified `text(body)` is PostgreSQL's function-call
--- cast syntax for the `text` *type*, not a call to this function, so it silently returns the
--- rendered id list (`{1,2,3}`) instead of prose — see `text_impl`'s doc comment.
+-- Also the `pgtoken.tokens -> text` cast; see casts.rs.
 CREATE FUNCTION pgtoken.text(pgtoken.tokens) RETURNS text
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'text_impl_wrapper';
@@ -667,41 +1043,53 @@ CREATE FUNCTION pgtoken.text(pgtoken.tokens) RETURNS text
 //
 // Re-declared against `pgtoken.tokens`, like the I/O functions above. `HASHES` on `=` plus a
 // default hash operator class is what lets GROUP BY, DISTINCT and hash joins work without the
-// caller naming an operator; a bare `a = b` still needs `pgtoken` on search_path, the same as
-// `pgtoken.text`. No btree class, so no ORDER BY: byte order is meaningless here.
+// caller naming an operator. The operators live in `pg_catalog`, which every search_path includes,
+// so `WHERE body = '...'` works without `pgtoken` on it: in schema `pgtoken` they were invisible
+// to a default search_path and the query failed with "operator does not exist". They are still
+// members of the extension and go with it on DROP EXTENSION. No btree class, so no ORDER BY:
+// byte order is meaningless here.
 extension_sql!(
     r#"
-CREATE FUNCTION pgtoken.tokens_eq(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
+CREATE FUNCTION pgtoken.tokens_cmp_support(internal) RETURNS internal
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_cmp_support';
+
+CREATE FUNCTION pgtoken.tokens_eq(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE SUPPORT pgtoken.tokens_cmp_support
     AS 'MODULE_PATHNAME', 'tokens_eq_impl_wrapper';
 
 CREATE FUNCTION pgtoken.tokens_ne(pgtoken.tokens, pgtoken.tokens) RETURNS boolean
-    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE SUPPORT pgtoken.tokens_cmp_support
     AS 'MODULE_PATHNAME', 'tokens_ne_impl_wrapper';
 
 CREATE FUNCTION pgtoken.tokens_hash(pgtoken.tokens) RETURNS integer
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_hash_impl_wrapper';
 
-CREATE OPERATOR pgtoken.= (
+CREATE FUNCTION pgtoken.tokens_hash_extended(pgtoken.tokens, bigint) RETURNS bigint
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_hash_extended_impl_wrapper';
+
+CREATE OPERATOR pg_catalog.= (
     LEFTARG = pgtoken.tokens, RIGHTARG = pgtoken.tokens,
     FUNCTION = pgtoken.tokens_eq,
-    COMMUTATOR = OPERATOR(pgtoken.=),
-    NEGATOR = OPERATOR(pgtoken.<>),
+    COMMUTATOR = OPERATOR(pg_catalog.=),
+    NEGATOR = OPERATOR(pg_catalog.<>),
     RESTRICT = eqsel, JOIN = eqjoinsel, HASHES
 );
 
-CREATE OPERATOR pgtoken.<> (
+CREATE OPERATOR pg_catalog.<> (
     LEFTARG = pgtoken.tokens, RIGHTARG = pgtoken.tokens,
     FUNCTION = pgtoken.tokens_ne,
-    COMMUTATOR = OPERATOR(pgtoken.<>),
-    NEGATOR = OPERATOR(pgtoken.=),
+    COMMUTATOR = OPERATOR(pg_catalog.<>),
+    NEGATOR = OPERATOR(pg_catalog.=),
     RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR CLASS pgtoken.tokens_hash_ops DEFAULT FOR TYPE pgtoken.tokens USING hash AS
-    OPERATOR 1 pgtoken.= (pgtoken.tokens, pgtoken.tokens),
-    FUNCTION 1 pgtoken.tokens_hash(pgtoken.tokens);
+    OPERATOR 1 pg_catalog.= (pgtoken.tokens, pgtoken.tokens),
+    FUNCTION 1 pgtoken.tokens_hash(pgtoken.tokens),
+    FUNCTION 2 pgtoken.tokens_hash_extended(pgtoken.tokens, bigint);
 "#,
     name = "tokens_equality",
     requires = [
@@ -709,6 +1097,7 @@ CREATE OPERATOR CLASS pgtoken.tokens_hash_ops DEFAULT FOR TYPE pgtoken.tokens US
         tokens_eq_impl,
         tokens_ne_impl,
         tokens_hash_impl,
+        tokens_hash_extended_impl,
     ],
 );
 
@@ -793,15 +1182,16 @@ mod tests {
     #[pg_test]
     fn text_input_and_output_roundtrip() {
         vocab("t_rt", 200019);
-        let got = Spi::get_one::<String>("SELECT '{24912,2375}'::pgtoken.tokens('t_rt')::text")
-            .expect("query failed");
+        let got =
+            Spi::get_one::<String>("SELECT '{24912,2375}'::pgtoken.tokens('t_rt')::int[]::text")
+                .expect("query failed");
         assert_eq!(got, Some("{24912,2375}".to_string()));
     }
 
     #[pg_test]
     fn empty_sequence_roundtrips() {
         vocab("t_empty", 300);
-        let got = Spi::get_one::<String>("SELECT '{}'::pgtoken.tokens('t_empty')::text")
+        let got = Spi::get_one::<String>("SELECT '{}'::pgtoken.tokens('t_empty')::int[]::text")
             .expect("query failed");
         assert_eq!(got, Some("{}".to_string()));
     }
@@ -809,8 +1199,9 @@ mod tests {
     #[pg_test]
     fn input_tolerates_whitespace_but_output_emits_none() {
         vocab("t_ws", 300);
-        let got = Spi::get_one::<String>("SELECT '{ 1, 2 , 3 }'::pgtoken.tokens('t_ws')::text")
-            .expect("query failed");
+        let got =
+            Spi::get_one::<String>("SELECT '{ 1, 2 , 3 }'::pgtoken.tokens('t_ws')::int[]::text")
+                .expect("query failed");
         assert_eq!(got, Some("{1,2,3}".to_string()));
     }
 
@@ -826,8 +1217,8 @@ mod tests {
                     length(pgtoken.tokens_send('{1,2,3}'::pgtoken.tokens('t_big')))",
         )
         .expect("query failed");
-        assert_eq!(small, Some(12 + 3), "raw8: one byte per token");
-        assert_eq!(big, Some(12 + 9), "raw24: three bytes per token");
+        assert_eq!(small, Some(5 + 3), "raw8: one byte per token");
+        assert_eq!(big, Some(5 + 9), "raw24: three bytes per token");
     }
 
     #[pg_test]
@@ -839,7 +1230,12 @@ mod tests {
              WHERE attrelid = 'shown'::regclass AND attname = 'body'",
         )
         .expect("query failed");
-        assert_eq!(t, Some("pgtoken.tokens('t_shown')".to_string()));
+        // The long typmod form (name, id, compression, width), so pg_dump output restores.
+        let t = t.expect("format_type returned NULL");
+        assert!(
+            t.starts_with("pgtoken.tokens('t_shown', ") && t.ends_with(", 'raw', 2)"),
+            "{t}"
+        );
     }
 
     #[pg_test]
@@ -865,7 +1261,7 @@ mod tests {
         )
         .expect("query failed");
         assert_eq!(same, Some(true));
-        assert_eq!(len, Some(12 + 12), "raw24: four tokens at three bytes each");
+        assert_eq!(len, Some(5 + 12), "raw24: four tokens at three bytes each");
     }
 
     #[pg_test]
@@ -873,7 +1269,7 @@ mod tests {
         vocab("t_recv", 200019);
         let got = Spi::get_one::<String>(
             "SELECT pgtoken.tokens_recv_bytes(\
-               pgtoken.tokens_send('{5,9,70000}'::pgtoken.tokens('t_recv')))::text",
+               pgtoken.tokens_send('{5,9,70000}'::pgtoken.tokens('t_recv')))::int[]::text",
         )
         .expect("query failed");
         assert_eq!(got, Some("{5,9,70000}".to_string()));
@@ -894,7 +1290,7 @@ mod tests {
             .expect("copy in");
 
         let (rendered, same) = Spi::get_two::<String, bool>(
-            "SELECT d.body::text, pgtoken.tokens_send(d.body) = pgtoken.tokens_send(s.body) \
+            "SELECT d.body::int[]::text, pgtoken.tokens_send(d.body) = pgtoken.tokens_send(s.body) \
              FROM copy_dst d, copy_src s",
         )
         .expect("query failed");
@@ -917,8 +1313,9 @@ mod tests {
                 .expect("create returned NULL");
         assert_eq!(id, 40000, "the vocabulary must land above smallint's range");
 
-        let got = Spi::get_one::<String>("SELECT '{1,70000}'::pgtoken.tokens('t_wide')::text")
-            .expect("query failed");
+        let got =
+            Spi::get_one::<String>("SELECT '{1,70000}'::pgtoken.tokens('t_wide')::int[]::text")
+                .expect("query failed");
         assert_eq!(got, Some("{1,70000}".to_string()));
     }
 
@@ -932,13 +1329,13 @@ mod tests {
         Spi::run("CREATE TABLE ct (body pgtoken.tokens('t_copytext'))").expect("create");
         Spi::run("COPY ct FROM PROGRAM 'echo ''{1,2,3}'''").expect("copy in");
         let (rendered, len) = Spi::get_two::<String, i32>(
-            "SELECT body::text, length(pgtoken.tokens_send(body)) FROM ct",
+            "SELECT body::int[]::text, length(pgtoken.tokens_send(body)) FROM ct",
         )
         .expect("query failed");
         assert_eq!(rendered, Some("{1,2,3}".to_string()));
         assert_eq!(
             len,
-            Some(12 + 3),
+            Some(5 + 3),
             "the column's typmod must reach tokens_in, giving raw8"
         );
     }
@@ -947,7 +1344,7 @@ mod tests {
     fn a_value_without_a_vocabulary_cannot_be_read() {
         // No typmod means no length coercion, so this value stays unresolved. There is no auto
         // width to fall back to, so reading it is an error rather than a guess.
-        Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens::text").unwrap();
+        Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens::int[]::text").unwrap();
     }
 
     #[pg_test]
@@ -957,13 +1354,13 @@ mod tests {
         // bytes and every other test here would still pass.
         //
         // The value is hand-framed so its header names `freq` against vocabulary 60002, which no
-        // test trains: a7 magic, version 1, codec 2 (freq), reserved 0, id 60002 LE, reserved,
-        // n_tokens 3 LE, then one payload byte. A header-only check accepts it and hands the bytes
-        // back; anything that touches the codec must load a ranking file that does not exist, and
-        // dies with "cannot open coding table".
+        // test trains: tag 12 (version 1, codec freq), flags 00, id 60002 as u16 LE (62ea), token
+        // count 01, then one payload byte. A header-only check accepts it and hands the bytes
+        // back; anything that touches the codec must load a ranking that does not exist, and dies
+        // with "has no ranking".
         let same = Spi::get_one::<bool>(
             "SELECT pgtoken.tokens_send(pgtoken.tokens_recv_bytes(v)) = v \
-             FROM (SELECT '\\xa701020062ea00000300000001'::bytea AS v) s",
+             FROM (SELECT '\\x120062ea0101'::bytea AS v) s",
         )
         .expect("query failed");
         assert_eq!(same, Some(true), "send must copy, never decode");
@@ -974,7 +1371,8 @@ mod tests {
         // Caught before the carrier encode, so the message names the format rather than leaking
         // `raw24` — a codec the user never chose and cannot see from the column definition.
         vocab("t_huge", 200019);
-        Spi::get_one::<String>("SELECT '{16777216}'::pgtoken.tokens('t_huge')::text").unwrap();
+        Spi::get_one::<String>("SELECT '{16777216}'::pgtoken.tokens('t_huge')::int[]::text")
+            .unwrap();
     }
 
     #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
@@ -987,15 +1385,71 @@ mod tests {
 
     #[pg_test(error = "pgtoken.tokens requires a vocabulary")]
     fn applying_a_negative_typmod_by_hand_errors() {
-        // The `_impl` functions stay callable from SQL (a known wart of hand-writing the type),
-        // so the length coercion has to refuse a typmod that names no vocabulary rather than
-        // trusting the planner never to pass one. This is the only reachable caller of that arm.
+        // The length coercion is an ordinary function anyone can call, so it has to refuse a
+        // typmod that names no vocabulary rather than trusting the planner never to pass one.
+        // This is the only reachable caller of that arm.
         vocab("t_bare_tm", 300);
-        Spi::get_one::<Vec<u8>>(
-            "SELECT pgtoken.tokens_typmod_apply_impl(\
-               pgtoken.tokens_send('{1,2}'::pgtoken.tokens('t_bare_tm')), -1, false)",
+        Spi::get_one::<String>(
+            "SELECT pgtoken.tokens('{1,2}'::pgtoken.tokens('t_bare_tm'), -1, false)::text",
         )
         .unwrap();
+    }
+
+    #[pg_test]
+    fn hash_partitioning_on_a_tokens_column_works() {
+        // PARTITION BY HASH needs the opclass's FUNCTION 2. With seed 0 its low 32 bits must
+        // equal the plain hash, or hash indexes and partitions would disagree.
+        vocab("t_part", 300);
+        Spi::run(
+            "CREATE TABLE parts (body tokens.t_part) PARTITION BY HASH (body);
+             CREATE TABLE parts_0 PARTITION OF parts FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+             CREATE TABLE parts_1 PARTITION OF parts FOR VALUES WITH (MODULUS 2, REMAINDER 1);
+             INSERT INTO parts SELECT ('{' || i || ',' || (i * 7 % 300) || '}')
+               FROM generate_series(1, 200) i;",
+        )
+        .expect("partitioned table");
+        let (a, b) = (
+            Spi::get_one::<i64>("SELECT count(*) FROM parts_0")
+                .unwrap()
+                .unwrap(),
+            Spi::get_one::<i64>("SELECT count(*) FROM parts_1")
+                .unwrap()
+                .unwrap(),
+        );
+        assert_eq!(a + b, 200);
+        assert!(
+            a > 50 && b > 50,
+            "rows should spread over both partitions: {a} / {b}"
+        );
+        // Partition pruning finds the row by its value.
+        let n = Spi::get_one::<i64>("SELECT count(*) FROM parts WHERE body = '{5,35}'")
+            .unwrap()
+            .unwrap();
+        assert_eq!(n, 1);
+        let low_matches = Spi::get_one::<bool>(
+            "SELECT bool_and((pgtoken.tokens_hash_extended(body, 0) & 4294967295)
+                             = (pgtoken.tokens_hash(body)::bigint & 4294967295))
+               FROM parts",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            low_matches,
+            "seed 0 must give the plain hash in the low 32 bits"
+        );
+    }
+
+    #[pg_test]
+    fn no_bytea_helper_functions_are_left_installed() {
+        // pgrx declares each `_impl` function against `bytea`. They must not survive the install:
+        // `tokens_eq_impl(bytea, bytea)` would compare any bytes, outside the type's checks.
+        let left = Spi::get_one::<String>(
+            "SELECT string_agg(p.oid::regprocedure::text, ', ') FROM pg_proc p \
+             JOIN pg_namespace n ON n.oid = p.pronamespace \
+             WHERE n.nspname = 'pgtoken' AND p.proname LIKE '%\\_impl'",
+        )
+        .unwrap();
+        assert_eq!(left, None, "still installed: {left:?}");
     }
 
     #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
@@ -1006,7 +1460,7 @@ mod tests {
         // way out. Pinned here so it cannot change by accident.
         Spi::run("CREATE TABLE bare (x pgtoken.tokens)").expect("create table");
         Spi::run("INSERT INTO bare VALUES ('{1,2,3}')").expect("insert");
-        Spi::get_one::<String>("SELECT x::text FROM bare").unwrap();
+        Spi::get_one::<String>("SELECT x::int[]::text FROM bare").unwrap();
     }
 
     #[pg_test]
@@ -1018,8 +1472,6 @@ mod tests {
         // vocabulary — a different starting state, and the difference is precisely the UNRESOLVED
         // exemption this repair depends on. Change the hint and change this test together.
         //
-        // Pinned id 62000, disjoint from every other pinned vocabulary in this crate (40000, 41,
-        // 60001, 60002, 61001-61005), for the same on-disk-file reason those are pinned.
         Spi::run(
             "SELECT pgtoken.create_vocabulary('t_repair', 256, id => 62000); \
              CREATE TABLE unresolved_ur (x pgtoken.tokens); \
@@ -1046,7 +1498,7 @@ mod tests {
         Spi::run("ALTER TABLE unresolved_ur ALTER COLUMN x TYPE tokens.t_repair").expect("repair");
 
         let (rendered, len) = Spi::get_two::<String, i32>(
-            "SELECT x::text, length(pgtoken.tokens_send(x)) FROM unresolved_ur",
+            "SELECT x::int[]::text, length(pgtoken.tokens_send(x)) FROM unresolved_ur",
         )
         .expect("query failed");
         assert_eq!(
@@ -1054,12 +1506,12 @@ mod tests {
             Some("{1,2,3}".to_string()),
             "the ids must survive the repair"
         );
-        // Was raw24 (12 + 9) while unresolved, since `encode_unresolved` always picks the widest
-        // packing. raw8 (12 + 3) here proves the repair re-encoded at t_repair's own width rather
+        // Was raw24 (5 + 9) while unresolved, since `encode_unresolved` always picks the widest
+        // packing. raw8 (5 + 3) here proves the repair re-encoded at t_repair's own width rather
         // than merely re-labelling the same raw24 bytes under its vocabulary id.
         assert_eq!(
             len,
-            Some(12 + 3),
+            Some(5 + 3),
             "must re-encode to the vocabulary's own width (raw8), not relabel the raw24 carrier"
         );
     }
@@ -1082,7 +1534,7 @@ mod tests {
         Spi::run("INSERT INTO moved VALUES ('{1,2,3}')").expect("insert");
         let before = Spi::get_one::<i32>("SELECT length(pgtoken.tokens_send(body)) FROM moved")
             .expect("query failed");
-        assert_eq!(before, Some(12 + 9), "raw24 to start with");
+        assert_eq!(before, Some(5 + 9), "raw24 to start with");
 
         Spi::run(
             "ALTER TABLE moved ALTER COLUMN body TYPE tokens.t_to \
@@ -1090,11 +1542,11 @@ mod tests {
         )
         .expect("alter type");
         let (rendered, after) = Spi::get_two::<String, i32>(
-            "SELECT body::text, length(pgtoken.tokens_send(body)) FROM moved",
+            "SELECT body::int[]::text, length(pgtoken.tokens_send(body)) FROM moved",
         )
         .expect("query failed");
         assert_eq!(rendered, Some("{1,2,3}".to_string()), "ids must survive");
-        assert_eq!(after, Some(12 + 3), "re-encoded to raw8");
+        assert_eq!(after, Some(5 + 3), "re-encoded to raw8");
     }
 
     #[pg_test]
@@ -1103,7 +1555,7 @@ mod tests {
         vocab("x_from", 200019);
         vocab("x_to", 200019);
         let got = Spi::get_one::<String>(
-            "SELECT ('{1,2,70000}'::pgtoken.tokens('x_from'))::pgtoken.tokens('x_to')::text",
+            "SELECT ('{1,2,70000}'::pgtoken.tokens('x_from'))::pgtoken.tokens('x_to')::int[]::text",
         )
         .expect("query failed");
         assert_eq!(got, Some("{1,2,70000}".to_string()));
@@ -1126,19 +1578,248 @@ mod tests {
     #[pg_test(error = "token id 300 is outside vocabulary t_bound (size 256)")]
     fn rejects_an_id_outside_the_vocabulary() {
         vocab("t_bound", 256);
-        Spi::get_one::<String>("SELECT '{300}'::pgtoken.tokens('t_bound')::text").unwrap();
+        Spi::get_one::<String>("SELECT '{300}'::pgtoken.tokens('t_bound')::int[]::text").unwrap();
     }
 
-    #[pg_test(error = "token id -1 is negative")]
-    fn input_rejects_a_negative_id() {
+    #[pg_test(error = "vocabulary \"t_neg\" has no server tokenizer; send token ids")]
+    fn a_negative_id_is_not_an_id_list() {
+        // '{1,-1}' is not a strict id list, so it is text, which t_neg cannot tokenize.
         vocab("t_neg", 300);
-        Spi::get_one::<String>("SELECT '{1,-1}'::pgtoken.tokens('t_neg')::text").unwrap();
+        Spi::get_one::<String>("SELECT '{1,-1}'::pgtoken.tokens('t_neg')::int[]::text").unwrap();
     }
 
-    #[pg_test(error = "expected '{' at the start of a token id list")]
-    fn input_rejects_junk() {
+    #[pg_test(error = "vocabulary \"t_junk\" has no server tokenizer; send token ids")]
+    fn a_vocabulary_without_a_tokenizer_rejects_text() {
         vocab("t_junk", 300);
-        Spi::get_one::<String>("SELECT 'nope'::pgtoken.tokens('t_junk')::text").unwrap();
+        Spi::run("CREATE TABLE junk_t (body tokens.t_junk)").expect("create");
+        Spi::run("INSERT INTO junk_t VALUES ('nope')").unwrap();
+    }
+
+    fn ids(sql: &str) -> Vec<i32> {
+        Spi::get_one::<Vec<i32>>(sql).expect(sql).expect("NULL")
+    }
+
+    #[pg_test]
+    fn text_inserted_into_an_o200k_column_is_tokenized_on_the_server() {
+        o200k_docs();
+        Spi::run("INSERT INTO cmp_docs VALUES (3, 'Hello, world!')").expect("insert");
+        let (out, text) = Spi::get_two::<String, String>(
+            "SELECT pgtoken.tokens_out(body)::text, body::text FROM cmp_docs WHERE id = 3",
+        )
+        .expect("query");
+        assert_eq!(
+            out.as_deref(),
+            Some("{13225,11,2375,0}"),
+            "output stays ids"
+        );
+        assert_eq!(text.as_deref(), Some("Hello, world!"));
+        // Stored exactly as if the ids had been sent.
+        assert_eq!(
+            Spi::get_one::<bool>(
+                "SELECT a.body = b.body AND pgtoken.tokens_send(a.body) = pgtoken.tokens_send(b.body) \
+                 FROM cmp_docs a, cmp_docs b WHERE a.id = 1 AND b.id = 3"
+            )
+            .expect("query"),
+            Some(true)
+        );
+    }
+
+    /// A line of code repeated: `freq` alone stores it at about 2 bytes a token, lz4 on top
+    /// finds the repeats. Equality, hashing and GROUP BY must treat the lz4 form and the plain
+    /// `freq` form of the same tokens as one value, since lz4 can write the same data many ways.
+    #[pg_test]
+    fn repeated_text_is_stored_as_freq_lz4_and_still_compares_by_tokens() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE rep (id int, body tokens.o200k); \
+             INSERT INTO rep VALUES (1, repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100))",
+        )
+        .expect("setup");
+        let (codec, n, bytes) = Spi::get_three::<String, i32, i32>(
+            "SELECT d.codec, d.n_tokens, d.total_bytes FROM rep, pgtoken.describe(body) d",
+        )
+        .expect("describe");
+        assert_eq!(codec.as_deref(), Some("freq_lz4"));
+        let (n, bytes) = (n.unwrap(), bytes.unwrap());
+        assert!(n > 1000 && bytes < 100, "{n} tokens in {bytes} bytes");
+        assert_eq!(
+            Spi::get_one::<bool>(
+                "SELECT body::text = repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100) FROM rep"
+            )
+            .expect("text"),
+            Some(true)
+        );
+
+        // The same tokens as a plain `freq` value, as an older build or another lz4 would write.
+        let stored = Spi::get_one::<Vec<u8>>("SELECT pgtoken.tokens_send(body) FROM rep")
+            .expect("send")
+            .expect("NULL");
+        let plain = pgtoken_core::value::canonical(&stored)
+            .unwrap()
+            .into_owned();
+        assert_eq!(plain[0], pgtoken_core::header::Codec::Freq.tag());
+        let hex: String = plain.iter().map(|b| format!("{b:02x}")).collect();
+        Spi::run(&format!(
+            "INSERT INTO rep VALUES (2, pgtoken.tokens_recv_bytes(decode('{hex}', 'hex')))"
+        ))
+        .expect("insert plain freq");
+
+        let (bytes_differ, equal, same_hash) = Spi::get_three::<bool, bool, bool>(
+            "SELECT pgtoken.tokens_send(a.body) <> pgtoken.tokens_send(b.body), a.body = b.body, \
+                    pgtoken.tokens_hash(a.body) = pgtoken.tokens_hash(b.body) \
+             FROM rep a, rep b WHERE a.id = 1 AND b.id = 2",
+        )
+        .expect("compare");
+        assert_eq!(
+            (bytes_differ, equal, same_hash),
+            (Some(true), Some(true), Some(true))
+        );
+        assert_eq!(
+            Spi::get_one::<i64>("SELECT count(*) FROM (SELECT DISTINCT body FROM rep) s")
+                .expect("distinct"),
+            Some(1)
+        );
+        Spi::run("SET enable_sort = off").expect("force hash aggregation");
+        assert_eq!(
+            Spi::get_one::<i64>("SELECT count(*) FROM (SELECT body FROM rep GROUP BY body) s")
+                .expect("group by"),
+            Some(1)
+        );
+        // Text cast to the column's type encodes to the lz4 form and matches both rows.
+        assert_eq!(
+            Spi::get_one::<i64>(
+                "SELECT count(*) FROM rep WHERE body = repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100)::tokens.o200k"
+            )
+            .expect("where"),
+            Some(2)
+        );
+    }
+
+    #[pg_test]
+    fn braces_alone_do_not_make_an_id_list() {
+        Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
+        assert_eq!(ids("SELECT '{1,2,3}'::tokens.o200k::int[]"), [1, 2, 3]);
+        assert_eq!(ids("SELECT ' { 1 , 2 } '::tokens.o200k::int[]"), [1, 2]);
+        assert_eq!(ids("SELECT '{}'::tokens.o200k::int[]"), Vec::<i32>::new());
+        assert_eq!(ids("SELECT ''::tokens.o200k::int[]"), Vec::<i32>::new());
+        for text in [
+            "{\"role\": \"user\"}",
+            "{1,-1}",
+            "{1,,2}",
+            "{a}",
+            "1,2,3",
+            "{1 2}",
+        ] {
+            let lit = text.replace('\'', "''");
+            let got = ids(&format!("SELECT '{lit}'::tokens.o200k::int[]"));
+            let want = ids(&format!("SELECT pgtoken.tokenize('{lit}', 'o200k')"));
+            assert_eq!(got, want, "{text} is text");
+            assert_eq!(
+                Spi::get_one::<String>(&format!("SELECT '{lit}'::tokens.o200k::text"))
+                    .expect("query")
+                    .as_deref(),
+                Some(text),
+                "{text} round-trips as text"
+            );
+        }
+    }
+
+    #[pg_test]
+    fn copy_text_input_tokenizes_with_the_columns_vocabulary() {
+        // COPY hands tokens_in the column's typmod, so text is tokenized there and then.
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE copy_txt (id int, body tokens.o200k); \
+             COPY copy_txt FROM PROGRAM 'printf \"1\\tHello, world!\\n2\\t{13225,11,2375,0}\\n\"';",
+        )
+        .expect("copy");
+        let (n, same) = Spi::get_two::<i64, bool>(
+            "SELECT count(*), bool_and(body = '{13225,11,2375,0}') FROM copy_txt",
+        )
+        .expect("query");
+        assert_eq!((n, same), (Some(2), Some(true)));
+    }
+
+    #[pg_test]
+    fn a_text_literal_compares_against_a_column() {
+        o200k_docs();
+        for sql in [
+            "SELECT count(*) FROM cmp_docs WHERE body = 'Hello, world!'",
+            "SELECT count(*) FROM cmp_docs WHERE body <> 'Hello'",
+        ] {
+            assert_eq!(Spi::get_one::<i64>(sql).expect(sql), Some(1), "{sql}");
+        }
+        Spi::run(
+            "SET plan_cache_mode = force_generic_plan; \
+             PREPARE qt(pgtoken.tokens) AS SELECT count(*) FROM cmp_docs WHERE body = $1;",
+        )
+        .expect("prepare");
+        assert_eq!(
+            Spi::get_one::<i64>("EXECUTE qt('Hello, world!')").expect("execute"),
+            Some(1)
+        );
+    }
+
+    #[pg_test(error = "vocabulary \"t_cmp_raw\" has no server tokenizer; send token ids")]
+    fn comparing_text_with_a_column_that_has_no_tokenizer_says_so() {
+        vocab("t_cmp_raw", 300);
+        Spi::run(
+            "CREATE TABLE cmp_raw (body tokens.t_cmp_raw); INSERT INTO cmp_raw VALUES ('{1}')",
+        )
+        .expect("setup");
+        Spi::get_one::<i64>("SELECT count(*) FROM cmp_raw WHERE body = 'hello'").unwrap();
+    }
+
+    #[pg_test]
+    fn the_text_cast_tokenizes_on_assignment() {
+        // What a driver does when it types a string parameter as text rather than unknown.
+        o200k_docs();
+        Spi::run(
+            "INSERT INTO cmp_docs SELECT 4, 'Hello, world!'::text; \
+             INSERT INTO cmp_docs SELECT 5, '{13225}'::text;",
+        )
+        .expect("insert");
+        assert_eq!(
+            ids("SELECT body::int[] FROM cmp_docs WHERE id = 4"),
+            [13225, 11, 2375, 0]
+        );
+        assert_eq!(
+            ids("SELECT body::int[] FROM cmp_docs WHERE id = 5"),
+            [13225]
+        );
+    }
+
+    #[pg_test]
+    fn a_bare_columns_text_repairs_by_tokenizing() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE bare_txt (x pgtoken.tokens); \
+             INSERT INTO bare_txt VALUES ('Hello, world!');",
+        )
+        .expect("setup");
+        let codec = Spi::get_one::<String>("SELECT codec FROM bare_txt b, pgtoken.describe(b.x)")
+            .expect("describe");
+        assert_eq!(codec.as_deref(), Some("text"));
+        Spi::run("ALTER TABLE bare_txt ALTER COLUMN x TYPE tokens.o200k").expect("repair");
+        assert_eq!(ids("SELECT x::int[] FROM bare_txt"), [13225, 11, 2375, 0]);
+    }
+
+    #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
+    fn unresolved_text_cannot_be_read() {
+        Spi::get_one::<String>("SELECT pgtoken.tokens_out('Hello'::pgtoken.tokens)::text").unwrap();
+    }
+
+    #[pg_test]
+    fn tokenize_matches_tiktoken() {
+        Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
+        assert_eq!(
+            ids("SELECT pgtoken.tokenize('Hello, world!', 'o200k')"),
+            [13225, 11, 2375, 0]
+        );
+        assert_eq!(
+            ids("SELECT pgtoken.tokenize('🦜', 'o200k')"),
+            [4103, 99, 250]
+        );
     }
 
     #[pg_test(error = "vocabulary t_freq has no ranking; run pgtoken.train first")]
@@ -1150,7 +1831,7 @@ mod tests {
                                               id => 60001)",
         )
         .expect("create_vocabulary");
-        Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens('t_freq')::text").unwrap();
+        Spi::get_one::<String>("SELECT '{1,2,3}'::pgtoken.tokens('t_freq')::int[]::text").unwrap();
     }
 
     #[pg_test(error = "binary value belongs to vocabulary v_from, but the column is v_to")]
@@ -1185,20 +1866,19 @@ mod tests {
         //
         // `pgtoken.encode` is gone, and `w_to`'s own width is raw24 (its vocab_size needs three
         // bytes), so a raw16 value under its id cannot come from the type itself — it is built by
-        // hand, one hex byte at a time: a7 (magic), 01 (version), 00 (codec raw16), 00 (reserved),
-        // the vocabulary id as a little-endian u16, 0000 (reserved), 03000000 (n_tokens = 3, LE),
-        // then ids 1, 2, 3 as little-endian u16 each.
+        // hand, one hex byte at a time: 10 (tag: version 1, codec raw16), 00 (flags), the
+        // vocabulary id as a little-endian u16, 03 (token count, LEB128), then ids 1, 2, 3 as
+        // little-endian u16 each.
         let loid = Spi::get_one::<String>(&format!(
             "SELECT lo_from_bytea(0, \
                  '\\x5047434f50590aff0d0a00'::bytea || int4send(0) || int4send(0) \
                  || int2send(1::smallint) || int4send(length(v)) || v \
                  || int2send((-1)::smallint))::text \
              FROM (SELECT decode( \
-                     'a7010000' || \
+                     '1000' || \
                      lpad(to_hex({id} & 255), 2, '0') || \
                      lpad(to_hex(({id} >> 8) & 255), 2, '0') || \
-                     '0000' || \
-                     '03000000' || \
+                     '03' || \
                      '010002000300', \
                      'hex') AS v) s"
         ))
@@ -1211,7 +1891,9 @@ mod tests {
         Spi::run("COPY w FROM '/tmp/pgtoken-recv-wrongwidth.bin' WITH (FORMAT binary)").unwrap();
     }
 
-    #[pg_test(error = "bad magic byte 0x00, expected 0xA7")]
+    #[pg_test(
+        error = "unknown value format tag 0x00, this build reads format version 1 (tags 0x10-0x14)"
+    )]
     fn recv_bytes_rejects_a_corrupt_buffer() {
         Spi::get_one::<String>(
             "SELECT pgtoken.tokens_recv_bytes('\\x000000000000000000000000'::bytea)::text",
@@ -1219,7 +1901,34 @@ mod tests {
         .unwrap();
     }
 
-    /// A vocabulary with a mapping, at a pinned id — mapping files survive rollback.
+    #[pg_test(
+        error = "unknown value format: tag 0xA7 is the pre-release 12-byte header, which this \
+                 build no longer reads; re-insert the data"
+    )]
+    fn recv_bytes_rejects_the_old_12_byte_format() {
+        // `'{1}'` under a raw24 vocabulary in the old layout: magic, version, codec, reserved,
+        // id 1 LE, reserved, count 1 LE, then the id.
+        Spi::get_one::<String>(
+            "SELECT pgtoken.tokens_recv_bytes('\\xa70101000100000001000000000001'::bytea)::text",
+        )
+        .unwrap();
+    }
+
+    #[pg_test(error = "value has flags 0x01, which this build does not understand")]
+    fn recv_bytes_rejects_an_unknown_flag() {
+        Spi::get_one::<String>("SELECT pgtoken.tokens_recv_bytes('\\x1301010001'::bytea)::text")
+            .unwrap();
+    }
+
+    #[pg_test(error = "payload is 2 bytes, expected 3")]
+    fn recv_bytes_rejects_a_count_that_disagrees_with_the_payload() {
+        Spi::get_one::<String>(
+            "SELECT pgtoken.tokens_recv_bytes('\\x13000100030102'::bytea)::text",
+        )
+        .unwrap();
+    }
+
+    /// A vocabulary with a mapping, at a pinned id.
     fn mapped_vocab(name: &str, id: i32) {
         Spi::run(&format!(
             "SELECT pgtoken.create_vocabulary('{name}', 8, id => {id})"
@@ -1256,12 +1965,129 @@ mod tests {
     }
 
     #[pg_test]
-    fn text_drops_a_chunk_cut_mid_character() {
-        // An artefact of chunking by token count, not a fault: return what is readable.
+    fn text_replaces_a_chunk_cut_mid_character() {
+        // An artefact of chunking by token count: the partial character becomes U+FFFD.
         mapped_vocab("t_cut", 62103);
         let got = Spi::get_one::<String>("SELECT pgtoken.text('{0,4}'::pgtoken.tokens('t_cut'))")
             .expect("query failed");
-        assert_eq!(got, Some("Hello".to_string()));
+        assert_eq!(got, Some("Hello\u{FFFD}".to_string()));
+    }
+
+    #[pg_test]
+    fn text_of_part_of_a_character_is_a_replacement_character_not_empty() {
+        // 🦜 is o200k ids [4103, 99, 250]. The first alone is an incomplete character, which
+        // used to come back as '', indistinguishable from an empty chunk.
+        Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
+        let (first, whole) = Spi::get_two::<String, String>(
+            "SELECT pgtoken.text('{4103}'::tokens.o200k), \
+                    pgtoken.text('{4103,99,250}'::tokens.o200k)",
+        )
+        .expect("query failed");
+        assert_eq!(first.as_deref(), Some("\u{FFFD}"));
+        assert_eq!(whole.as_deref(), Some("🦜"));
+    }
+
+    /// A table `cmp_docs` with one o200k row, "Hello, world!".
+    fn o200k_docs() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE cmp_docs (id int, body tokens.o200k); \
+             INSERT INTO cmp_docs VALUES (1, '{13225,11,2375,0}'), (2, '{13225}');",
+        )
+        .expect("setup");
+    }
+
+    #[pg_test]
+    fn an_untyped_literal_compares_against_a_column() {
+        // The literal reaches `=` unresolved; it used to compare as raw24 carrier bytes and never
+        // match. It works with the default search_path, since the operators live in pg_catalog.
+        o200k_docs();
+        Spi::run("SET search_path = \"$user\", public").expect("search_path");
+        for (sql, want) in [
+            (
+                "SELECT count(*) FROM cmp_docs WHERE body = '{13225,11,2375,0}'",
+                1,
+            ),
+            (
+                "SELECT count(*) FROM cmp_docs WHERE '{13225,11,2375,0}' = body",
+                1,
+            ),
+            (
+                "SELECT count(*) FROM cmp_docs WHERE body <> '{13225,11,2375,0}'",
+                1,
+            ),
+            ("SELECT count(*) FROM cmp_docs WHERE body = '{ 13225 }'", 1),
+            ("SELECT count(*) FROM cmp_docs WHERE body = '{}'", 0),
+        ] {
+            assert_eq!(Spi::get_one::<i64>(sql).expect(sql), Some(want), "{sql}");
+        }
+        Spi::run("SET search_path = public, pgtoken").expect("search_path");
+        assert_eq!(
+            Spi::get_one::<i64>("SELECT count(*) FROM cmp_docs WHERE body = '{13225,11,2375,0}'")
+                .expect("query"),
+            Some(1)
+        );
+    }
+
+    #[pg_test]
+    fn explain_prints_the_resolved_constant() {
+        // An unresolved value has no output form, so EXPLAIN used to fail with "cannot read a
+        // pgtoken.tokens value that has no vocabulary". The planner now resolves it first.
+        o200k_docs();
+        let plan = Spi::connect(|c| {
+            c.select(
+                "EXPLAIN (COSTS OFF) SELECT * FROM cmp_docs WHERE body = '{13225,11,2375,0}'",
+                None,
+                &[],
+            )
+            .expect("explain")
+            .map(|row| row.get::<String>(1).expect("line").unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n")
+        });
+        assert!(plan.contains("{13225,11,2375,0}"), "{plan}");
+    }
+
+    #[pg_test]
+    fn a_parameter_resolves_at_run_time() {
+        // A generic plan keeps `$1` as a parameter, so the planner cannot resolve it; the operator
+        // does, once per call site.
+        o200k_docs();
+        Spi::run(
+            "SET plan_cache_mode = force_generic_plan; \
+             PREPARE q(pgtoken.tokens) AS SELECT count(*) FROM cmp_docs WHERE body = $1;",
+        )
+        .expect("prepare");
+        assert_eq!(
+            Spi::get_one::<i64>("EXECUTE q('{13225,11,2375,0}')").expect("execute"),
+            Some(1)
+        );
+        assert_eq!(
+            Spi::get_one::<i64>("EXECUTE q('{13225}')").expect("execute"),
+            Some(1)
+        );
+    }
+
+    #[pg_test]
+    fn a_literal_compares_inside_an_expression() {
+        // Neither side is a column here, so only the run-time path can resolve the literal.
+        o200k_docs();
+        let got = Spi::get_one::<bool>(
+            "SELECT bool_or(body = (SELECT '{13225}'::pgtoken.tokens)) FROM cmp_docs",
+        )
+        .expect("query");
+        assert_eq!(got, Some(true));
+    }
+
+    #[pg_test(error = "token id 999999 is outside vocabulary o200k (size 200019)")]
+    fn comparing_with_an_id_outside_the_vocabulary_says_so() {
+        o200k_docs();
+        Spi::get_one::<i64>("SELECT count(*) FROM cmp_docs WHERE body = '{999999}'").unwrap();
+    }
+
+    #[pg_test(error = "cannot hash a pgtoken.tokens value that has no vocabulary")]
+    fn hashing_an_unresolved_value_is_an_error_not_a_miss() {
+        Spi::get_one::<i32>("SELECT pgtoken.tokens_hash('{1,2}'::pgtoken.tokens)").unwrap();
     }
 
     #[pg_test]
@@ -1334,71 +2160,13 @@ mod tests {
         assert_eq!(got, Some("Hello, world!".to_string()));
     }
 
-    #[pg_test]
-    fn load_mapping_leaves_no_temporary_file_behind() {
-        // The mapping is created atomically with its content — staged to a temp in the same
-        // directory, `sync_all`'d, then hard-linked into place — so the temp has to be unlinked
-        // on the success path too, or every load would litter the directory.
-        mapped_vocab("t_tmp", 62108);
-        let dir = std::path::Path::new("/tmp/pgtoken-pgrx-test-tables");
-        let strays: Vec<String> = std::fs::read_dir(dir)
-            .expect("read the table dir")
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".tmp"))
-            .collect();
-        assert!(strays.is_empty(), "temporary files left behind: {strays:?}");
-        assert!(
-            dir.join("62108.tnmap").exists(),
-            "the mapping must be there"
-        );
-    }
-
-    /// Clear `pgtoken.table_dir` for the rest of this test's transaction.
-    ///
-    /// The GUC is `SIGHUP`-scoped, so no SQL `SET` can reach it — which is part of why the hazard
-    /// below survived to be found in review rather than in a test. `set_config_option` with the
-    /// variable's own context is the same call a config-file reload makes, and
-    /// `GUC_ACTION_LOCAL` ties the change to this transaction, which pgrx aborts when the test
-    /// ends.
-    fn clear_table_dir() {
-        // Safety: an ordinary GUC assignment; both strings are NUL-terminated literals that
-        // outlive the call, and `set_config_option` copies what it keeps.
-        unsafe {
-            pg_sys::set_config_option(
-                c"pgtoken.table_dir".as_ptr(),
-                c"".as_ptr(),
-                pg_sys::GucContext::PGC_SIGHUP,
-                pg_sys::GucSource::PGC_S_SESSION,
-                pg_sys::GucAction::GUC_ACTION_LOCAL,
-                true,
-                // `ERROR`; bindgen renames the C macro, which collides with `errno`'s.
-                pg_sys::PGERROR as i32,
-                false,
-            );
-        }
-    }
-
-    #[pg_test(error = "pgtoken.table_dir is not set; cannot read vocabulary artefacts")]
-    fn text_with_an_unset_table_dir_blames_the_setting() {
-        // The message this replaces was "vocabulary t_nodir has no mapping; run
-        // pgtoken.load_mapping first" — advice that destroys data if followed. With `table_dir`
-        // unset, `map_path` produced the bare relative name `62109.tnmap`, `.exists()` answered
-        // it against the data directory and said no, and a user who then pointed `table_dir`
-        // somewhere fresh and re-ran `load_mapping` sealed a second, different mapping while the
-        // real one sat unreachable in the directory nobody was pointing at.
-        mapped_vocab("t_nodir", 62109);
-        clear_table_dir();
-        Spi::get_one::<String>("SELECT pgtoken.text('{0}'::pgtoken.tokens('t_nodir'))").unwrap();
-    }
-
     #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
     fn text_refuses_a_value_without_a_vocabulary() {
         // `decode_value` alone would happily decode this — a raw codec's vocabulary_id of 0 is
         // not special to it, only `freq`'s header check cares — so without its own
         // `require_vocabulary` call, `text_impl` would fall through to a nonsense "vocabulary 0
         // has no mapping" instead of the standard unresolved-value error every other read path
-        // gives. No vocabulary means no mapping file to pin, so no vocabulary id here.
+        // gives.
         Spi::get_one::<String>("SELECT pgtoken.text('{1,2,3}'::pgtoken.tokens)").unwrap();
     }
 }

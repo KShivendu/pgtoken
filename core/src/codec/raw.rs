@@ -1,7 +1,7 @@
 //! Raw token-ID packing: no table, no model.
 //!
-//! `raw24` is **big-endian**, `raw16` **little-endian**. Both orders are fixed by the format
-//! and pinned by tests, since either would roundtrip within this module if reversed.
+//! Every multi-byte field in the format is **little-endian**, `raw16` and `raw24` included. The
+//! order is pinned by tests, since either order would roundtrip within this module.
 
 use crate::header::{Codec, HeaderError};
 
@@ -39,7 +39,7 @@ pub fn encode16(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     Ok(())
 }
 
-/// 3 bytes/id, big-endian.
+/// 3 bytes/id, little-endian.
 pub fn encode24(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     out.reserve(ids.len() * 3);
     for &id in ids {
@@ -49,9 +49,7 @@ pub fn encode24(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
                 codec: Codec::Raw24,
             });
         }
-        out.push((id >> 16) as u8);
-        out.push((id >> 8) as u8);
-        out.push(id as u8);
+        out.extend_from_slice(&id.to_le_bytes()[..3]);
     }
     Ok(())
 }
@@ -69,46 +67,41 @@ pub fn encode8(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     Ok(())
 }
 
-/// Decode a `raw16` payload. `Header::parse` has already checked the length.
-pub fn decode16(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
-    if payload.len() != n * 2 {
-        return Err(HeaderError::PayloadLen {
-            want: n * 2,
-            got: payload.len(),
-        });
+/// `Header::parse` has already matched the length to the count; this guards direct callers.
+fn ragged(codec: Codec, payload: &[u8]) -> HeaderError {
+    let w = codec.width().unwrap_or(1);
+    HeaderError::PayloadLen {
+        want: payload.len() / w * w,
+        got: payload.len(),
     }
-    Ok(payload
-        .as_chunks::<2>()
-        .0
+}
+
+/// Decode a `raw16` payload. The token count is the length over 2.
+pub fn decode16(payload: &[u8]) -> Result<Vec<u32>, HeaderError> {
+    let (chunks, rest) = payload.as_chunks::<2>();
+    if !rest.is_empty() {
+        return Err(ragged(Codec::Raw16, payload));
+    }
+    Ok(chunks
         .iter()
-        .map(|c| u16::from_le_bytes([c[0], c[1]]) as u32)
+        .map(|c| u16::from_le_bytes(*c) as u32)
         .collect())
 }
 
-/// Decode a `raw8` payload.
-pub fn decode8(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
-    if payload.len() != n {
-        return Err(HeaderError::PayloadLen {
-            want: n,
-            got: payload.len(),
-        });
-    }
-    Ok(payload.iter().map(|&b| b as u32).collect())
+/// Decode a `raw8` payload: one token per byte.
+pub fn decode8(payload: &[u8]) -> Vec<u32> {
+    payload.iter().map(|&b| b as u32).collect()
 }
 
-/// Decode a `raw24` payload.
-pub fn decode24(payload: &[u8], n: usize) -> Result<Vec<u32>, HeaderError> {
-    if payload.len() != n * 3 {
-        return Err(HeaderError::PayloadLen {
-            want: n * 3,
-            got: payload.len(),
-        });
+/// Decode a `raw24` payload. The token count is the length over 3.
+pub fn decode24(payload: &[u8]) -> Result<Vec<u32>, HeaderError> {
+    let (chunks, rest) = payload.as_chunks::<3>();
+    if !rest.is_empty() {
+        return Err(ragged(Codec::Raw24, payload));
     }
-    Ok(payload
-        .as_chunks::<3>()
-        .0
+    Ok(chunks
         .iter()
-        .map(|c| ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32))
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], 0]))
         .collect())
 }
 
@@ -117,10 +110,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn raw24_is_big_endian() {
+    fn raw24_is_little_endian() {
         let mut out = Vec::new();
         encode24(&[0x01_02_03], &mut out).unwrap();
-        assert_eq!(out, vec![0x01, 0x02, 0x03]);
+        assert_eq!(out, vec![0x03, 0x02, 0x01]);
     }
 
     #[test]
@@ -136,7 +129,7 @@ mod tests {
         let mut out = Vec::new();
         encode16(&ids, &mut out).unwrap();
         assert_eq!(out.len(), ids.len() * 2);
-        assert_eq!(decode16(&out, ids.len()).unwrap(), ids);
+        assert_eq!(decode16(&out).unwrap(), ids);
     }
 
     #[test]
@@ -145,7 +138,7 @@ mod tests {
         let mut out = Vec::new();
         encode24(&ids, &mut out).unwrap();
         assert_eq!(out.len(), ids.len() * 3);
-        assert_eq!(decode24(&out, ids.len()).unwrap(), ids);
+        assert_eq!(decode24(&out).unwrap(), ids);
     }
 
     #[test]
@@ -153,7 +146,7 @@ mod tests {
         let mut out = Vec::new();
         encode24(&[], &mut out).unwrap();
         assert!(out.is_empty());
-        assert_eq!(decode24(&out, 0).unwrap(), Vec::<u32>::new());
+        assert_eq!(decode24(&out).unwrap(), Vec::<u32>::new());
     }
 
     #[test]
@@ -178,8 +171,9 @@ mod tests {
 
     #[test]
     fn decode_rejects_wrong_length() {
-        assert!(decode16(&[0, 0, 0], 1).is_err());
-        assert!(decode24(&[0, 0], 1).is_err());
+        assert!(decode16(&[0, 0, 0]).is_err());
+        assert!(decode24(&[0, 0]).is_err());
+        assert!(decode24(&[0, 0, 0, 0]).is_err());
     }
 
     #[test]
@@ -188,7 +182,7 @@ mod tests {
         let mut out = Vec::new();
         encode8(&ids, &mut out).expect("encode8");
         assert_eq!(out.len(), 4, "one byte per token");
-        assert_eq!(decode8(&out, ids.len()).expect("decode8"), ids);
+        assert_eq!(decode8(&out), ids);
     }
 
     #[test]
@@ -208,6 +202,6 @@ mod tests {
         let mut out = Vec::new();
         encode8(&[], &mut out).expect("encode8 empty");
         assert!(out.is_empty());
-        assert_eq!(decode8(&out, 0).expect("decode8 empty"), Vec::<u32>::new());
+        assert_eq!(decode8(&out), Vec::<u32>::new());
     }
 }

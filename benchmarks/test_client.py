@@ -6,7 +6,12 @@ the one in the database, so this asserts it rather than assuming it:
 
   * bytes the extension wrote decode correctly in Python,
   * bytes Python wrote decode correctly in the extension,
-  * and the two produce byte-identical output for the same input.
+  * and the two produce byte-identical output for the same input, except where the extension
+    wrote `freq_lz4` (lz4 made it smaller): Python writes plain `freq` there, and the extension
+    must compare the two equal.
+
+The Rust client in py/ (`pgtoken_rs`) gets the same encode and decode checks, since that is
+the codec the read benchmark times.
 
 A codec is no longer nameable directly (see `pgtoken.tokens`): every value names a vocabulary,
 and the vocabulary's `vocab_size` is what picks the width under test. So each parity case runs
@@ -28,6 +33,7 @@ import numpy as np
 import psycopg
 
 import pgtoken_client as K
+import pgtoken_rs as R
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -41,6 +47,7 @@ CASES = [
     [65536, 200018, 1000000],  # beyond raw16
     [199999, 3, 1, 7654321],  # ids the coding table never saw
     list(range(300)),
+    [464, 13, 11, 262, 0] * 80,  # repeats: a freq vocabulary stores this as freq_lz4
 ]
 
 # (codec, vocabulary name, vocab_size). vocab_size is what selects the width under test now,
@@ -61,8 +68,17 @@ FREQ_VOCAB_SIZE = 16_777_216
 FREQ_TRAIN_IDS = [7, 3, 1, 24912, 2375, 0, 255, 256] * 40
 
 
-def connect(**kwargs) -> psycopg.Connection:
-    """Connect to the local no-root PostgreSQL set up by `setup_pg.sh`."""
+DB = os.environ.get("PGTOKEN_CLIENT_DB", "pgtoken_client_test")
+
+
+def connect(dbname: str = DB, **kwargs) -> psycopg.Connection:
+    """Connect to `dbname` on the server PGHOST names, or else the local one from `setup_pg.sh`.
+
+    Runs in its own database (created if missing; override with PGTOKEN_CLIENT_DB), never the
+    maintenance database, since it creates vocabularies that can never be dropped.
+    """
+    if os.environ.get("PGHOST"):
+        return psycopg.connect(dbname=dbname, autocommit=True, **kwargs)
     script = os.path.join(os.path.dirname(HERE), "setup_pg.sh")
     out = subprocess.run(["bash", script, "--env"], capture_output=True, text=True, check=True).stdout
     env = {}
@@ -76,7 +92,7 @@ def connect(**kwargs) -> psycopg.Connection:
         host=env["PGHOST"],
         port=int(env["PGPORT"]),
         user=env.get("PGUSER", "postgres"),
-        dbname=os.environ.get("PGDATABASE", "postgres"),
+        dbname=dbname,
         autocommit=True,
         **kwargs,
     )
@@ -98,6 +114,12 @@ def ensure_vocabulary(conn, name: str, vocab_size: int, compression: str = "raw"
     ).fetchone()[0]
 
 
+def ranking_bytes(conn, name: str) -> bytes | None:
+    """A freq vocabulary's ranking as bytes, or None before it is trained."""
+    row = conn.execute("SELECT ranking FROM pgtoken.vocabulary_codec(%s)", (name,)).fetchone()
+    return None if row[0] is None else bytes(row[0])
+
+
 def ensure_freq_table(conn, name: str, vocab_size: int) -> tuple[int, K.RankTable | None]:
     """Create and train `name` if needed, and return its id and ranking (if one loaded).
 
@@ -110,16 +132,19 @@ def ensure_freq_table(conn, name: str, vocab_size: int) -> tuple[int, K.RankTabl
         lit = "{" + ",".join(map(str, FREQ_TRAIN_IDS)) + "}"
         conn.execute("SELECT pgtoken.train(%s, %s)", (name, f"SELECT '{lit}'::int[]"))
 
-    table_dir = conn.execute("SELECT current_setting('pgtoken.table_dir')").fetchone()[0]
-    path = os.path.join(table_dir, f"{vocab_id}.tntt")
-    if not os.path.exists(path):
+    # The ranking lives in the database; vocabulary_codec hands it over as bytes.
+    ranking = ranking_bytes(conn, name)
+    if ranking is None:
         return vocab_id, None
-    return vocab_id, K.RankTable.load(path)
+    return vocab_id, K.RankTable.from_bytes(ranking)
 
 
 def main() -> int:
     failures: list[str] = []
 
+    with connect(os.environ.get("PGDATABASE", "postgres")) as admin:
+        if not admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", [DB]).fetchone():
+            admin.execute(f'CREATE DATABASE "{DB}"')
     with connect() as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS pgtoken")
 
@@ -139,7 +164,13 @@ def main() -> int:
             else:
                 vocabs.append(("freq", FREQ_VOCAB, FREQ_VOCAB_SIZE, freq_id))
 
-        n_cases = 0
+        rs_tables = {
+            vid: R.Table.from_bytes(ranking_bytes(conn, name))
+            for codec, name, _, vid in vocabs
+            if codec == "freq"
+        }
+
+        n_cases = n_lz4 = 0
         for ids in CASES:
             arr = np.asarray(ids, dtype=np.uint32)
             lit = "{" + ",".join(map(str, ids)) + "}"
@@ -160,8 +191,16 @@ def main() -> int:
                 )
                 py_blob = K.encode(arr, codec, vocab_id, rank_table)
 
-                # 1. identical output for identical input
-                if pg_blob != py_blob:
+                # 1. identical output for identical input; for freq_lz4, equal under `=`
+                if pg_blob[0] == 0x14:
+                    n_lz4 += 1
+                    same = conn.execute(
+                        "SELECT pgtoken.tokens_recv_bytes(%s) = pgtoken.tokens_recv_bytes(%s)",
+                        (pg_blob, py_blob),
+                    ).fetchone()[0]
+                    if py_blob[0] != 0x12 or not same:
+                        failures.append(f"{tag}: python's freq is not equal to the extension's freq_lz4")
+                elif pg_blob != py_blob:
                     failures.append(f"{tag}: encode differs (pg {len(pg_blob)}B, py {len(py_blob)}B)")
 
                 # 2. Python decodes what the extension wrote
@@ -181,12 +220,23 @@ def main() -> int:
                 if K.token_count(pg_blob) != len(ids):
                     failures.append(f"{tag}: token_count disagrees")
 
+                # 5. the Rust client (py/, what the read benchmark times) matches both ways
+                rs_table = rs_tables.get(vocab_id)
+                if R.encode(arr, codec, vocab_id, rs_table) != pg_blob:
+                    failures.append(f"{tag}: rust client encode differs from the extension")
+                if not np.array_equal(R.decode(pg_blob, rs_table), arr):
+                    failures.append(f"{tag}: rust client could not decode the extension's bytes")
+
     if failures:
         print(f"FAILED ({len(failures)}):")
         for f in failures:
             print("  -", f)
         return 1
-    print(f"ok: python client and extension agree on {n_cases} (case, codec) combinations")
+    if n_lz4 == 0:
+        print("FAILED: no case was stored as freq_lz4")
+        return 1
+    print(f"ok: python client, rust client and extension agree on {n_cases} (case, codec) combinations, "
+          f"{n_lz4} stored as freq_lz4")
     return 0
 
 

@@ -23,6 +23,6 @@ pub mod tables;
 pub mod value;
 
 pub use detok::{to_text, DetokError};
-pub use header::{Codec, Header, HeaderError, HEADER_LEN, MAGIC, VERSION};
+pub use header::{Codec, Header, HeaderError, VERSION};
 pub use tables::{ByteMap, RankTable, TableError, KIND_MAP};
 pub use value::{decode, describe, encode, recode, ValueError};

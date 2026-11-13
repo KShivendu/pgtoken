@@ -226,8 +226,14 @@ def _vocab_name(kind: str) -> str:
     return f"bench_{slug}_{kind}"
 
 
-def table_dir(conn: psycopg.Connection) -> str:
-    return conn.execute("SELECT current_setting('pgtoken.table_dir')").fetchone()[0]
+def ranking_bytes(conn: psycopg.Connection, name: str) -> bytes:
+    """A freq vocabulary's trained ranking, as bytes. It lives in the database, not in a file."""
+    ranking = conn.execute(
+        "SELECT ranking FROM pgtoken.vocabulary_codec(%s)", (name,)
+    ).fetchone()[0]
+    if ranking is None:
+        raise RuntimeError(f"vocabulary {name!r} has no ranking; run pgtoken.train first")
+    return bytes(ranking)
 
 
 def ensure_vocabulary(
@@ -283,8 +289,7 @@ def ensure_freq_vocab(
             "SELECT pgtoken.train(%s, 'SELECT ids FROM pgtoken_train_corpus')", (name,)
         )
 
-    path = os.path.join(table_dir(conn), f"{vocab_id}.tntt")
-    return vocab_id, K.RankTable.load(path)
+    return vocab_id, K.RankTable.from_bytes(ranking_bytes(conn, name))
 
 
 # ── Stats ───────────────────────────────────────────────────────────────────────────────────

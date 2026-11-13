@@ -21,8 +21,13 @@ dependencies = [
     # tnbench.py imports zstandard at module scope, so it is needed to import the reference
     # implementation at all, not just to run the byte-codec baselines.
     "zstandard",
+    # Rust-speed client codec (py/), so read benchmarks time the codec a real client would use.
+    "pgtoken-rs",
 ]
 
 # tokenizers 1.0 is a release candidate at time of writing; allow uv to resolve the prerelease.
 [tool.uv]
 prerelease = "allow"
+
+[tool.uv.sources]
+pgtoken-rs = { path = "py", editable = false }

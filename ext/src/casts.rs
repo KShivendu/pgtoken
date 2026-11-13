@@ -1,6 +1,6 @@
 //! Casts into and out of `pgtoken.tokens`.
 //!
-//! These replace `pgtoken.encode` and `pgtoken.decode`. `int[] → tokens` is an *assignment*
+//! These replace `pgtoken.encode` and `pgtoken.decode`. `tokens → text` detokenizes. `int[] → tokens` is an *assignment*
 //! cast, so a plain `INSERT ... VALUES (ARRAY[1,2])` works while accidental coercions in
 //! expressions still have to be spelled out. It takes the three-argument cast signature so it
 //! receives the target column's typmod — without it there would be no width to encode at.
@@ -8,7 +8,7 @@
 use pgrx::prelude::*;
 
 use crate::registry::bail;
-use crate::tokens::{decode_value, encode_for, require_vocabulary};
+use crate::tokens::{decode_value, encode_for, require_vocabulary, value_from_input};
 
 /// SQL `int[]` to token IDs. Rejects NULLs and negatives rather than coercing them, since either
 /// would silently store a different sequence than the caller meant.
@@ -29,11 +29,19 @@ fn tokens_from_int4array_impl(ids: Vec<Option<i32>>, typmod: i32, _explicit: boo
     encode_for(&ids_from_sql(ids), typmod)
 }
 
+/// `text → pgtoken.tokens`, for drivers that send a string parameter typed as `text` rather than
+/// unknown. Same rules as a literal: an id list is ids, anything else is tokenized with the target
+/// column's vocabulary, which needs a server tokenizer.
+#[pg_extern(immutable, parallel_safe, strict)]
+fn tokens_from_text_impl(input: &str, typmod: i32, _explicit: bool) -> Vec<u8> {
+    value_from_input(input, typmod)
+}
+
 /// `pgtoken.tokens → int[]`: the direct replacement for the deleted `pgtoken.decode`.
 ///
 /// Calls `require_vocabulary` first, like every other path that hands a value back to a caller.
 /// Without it, a bare (typmod-less) column's unresolved values would decode to plausible-looking
-/// ids here even though `::text` refuses them — the exact hole `tokens_send` was changed to close.
+/// ids here even though `::text` and `SELECT body` refuse them — the exact hole `tokens_send` was changed to close.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_to_int4array_impl(value: &[u8]) -> Vec<i32> {
     require_vocabulary(value);
@@ -50,6 +58,11 @@ CREATE FUNCTION pgtoken.tokens_from_int4array(int[], integer, boolean)
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_from_int4array_impl_wrapper';
 
+CREATE FUNCTION pgtoken.tokens_from_text(text, integer, boolean)
+    RETURNS pgtoken.tokens
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_from_text_impl_wrapper';
+
 CREATE FUNCTION pgtoken.tokens_to_int4array(pgtoken.tokens) RETURNS int[]
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_to_int4array_impl_wrapper';
@@ -62,11 +75,24 @@ CREATE CAST (int[] AS pgtoken.tokens)
 CREATE CAST (pgtoken.tokens AS int[])
     WITH FUNCTION pgtoken.tokens_to_int4array(pgtoken.tokens);
 
+-- Assignment, like int[]: an INSERT of a `text`-typed parameter tokenizes it with the column's
+-- vocabulary (or reads it as ids, if it is an id list).
+CREATE CAST (text AS pgtoken.tokens)
+    WITH FUNCTION pgtoken.tokens_from_text(text, integer, boolean) AS ASSIGNMENT;
+
+-- Explicit: `body::text` is the text, through the vocabulary's mapping. Without this row
+-- PostgreSQL would fall back to an I/O cast and print the id list, which is what `SELECT body`
+-- already shows. With it, `text(body)` is no longer read as that I/O cast either, so it reaches
+-- `pgtoken.text` (when `pgtoken` is on search_path) or fails, instead of printing ids.
+CREATE CAST (pgtoken.tokens AS text)
+    WITH FUNCTION pgtoken.text(pgtoken.tokens);
+
 "#,
     name = "tokens_casts",
     requires = [
         "tokens_type",
         tokens_from_int4array_impl,
+        tokens_from_text_impl,
         tokens_to_int4array_impl,
     ],
 );
@@ -105,8 +131,8 @@ mod tests {
                     (SELECT length(pgtoken.tokens_send(body)) FROM c_big_t)",
         )
         .expect("query failed");
-        assert_eq!(small, Some(12 + 3), "raw8 via the target typmod");
-        assert_eq!(big, Some(12 + 9), "raw24 via the target typmod");
+        assert_eq!(small, Some(5 + 3), "raw8 via the target typmod");
+        assert_eq!(big, Some(5 + 9), "raw24 via the target typmod");
     }
 
     #[pg_test]
@@ -141,6 +167,22 @@ mod tests {
         );
     }
 
+    #[pg_test]
+    fn the_text_cast_detokenizes_while_select_shows_ids() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE c_txt (body tokens.o200k); \
+             INSERT INTO c_txt VALUES ('{13225,11,2375,0}');",
+        )
+        .expect("setup");
+        let (ids, text) = Spi::get_two::<String, String>(
+            "SELECT pgtoken.tokens_out(body)::text, body::text FROM c_txt",
+        )
+        .expect("query failed");
+        assert_eq!(ids.as_deref(), Some("{13225,11,2375,0}"));
+        assert_eq!(text.as_deref(), Some("Hello, world!"));
+    }
+
     #[pg_test(error = "token id array must not contain NULL")]
     fn cast_rejects_null_elements() {
         Spi::run("SELECT pgtoken.create_vocabulary('c4', 300)").expect("create");
@@ -150,7 +192,7 @@ mod tests {
     #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
     fn int_array_cast_refuses_a_value_without_a_vocabulary() {
         // `::int[]` is the direct replacement for the deleted `pgtoken.decode`, so it has to
-        // refuse an unresolved value exactly as `::text` does -- otherwise a client on a bare
+        // refuse an unresolved value exactly as `SELECT x` does -- otherwise a client on a bare
         // column gets plausible-looking ids back and never learns the column is misdeclared.
         Spi::run("CREATE TABLE bare_ia (x pgtoken.tokens)").expect("create table");
         Spi::run("INSERT INTO bare_ia VALUES ('{1,2,3}')").expect("insert");

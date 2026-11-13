@@ -45,6 +45,38 @@ jobs:
         working-directory: core
         run: cargo run --release --example codec_bench
 
+  # The Python client codec in py/ (pgtoken_rs). Checked against the pure-Python reference codec,
+  # so this job needs no PostgreSQL and none of the benchmarks' heavier dependencies.
+  py:
+    name: py (Python client codec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: py
+
+      - name: Format
+        run: cargo fmt --check --manifest-path py/Cargo.toml
+
+      - name: Clippy
+        working-directory: py
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build and install
+        run: pip install ./py
+
+      - name: Rust and Python clients agree
+        run: python py/tests/test_roundtrip.py
+
   extension:
     name: extension (pg${{ matrix.pg }})
     runs-on: ubuntu-latest
@@ -107,7 +139,6 @@ jobs:
       - name: Test
         working-directory: ext
         run: |
-          rm -rf /tmp/pgtoken-pgrx-test-tables
           cargo pgrx test pg${{ matrix.pg }} \
             --features pg${{ matrix.pg }} --no-default-features
 
@@ -119,3 +150,38 @@ jobs:
           cargo pgrx install --release \
             --features pg${{ matrix.pg }} --no-default-features \
             --pg-config /usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
+
+      # The checks above run inside pgrx's own test cluster. These run against a real server with
+      # the installed extension, as a user would: dump and restore on every version, and the
+      # client libraries and the tokenizer once, since they do not depend on the version.
+      - name: Start the packaged PostgreSQL
+        run: |
+          # The packages create a cluster only for some versions on the runner, and the image may
+          # ship another PostgreSQL too. So create this version's cluster if it is missing, start
+          # it by name, and use its port rather than assuming 5432.
+          if ! pg_lsclusters -h | awk '$1 == "${{ matrix.pg }}" && $2 == "main"' | grep -q .; then
+            sudo pg_createcluster ${{ matrix.pg }} main
+          fi
+          sudo pg_ctlcluster ${{ matrix.pg }} main start
+          port=$(pg_lsclusters -h | awk '$1 == "${{ matrix.pg }}" && $2 == "main" {print $3}')
+          sudo -u postgres psql -p "$port" -c "CREATE ROLE \"$USER\" SUPERUSER LOGIN"
+          echo "PGHOST=/var/run/postgresql" >> "$GITHUB_ENV"
+          echo "PGPORT=$port" >> "$GITHUB_ENV"
+          echo "PGDATABASE=postgres" >> "$GITHUB_ENV"
+          echo "/usr/lib/postgresql/${{ matrix.pg }}/bin" >> "$GITHUB_PATH"
+
+      - name: pg_dump and pg_restore
+        run: bash scripts/test_dump_restore.sh
+
+      - uses: actions/setup-python@v5
+        if: matrix.pg == 18
+        with:
+          python-version: "3.12"
+
+      - name: Python clients and the server tokenizer against the server
+        if: matrix.pg == 18
+        run: |
+          pip install "./py[psycopg]" "psycopg[binary]" numpy tiktoken
+          python py/tests/test_psycopg.py
+          python benchmarks/test_client.py
+          python scripts/test_tokenizer_parity.py

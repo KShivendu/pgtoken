@@ -515,6 +515,7 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pgtoken-rs" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyfastpfor" },
     { name = "tiktoken" },
@@ -526,12 +527,30 @@ dependencies = [
 requires-dist = [
     { name = "constriction" },
     { name = "numpy" },
+    { name = "pgtoken-rs", directory = "py" },
     { name = "psycopg", extras = ["binary"] },
     { name = "pyfastpfor" },
     { name = "tiktoken" },
     { name = "tokenizers", specifier = ">=1.0.0rc0" },
     { name = "zstandard" },
 ]
+
+[[package]]
+name = "pgtoken-rs"
+version = "0.1.0"
+source = { directory = "py" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy" },
+    { name = "psycopg", marker = "extra == 'psycopg'", specifier = ">=3.1" },
+]
+provides-extras = ["psycopg"]
 
 [[package]]
 name = "psycopg"

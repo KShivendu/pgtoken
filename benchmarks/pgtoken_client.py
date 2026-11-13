@@ -13,15 +13,17 @@ Validated against the extension by `test_client.py`, which round-trips both dire
 
 ```
 off  size  field
-  0     1  magic 0xA7
-  1     1  version (1)
-  2     1  codec  0=raw16 1=raw24 2=freq 3=raw8
-  3     1  reserved
-  4     2  vocabulary id (u16 LE)
-  6     2  reserved
-  8     4  token count (u32 LE)
- 12     -  payload
+  0     1  tag = (version 1 << 4) | codec    codec 0=raw16 1=raw24 2=freq 3=raw8 4=freq_lz4
+  1     1  flags, must be zero
+  2     2  vocabulary id (u16 LE; 0 = none)
+  4   1-5  token count, unsigned LEB128, minimal
+  *     -  payload: raw = count x width bytes; freq = one minimal LEB128 rank per token;
+                    freq_lz4 = the freq payload as one lz4 block
 ```
+
+The extension writes `freq_lz4` instead of `freq` when it is smaller. This client reads both but
+always writes plain `freq`, which the extension accepts and compares equal to the `freq_lz4` form
+of the same tokens, so it needs no lz4 library.
 
 ## Coding table format
 
@@ -40,15 +42,13 @@ from __future__ import annotations
 
 import numpy as np
 
-MAGIC = 0xA7
 VERSION = 1
-HEADER_LEN = 12
+LEGACY_MAGIC = 0xA7  # first byte of the pre-release 12-byte layout
 
-RAW16, RAW24, FREQ, RAW8 = 0, 1, 2, 3
-CODEC_NAMES = {RAW16: "raw16", RAW24: "raw24", FREQ: "freq", RAW8: "raw8"}
+RAW16, RAW24, FREQ, RAW8, FREQ_LZ4 = 0, 1, 2, 3, 4
+CODEC_NAMES = {RAW16: "raw16", RAW24: "raw24", FREQ: "freq", RAW8: "raw8", FREQ_LZ4: "freq_lz4"}
 CODEC_IDS = {v: k for k, v in CODEC_NAMES.items()}
 
-_POW256 = np.array([1, 256, 65536, 16777216], dtype=np.uint64)
 
 
 class RankTable:
@@ -68,16 +68,21 @@ class RankTable:
     @classmethod
     def load(cls, path: str) -> "RankTable":
         with open(path, "rb") as f:
-            buf = f.read()
+            return cls.from_bytes(f.read(), what=path)
+
+    @classmethod
+    def from_bytes(cls, buf: bytes, what: str = "ranking") -> "RankTable":
+        """Parse a ranking, e.g. the bytes `pgtoken.vocabulary_codec(name)` returns."""
+        buf = bytes(buf)
         if buf[:4] != b"TNTT":
-            raise ValueError(f"{path}: bad magic, expected TNTT")
+            raise ValueError(f"{what}: bad magic, expected TNTT")
         if buf[4] != 1:
-            raise ValueError(f"{path}: unsupported table version {buf[4]}")
+            raise ValueError(f"{what}: unsupported table version {buf[4]}")
         if buf[5] != 1:
-            raise ValueError(f"{path}: unsupported table kind {buf[5]}")
+            raise ValueError(f"{what}: unsupported table kind {buf[5]}")
         k = int.from_bytes(buf[8:12], "little")
         if len(buf) - 12 != k * 4:
-            raise ValueError(f"{path}: payload is {len(buf) - 12} bytes, expected {k * 4}")
+            raise ValueError(f"{what}: payload is {len(buf) - 12} bytes, expected {k * 4}")
         return cls(np.frombuffer(buf, dtype=np.uint32, count=k, offset=12))
 
     def ranks(self, ids: np.ndarray) -> np.ndarray:
@@ -100,74 +105,146 @@ class RankTable:
         return out
 
 
-# ── Stream VByte ────────────────────────────────────────────────────────────────────────
-# ceil(n/4) control bytes, each packing four 2-bit (length-1) fields, then the data bytes
-# little-endian. Matches the `stream-vbyte` crate the extension uses.
+# ── LEB128 ──────────────────────────────────────────────────────────────────────────────
+# 7 bits per byte, low bits first, high bit set on every byte but the last. Matches
+# core/src/codec/freq.rs, including its refusal of non-minimal and over-32-bit varints.
 
 
-def svb_encode(values: np.ndarray) -> bytes:
-    v = np.asarray(values, dtype=np.uint32)
-    n = len(v)
-    if n == 0:
+def leb_encode(values: np.ndarray) -> bytes:
+    v = np.asarray(values, dtype=np.uint64)
+    if len(v) == 0:
         return b""
-    lens = (1 + (v >= 256) + (v >= 65536) + (v >= 16777216)).astype(np.int64)
-
-    nctrl = (n + 3) // 4
-    fields = (lens - 1).astype(np.uint8)
-    padded = np.zeros(nctrl * 4, dtype=np.uint8)
-    padded[:n] = fields
-    grouped = padded.reshape(nctrl, 4).astype(np.uint16)
-    ctrl = (grouped[:, 0] | (grouped[:, 1] << 2) | (grouped[:, 2] << 4) | (grouped[:, 3] << 6))
-    ctrl = ctrl.astype(np.uint8)
-
-    all_bytes = ((v[:, None].astype(np.uint32) >> (8 * np.arange(4, dtype=np.uint32))) & 0xFF)
-    keep = np.arange(4)[None, :] < lens[:, None]
-    data = all_bytes.astype(np.uint8)[keep]
-    return ctrl.tobytes() + data.tobytes()
+    lens = 1 + sum((v >= (1 << (7 * k))).astype(np.int64) for k in range(1, 5))
+    groups = (v[:, None] >> (7 * np.arange(5, dtype=np.uint64))[None, :]) & 0x7F
+    cont = np.arange(5)[None, :] < (lens[:, None] - 1)
+    b = (groups | (cont.astype(np.uint64) << 7)).astype(np.uint8)
+    keep = np.arange(5)[None, :] < lens[:, None]
+    return b[keep].tobytes()
 
 
-def svb_decode(payload: bytes, n: int) -> np.ndarray:
-    if n == 0:
+def leb_decode(payload: bytes) -> np.ndarray:
+    b = np.frombuffer(payload, dtype=np.uint8)
+    if len(b) == 0:
         return np.zeros(0, dtype=np.uint32)
-    nctrl = (n + 3) // 4
-    ctrl = np.frombuffer(payload, dtype=np.uint8, count=nctrl)
-    data = np.frombuffer(payload, dtype=np.uint8, offset=nctrl)
+    if b[-1] & 0x80:
+        raise ValueError("freq payload ends inside a varint")
+    ends = np.flatnonzero((b & 0x80) == 0)
+    starts = np.concatenate([[0], ends[:-1] + 1])
+    lens = ends - starts + 1
+    if (lens > 5).any():
+        raise ValueError("freq payload has a varint larger than 32 bits")
+    if ((lens > 1) & (b[ends] == 0)).any():
+        raise ValueError("freq payload has a non-minimal varint")
+    idx = starts[:, None] + np.arange(5)[None, :]
+    mask = np.arange(5)[None, :] < lens[:, None]
+    got = (b[np.minimum(idx, len(b) - 1)].astype(np.uint64) & 0x7F) * mask
+    out = (got << (7 * np.arange(5, dtype=np.uint64))[None, :]).sum(axis=1)
+    if (out > 0xFFFFFFFF).any():
+        raise ValueError("freq payload has a varint larger than 32 bits")
+    return out.astype(np.uint32)
 
-    shifts = (2 * (np.arange(n) % 4)).astype(np.uint8)
-    lens = ((np.repeat(ctrl, 4)[:n] >> shifts) & 0b11).astype(np.int64) + 1
-    ends = np.cumsum(lens)
-    starts = ends - lens
 
-    # Pad so the fixed 4-wide gather cannot run off the end on the final value.
-    padded = np.concatenate([data, np.zeros(4, dtype=np.uint8)])
-    idx = starts[:, None] + np.arange(4)[None, :]
-    mask = np.arange(4)[None, :] < lens[:, None]
-    got = padded[idx] * mask
-    return (got.astype(np.uint64) @ _POW256).astype(np.uint32)
+def _read_varint(blob: bytes, off: int) -> tuple[int, int]:
+    v = 0
+    for i in range(5):
+        if off + i >= len(blob):
+            raise ValueError("token count ends inside a varint")
+        b = blob[off + i]
+        if i == 4 and b > 0x0F:
+            raise ValueError("token count is larger than 32 bits")
+        v |= (b & 0x7F) << (7 * i)
+        if not b & 0x80:
+            if b == 0 and i > 0:
+                raise ValueError("token count is not minimally encoded")
+            return v, off + i + 1
+    raise AssertionError("unreachable")
+
+
+def lz4_block_decompress(src: bytes, max_out: int) -> bytes:
+    """Decompress one lz4 block (no frame), refusing output over `max_out` bytes.
+
+    Each sequence is a token byte (high nibble: literal count, low nibble: match length - 4, 15
+    meaning more length bytes follow, each adding up to 255), the literals, then a 2-byte LE
+    offset back into the output and the match. The last sequence has literals only.
+    """
+    out = bytearray()
+    i, n = 0, len(src)
+    try:
+        while i < n:
+            token = src[i]
+            i += 1
+            lit = token >> 4
+            if lit == 15:
+                while True:
+                    b = src[i]
+                    i += 1
+                    lit += b
+                    if b != 255:
+                        break
+            if i + lit > n or len(out) + lit > max_out:
+                raise ValueError("freq_lz4 payload is malformed")
+            out += src[i:i + lit]
+            i += lit
+            if i == n:
+                break
+            off = src[i] | (src[i + 1] << 8)
+            i += 2
+            ml = (token & 15) + 4
+            if token & 15 == 15:
+                while True:
+                    b = src[i]
+                    i += 1
+                    ml += b
+                    if b != 255:
+                        break
+            if off == 0 or off > len(out) or len(out) + ml > max_out:
+                raise ValueError("freq_lz4 payload is malformed")
+            start = len(out) - off
+            while ml > 0:  # the match may overlap its own output, so copy in steps of `off`
+                step = min(ml, off)
+                out += out[start:start + step]
+                start += step
+                ml -= step
+    except IndexError:
+        raise ValueError("freq_lz4 payload ends early") from None
+    return bytes(out)
 
 
 # ── values ──────────────────────────────────────────────────────────────────────────────
 
 
-def parse_header(blob: bytes) -> tuple[int, int, int]:
-    """Return (codec, vocabulary_id, n_tokens). Validates like the extension does."""
-    if len(blob) < HEADER_LEN:
-        raise ValueError(f"value is {len(blob)} bytes, shorter than the {HEADER_LEN}-byte header")
-    if blob[0] != MAGIC:
-        raise ValueError(f"bad magic byte 0x{blob[0]:02X}")
-    if blob[1] != VERSION:
-        raise ValueError(f"unsupported format version {blob[1]}")
-    codec = blob[2]
-    if codec not in CODEC_NAMES:
-        raise ValueError(f"unknown codec id {codec}")
-    if blob[3] or blob[6] or blob[7]:
-        raise ValueError("reserved header bytes are not zero")
-    return codec, int.from_bytes(blob[4:6], "little"), int.from_bytes(blob[8:12], "little")
+def parse_header(blob: bytes) -> tuple[int, int, int, int]:
+    """Return (codec, vocabulary_id, n_tokens, payload offset). Validates like the extension."""
+    if not blob:
+        raise ValueError("value is empty")
+    tag = blob[0]
+    if tag == LEGACY_MAGIC:
+        raise ValueError("unknown value format: tag 0xA7 is the pre-release 12-byte header")
+    if tag >> 4 != VERSION or (tag & 0x0F) not in CODEC_NAMES:
+        raise ValueError(f"unknown value format tag 0x{tag:02X}")
+    if len(blob) < 5:
+        raise ValueError(f"value is {len(blob)} bytes, shorter than the 5-byte minimum header")
+    if blob[1]:
+        raise ValueError(f"value has flags 0x{blob[1]:02X}, which this client does not understand")
+    codec = tag & 0x0F
+    n, off = _read_varint(blob, 4)
+    if codec not in (FREQ, FREQ_LZ4) and len(blob) - off != n * {RAW8: 1, RAW16: 2, RAW24: 3}[codec]:
+        raise ValueError("payload length disagrees with the token count")
+    return codec, int.from_bytes(blob[2:4], "little"), n, off
 
 
 def token_count(blob: bytes) -> int:
     """O(1): reads the header only."""
     return parse_header(blob)[2]
+
+
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while n >= 0x80:
+        out.append((n & 0x7F) | 0x80)
+        n >>= 7
+    out.append(n)
+    return bytes(out)
 
 
 def encode(ids, codec: str, vocabulary_id: int = 0, table: RankTable | None = None) -> bytes:
@@ -178,9 +255,10 @@ def encode(ids, codec: str, vocabulary_id: int = 0, table: RankTable | None = No
     """
     v = np.asarray(ids, dtype=np.uint32)
     cid = CODEC_IDS[codec]
+    if cid == FREQ_LZ4:
+        cid = FREQ  # see the module docstring: this client writes plain freq
 
-    head = bytes([MAGIC, VERSION, cid, 0]) + vocabulary_id.to_bytes(2, "little") + b"\x00\x00"
-    head += len(v).to_bytes(4, "little")
+    head = bytes([(VERSION << 4) | cid, 0]) + vocabulary_id.to_bytes(2, "little") + _varint(len(v))
 
     if cid == RAW8:
         if len(v) and v.max() > 0xFF:
@@ -193,26 +271,28 @@ def encode(ids, codec: str, vocabulary_id: int = 0, table: RankTable | None = No
     if cid == RAW24:
         if len(v) and v.max() > 0xFFFFFF:
             raise ValueError(f"token id {v.max()} does not fit raw24")
-        b = np.zeros((len(v), 3), dtype=np.uint8)
-        b[:, 0] = (v >> 16) & 0xFF  # big-endian, matching the extension
-        b[:, 1] = (v >> 8) & 0xFF
-        b[:, 2] = v & 0xFF
-        return head + b.tobytes()
+        # little-endian, like every field in the format: the low 3 bytes of each <u4
+        return head + v.astype("<u4").view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
     if table is None:
         raise ValueError("freq needs a coding table")
-    return head + svb_encode(table.ranks(v))
+    return head + leb_encode(table.ranks(v))
 
 
 def decode(blob: bytes, table: RankTable | None = None) -> np.ndarray:
-    codec, _vocabulary_id, n = parse_header(blob)
-    payload = blob[HEADER_LEN:]
+    codec, _vocabulary_id, n, off = parse_header(blob)
+    payload = blob[off:]
     if codec == RAW8:
         return np.frombuffer(payload, dtype=np.uint8, count=n).astype(np.uint32)
     if codec == RAW16:
         return np.frombuffer(payload, dtype="<u2", count=n).astype(np.uint32)
     if codec == RAW24:
         b = np.frombuffer(payload, dtype=np.uint8, count=n * 3).reshape(n, 3).astype(np.uint32)
-        return (b[:, 0] << 16) | (b[:, 1] << 8) | b[:, 2]
+        return b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
     if table is None:
         raise ValueError("freq needs a coding table")
-    return table.tokens(svb_decode(payload, n))
+    if codec == FREQ_LZ4:
+        payload = lz4_block_decompress(payload, 5 * n)
+    ranks = leb_decode(payload)
+    if len(ranks) != n:
+        raise ValueError(f"freq payload holds {len(ranks)} tokens but the header says {n}")
+    return table.tokens(ranks)

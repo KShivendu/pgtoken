@@ -10,3 +10,7 @@ benchmarks/*_results.json
 
 # Agent scratch: design plans and specs written during development, not part of the repo.
 docs/
+
+# Benchmark run logs.
+benchmarks/*_run.log
+bench_data/
