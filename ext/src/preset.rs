@@ -50,7 +50,7 @@ pub struct Preset {
     ranking_zst: &'static [u8],
     mapping_zst: &'static [u8],
     /// `None` for a preset whose text must be tokenized client-side.
-    tokenizer: Option<TokenizerSpec>,
+    pub(crate) tokenizer: Option<TokenizerSpec>,
 }
 
 pub const O200K: Preset = Preset {

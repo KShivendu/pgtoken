@@ -51,53 +51,85 @@ impl TiktokenBpe {
         self.ranks.get(bytes).copied().unwrap_or(u32::MAX)
     }
 
-    /// One pre-tokenized piece to ids: tiktoken's `byte_pair_encode`, step for step, so ties
-    /// break the same way (the leftmost of equal ranks merges first).
+    /// One pre-tokenized piece to ids, with the same result as tiktoken's `byte_pair_encode`:
+    /// the pair with the lowest rank merges first, and of equal ranks the leftmost wins.
+    ///
+    /// The parts form a linked list and the candidate pairs sit in a min-heap keyed by
+    /// (rank, start offset), so a piece of n bytes costs O(n log n). A plain rescan after every
+    /// merge costs O(n²), which made one long run such as a million `!` take minutes. Heap
+    /// entries go stale when a neighbour merges. They are skipped on pop when the part is gone or
+    /// its pair rank has changed.
     fn encode_piece(&self, piece: &[u8], out: &mut Vec<u32>) -> Result<(), String> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
         if let Some(&id) = self.ranks.get(piece) {
             out.push(id);
             return Ok(());
         }
-        // (start offset, rank of the pair starting here)
-        let mut parts: Vec<(usize, u32)> = Vec::with_capacity(piece.len() + 1);
-        let mut min = (u32::MAX, usize::MAX);
-        for i in 0..piece.len() - 1 {
-            let r = self.rank(&piece[i..i + 2]);
-            if r < min.0 {
-                min = (r, i);
-            }
-            parts.push((i, r));
+        let n = piece.len();
+        if n == 0 {
+            return Ok(());
         }
-        parts.push((piece.len() - 1, u32::MAX));
-        parts.push((piece.len(), u32::MAX));
-
-        let pair_rank = |parts: &[(usize, u32)], i: usize| {
-            if i + 3 < parts.len() {
-                self.rank(&piece[parts[i].0..parts[i + 3].0])
+        // Part i starts at byte i. `next[i]` is the start of the part after it (n at the end),
+        // `prev[i]` the start of the part before it. `rank[i]` is the rank of merging part i
+        // with the part after it, u32::MAX when there is no such token. `alive[i]` is false
+        // once part i has been merged into the part before it.
+        let mut next: Vec<usize> = (1..=n).collect();
+        let mut prev: Vec<usize> = (0..n).map(|i| i.wrapping_sub(1)).collect();
+        let mut alive = vec![true; n];
+        let mut rank = vec![u32::MAX; n];
+        let mut heap = BinaryHeap::with_capacity(n);
+        for i in 0..n - 1 {
+            rank[i] = self.rank(&piece[i..i + 2]);
+            if rank[i] != u32::MAX {
+                heap.push(Reverse((rank[i], i)));
+            }
+        }
+        let pair_rank = |next: &[usize], i: usize| {
+            let j = next[i];
+            if j < n {
+                self.rank(&piece[i..next[j]])
             } else {
                 u32::MAX
             }
         };
-        while min.0 != u32::MAX {
-            let i = min.1;
-            if i > 0 {
-                parts[i - 1].1 = pair_rank(&parts, i - 1);
+        let mut merges: u32 = 0;
+        while let Some(Reverse((r, i))) = heap.pop() {
+            if !alive[i] || rank[i] != r {
+                continue;
             }
-            parts[i].1 = pair_rank(&parts, i);
-            parts.remove(i + 1);
-            min = (u32::MAX, usize::MAX);
-            for (j, &(_, r)) in parts[..parts.len() - 1].iter().enumerate() {
-                if r < min.0 {
-                    min = (r, j);
+            merges = merges.wrapping_add(1);
+            if merges.is_multiple_of(4096) {
+                interrupt_point();
+            }
+            // Merge part i with the part after it.
+            let j = next[i];
+            alive[j] = false;
+            next[i] = next[j];
+            if next[i] < n {
+                prev[next[i]] = i;
+            }
+            rank[i] = pair_rank(&next, i);
+            if rank[i] != u32::MAX {
+                heap.push(Reverse((rank[i], i)));
+            }
+            let p = prev[i];
+            if p != usize::MAX {
+                rank[p] = pair_rank(&next, p);
+                if rank[p] != u32::MAX {
+                    heap.push(Reverse((rank[p], p)));
                 }
             }
         }
-        for w in parts.windows(2) {
-            let bytes = &piece[w[0].0..w[1].0];
+        let mut i = 0;
+        while i < n {
+            let bytes = &piece[i..next[i]];
             match self.ranks.get(bytes) {
                 Some(&id) => out.push(id),
                 None => return Err(format!("no token for bytes {bytes:?}")),
             }
+            i = next[i];
         }
         Ok(())
     }
@@ -108,10 +140,19 @@ impl Tokenizer for TiktokenBpe {
         let mut out = Vec::with_capacity(text.len() / 4 + 1);
         for m in self.pattern.find_iter(text) {
             let m = m.map_err(|e| format!("pre-tokenizer failed: {e}"))?;
+            interrupt_point();
             self.encode_piece(m.as_str().as_bytes(), &mut out)?;
         }
         Ok(out)
     }
+}
+
+/// Let PostgreSQL stop a long tokenize: `statement_timeout`, `pg_cancel_backend` and Ctrl-C all
+/// land here. Plain `cargo test` binaries run outside a server and have no interrupt flag to read.
+#[inline]
+fn interrupt_point() {
+    #[cfg(not(test))]
+    pgrx::check_for_interrupts!();
 }
 
 /// The pre-tokenizer of tiktoken's `o200k_base`, verbatim (`tiktoken_ext/openai_public.py`).
@@ -139,6 +180,93 @@ mod unit_tests {
         assert_eq!(o200k("Hello, world!"), [13225, 11, 2375, 0]);
         assert_eq!(o200k("🦜"), [4103, 99, 250]);
         assert_eq!(o200k(""), Vec::<u32>::new());
+    }
+
+    /// The old O(n²) merge, kept as the reference: tiktoken's `byte_pair_encode` step for step.
+    fn reference_merge(bpe: &super::TiktokenBpe, piece: &[u8]) -> Vec<u32> {
+        let rank = |b: &[u8]| bpe.ranks.get(b).copied().unwrap_or(u32::MAX);
+        if let Some(&id) = bpe.ranks.get(piece) {
+            return vec![id];
+        }
+        let mut parts: Vec<(usize, u32)> = (0..piece.len() - 1)
+            .map(|i| (i, rank(&piece[i..i + 2])))
+            .collect();
+        parts.push((piece.len() - 1, u32::MAX));
+        parts.push((piece.len(), u32::MAX));
+        let pair = |parts: &[(usize, u32)], i: usize| {
+            if i + 3 < parts.len() {
+                rank(&piece[parts[i].0..parts[i + 3].0])
+            } else {
+                u32::MAX
+            }
+        };
+        loop {
+            let (r, i) = parts[..parts.len() - 1]
+                .iter()
+                .enumerate()
+                .map(|(j, &(_, r))| (r, j))
+                .min()
+                .unwrap();
+            if r == u32::MAX {
+                break;
+            }
+            if i > 0 {
+                parts[i - 1].1 = pair(&parts, i - 1);
+            }
+            parts[i].1 = pair(&parts, i);
+            parts.remove(i + 1);
+        }
+        parts
+            .windows(2)
+            .map(|w| bpe.ranks[&piece[w[0].0..w[1].0]])
+            .collect()
+    }
+
+    #[test]
+    fn heap_merge_matches_the_reference_merge() {
+        let spec = O200K.tokenizer.as_ref().unwrap();
+        let bpe = &super::TiktokenBpe::from_mapping(&O200K.mapping(), spec.mergeable, spec.pattern)
+            .unwrap();
+        // Repeated runs, where ties between equal ranks decide the result, plus mixed text.
+        let mut pieces: Vec<Vec<u8>> = ["!", "!!", "=", "-", " ", "ab", "\u{e9}", "🦜", "aaab"]
+            .iter()
+            .flat_map(|u| (1..300).map(move |k| u.repeat(k).into_bytes()))
+            .collect();
+        // Deterministic pseudo-random bytes from a small alphabet, so many merges apply.
+        let alphabet = b"abcde !?.-_=\n\t()";
+        let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+        for len in 1..400 {
+            let mut p = Vec::with_capacity(len);
+            for _ in 0..len {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                p.push(alphabet[(x % alphabet.len() as u64) as usize]);
+            }
+            pieces.push(p);
+        }
+        for p in &pieces {
+            let mut got = Vec::new();
+            bpe.encode_piece(p, &mut got).unwrap();
+            assert_eq!(
+                got,
+                reference_merge(bpe, p),
+                "piece {:?}",
+                String::from_utf8_lossy(p)
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_run_of_one_character_is_fast() {
+        // One pre-tokenizer piece of 500,000 bytes (fancy-regex refuses a million). In a debug
+        // build the old O(n²) merge took 82 s on 100,000 bytes and the heap merge 0.17 s.
+        let text = "!".repeat(500_000);
+        let t = std::time::Instant::now();
+        let ids = o200k(&text);
+        let took = t.elapsed();
+        assert!(!ids.is_empty());
+        assert!(took.as_secs() < 10, "took {took:?}");
     }
 
     #[test]

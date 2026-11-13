@@ -64,14 +64,13 @@
 //! | assignment (`INSERT … SELECT`, bare `ALTER … TYPE`) | refused |
 //! | `RECEIVE` (`COPY … BINARY`) | refused |
 //!
-//! ## What is checked, and what is trusted
+//! ## What is checked
 //!
-//! Text input validates every id against the vocabulary's declared `vocab_size` (`encode_for`).
-//! The binary paths do not: they check the header — tag, flags, token count, payload length,
-//! vocabulary — and hand the payload through untouched. Scanning ids there would put an O(n) pass
-//! on the operation this project exists to make fast, and the harm is bounded, since an
-//! out-of-vocabulary id decodes back to itself and a detokenizer that finds no mapping for it
-//! fails loudly. A client framing a binary value is already trusted to frame a sound header.
+//! Every write path validates every id against the vocabulary's declared `vocab_size`: text and
+//! `int[]` input in `encode_for`, the binary paths in `validate`. The binary paths also check the
+//! header (tag, flags, token count, payload length, vocabulary) and then store the payload
+//! unchanged. The id check costs them one decode pass. Without it, a binary write could store an
+//! id that `pg_dump` writes out but text input refuses on restore.
 
 use std::ffi::{CStr, CString};
 
@@ -370,16 +369,9 @@ pub fn encode_for(ids: &[u32], typmod: i32) -> Vec<u8> {
         no_vocabulary_typmod()
     };
 
-    // A cheap, exact check that these ids came from this tokenizer — but only for the paths that
-    // arrive here, which is text input and (from Task 7) `int[]` input. The binary paths do not
-    // reach this: `RECEIVE` compares the header's vocabulary and codec against the column's
-    // typmod (`check_against_typmod`) and then hands the payload through untouched;
-    // `tokens_recv_bytes` has no typmod to compare against and just checks the header through
-    // `validate`. Neither scans a single id. That is deliberate. Scanning every id would put an
-    // O(n) pass on precisely the operation this project exists to make fast, and the harm is
-    // bounded — an out-of-vocabulary id decodes back to itself, the stride stays uniform, and a
-    // detokenizer that later finds no mapping for it fails loudly. So: text and `int[]` input
-    // validate ids against `vocab_size`; the binary paths trust the client that framed the bytes.
+    // A cheap, exact check that these ids came from this tokenizer. Text and `int[]` input arrive
+    // here. The binary paths make the same check in `validate`, so every stored id is one a
+    // `pg_dump` restore will accept back as text.
     //
     // A missing catalog row means a pg_dump restore is still running: its schema section created
     // the column's type from the long typmod form, and tables in a schema that sorts before
@@ -526,23 +518,33 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     value::same(a, b).unwrap_or_else(|e| bail(e))
 }
 
-/// Check a blob's **header** and return it unchanged.
+/// Check a blob from a binary write path (`RECEIVE`, `tokens_recv_bytes`) and return it
+/// unchanged.
 ///
 /// What this guarantees: the tag (version and codec), flags and token count are sound, the raw
-/// codecs' payload length matches the token count exactly, and the vocabulary id is nonzero, i.e.
-/// not [`UNRESOLVED`]. Failing loudly on any of that beats storing something that decodes to
-/// plausible-looking wrong IDs.
+/// codecs' payload length matches the token count exactly, the vocabulary id is nonzero, i.e.
+/// not [`UNRESOLVED`], and every token id is below the vocabulary's `vocab_size`.
 ///
-/// What it deliberately does **not** check: that the vocabulary id names a vocabulary that
-/// actually exists — a hand-framed value naming an unregistered id passes this and can be stored
-/// in a bare column. That is caught elsewhere for any typmod'd column, by the length coercion
-/// (`encode_for`'s `vocab_size_for` lookup) or by [`check_against_typmod`]; it also does not check
-/// the token ids in the payload. Reading them would cost an O(n) pass on the binary write path —
-/// see the note in [`encode_for`] on why the binary paths trust their client where text input does
-/// not. `RECEIVE` pairs this with [`check_against_typmod`], which compares the header against the
-/// column; neither looks at a single id.
+/// The id check costs one decode pass, and it is what keeps a dump restorable. `pg_dump` writes
+/// ids as text, and text input refuses an id outside the vocabulary. So a binary write that
+/// stored `{60000}` in a 32000-token vocabulary would make that table's whole `COPY` fail on
+/// restore. Checking here moves the error to the write, where the client can fix it.
+///
+/// When the vocabulary has no catalog row, the ids are not checked and the codec never runs.
+/// That happens while a `pg_dump` restore is still loading (see [`encode_for`]), and for a
+/// hand-framed value naming an unregistered id. Such a value can be stored in a bare column. Any
+/// typmod'd column catches it, through the length coercion or [`check_against_typmod`].
 pub fn validate(v: &[u8]) -> Vec<u8> {
     require_vocabulary(v);
+    let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
+    if let Some(size) = vocab_size(h.vocabulary_id) {
+        if let Some(&bad) = decode_value(v).iter().find(|&&id| id >= size) {
+            bail(format!(
+                "token id {bad} is outside vocabulary {} (size {size})",
+                vocabulary_label(h.vocabulary_id)
+            ));
+        }
+    }
     v.to_vec()
 }
 
@@ -1275,6 +1277,54 @@ mod tests {
         assert_eq!(got, Some("{5,9,70000}".to_string()));
     }
 
+    #[pg_test(error = "token id 60000 is outside vocabulary t_oov (size 32000)")]
+    fn binary_write_refuses_an_id_outside_the_vocabulary() {
+        // 32000 tokens fit in raw16, which can still hold id 60000. pg_dump would write that id
+        // as text, and text input refuses it, so the restore would fail. Refuse it here instead.
+        vocab("t_oov", 32000);
+        let mut v = Spi::get_one::<Vec<u8>>(
+            "SELECT pgtoken.tokens_send('{5,31999}'::pgtoken.tokens('t_oov'))",
+        )
+        .expect("send")
+        .expect("NULL");
+        let n = v.len();
+        v[n - 2..].copy_from_slice(&60000u16.to_le_bytes());
+        let hex: String = v.iter().map(|b| format!("{b:02x}")).collect();
+        Spi::get_one::<String>(&format!(
+            "SELECT pgtoken.tokens_recv_bytes(decode('{hex}', 'hex'))::int[]::text"
+        ))
+        .unwrap();
+    }
+
+    #[pg_test]
+    fn hash_values_are_pinned() {
+        // Hash indexes and hash partitions store these numbers on disk. A change to the hash, the
+        // seed mixing or the canonical form would silently break them after an upgrade, so any
+        // such change has to show up here first. o200k is a preset, so its vocabulary id is fixed.
+        Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
+        let row = Spi::get_three::<i32, i64, i64>(
+            "SELECT pgtoken.tokens_hash(v), pgtoken.tokens_hash_extended(v, 0), \
+                    pgtoken.tokens_hash_extended(v, 42) \
+             FROM (SELECT '{1,2,3}'::pgtoken.o200k AS v) s",
+        )
+        .expect("hash");
+        let lz = Spi::get_two::<String, i32>(
+            "SELECT d.codec, pgtoken.tokens_hash(v) \
+             FROM (SELECT repeat('hello world ', 400)::pgtoken.o200k AS v) s, pgtoken.describe(v) d",
+        )
+        .expect("hash lz4");
+        assert_eq!(
+            row,
+            (
+                Some(472_099_173),
+                Some(696_413_631_665_121_637),
+                Some(-4_771_386_950_555_120_711)
+            )
+        );
+        // A `freq_lz4` value hashes its decompressed form, so this also pins `canonical()`.
+        assert_eq!(lz, (Some("freq_lz4".to_string()), Some(579_235_454)));
+    }
+
     #[pg_test]
     fn binary_copy_roundtrips_through_send_and_recv() {
         // The only route from SQL to a type's RECEIVE function: COPY BINARY calls SEND on the
@@ -1354,7 +1404,7 @@ mod tests {
         // bytes and every other test here would still pass.
         //
         // The value is hand-framed so its header names `freq` against vocabulary 60002, which no
-        // test trains: tag 12 (version 1, codec freq), flags 00, id 60002 as u16 LE (62ea), token
+        // test registers, so `tokens_recv_bytes` cannot check its ids and skips the codec: tag 12 (version 1, codec freq), flags 00, id 60002 as u16 LE (62ea), token
         // count 01, then one payload byte. A header-only check accepts it and hands the bytes
         // back; anything that touches the codec must load a ranking that does not exist, and dies
         // with "has no ranking".
