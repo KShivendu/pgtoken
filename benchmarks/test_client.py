@@ -68,8 +68,17 @@ FREQ_VOCAB_SIZE = 16_777_216
 FREQ_TRAIN_IDS = [7, 3, 1, 24912, 2375, 0, 255, 256] * 40
 
 
-def connect(**kwargs) -> psycopg.Connection:
-    """Connect to the local no-root PostgreSQL set up by `setup_pg.sh`."""
+DB = os.environ.get("PGTOKEN_CLIENT_DB", "pgtoken_client_test")
+
+
+def connect(dbname: str = DB, **kwargs) -> psycopg.Connection:
+    """Connect to `dbname` on the server PGHOST names, or else the local one from `setup_pg.sh`.
+
+    Runs in its own database (created if missing; override with PGTOKEN_CLIENT_DB), never the
+    maintenance database, since it creates vocabularies that can never be dropped.
+    """
+    if os.environ.get("PGHOST"):
+        return psycopg.connect(dbname=dbname, autocommit=True, **kwargs)
     script = os.path.join(os.path.dirname(HERE), "setup_pg.sh")
     out = subprocess.run(["bash", script, "--env"], capture_output=True, text=True, check=True).stdout
     env = {}
@@ -83,7 +92,7 @@ def connect(**kwargs) -> psycopg.Connection:
         host=env["PGHOST"],
         port=int(env["PGPORT"]),
         user=env.get("PGUSER", "postgres"),
-        dbname=os.environ.get("PGDATABASE", "postgres"),
+        dbname=dbname,
         autocommit=True,
         **kwargs,
     )
@@ -133,6 +142,9 @@ def ensure_freq_table(conn, name: str, vocab_size: int) -> tuple[int, K.RankTabl
 def main() -> int:
     failures: list[str] = []
 
+    with connect(os.environ.get("PGDATABASE", "postgres")) as admin:
+        if not admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", [DB]).fetchone():
+            admin.execute(f'CREATE DATABASE "{DB}"')
     with connect() as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS pgtoken")
 

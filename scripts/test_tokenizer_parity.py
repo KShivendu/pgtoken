@@ -69,6 +69,27 @@ def connect(dbname: str) -> psycopg.Connection:
     return psycopg.connect(dbname=dbname, autocommit=True)
 
 
+def repo_docs() -> dict[str, list[str]]:
+    """When the token-storage corpus is not there (CI), this repository's own files: its prose
+    (the READMEs) and its code (Rust and Python), cut into 4 KB documents at line ends."""
+    root = Path(__file__).resolve().parent.parent
+    files = {
+        "prose": [root / "README.md", root / "py" / "README.md"],
+        "code": sorted(root.glob("core/src/**/*.rs")) + sorted(root.glob("benchmarks/*.py")),
+    }
+    out = {}
+    for domain, paths in files.items():
+        docs, cur = [], ""
+        for p in paths:
+            for line in p.read_text(encoding="utf-8").splitlines(keepends=True):
+                cur += line
+                if len(cur) >= 4096:
+                    docs.append(cur)
+                    cur = ""
+        out[domain] = docs[:DOCS_PER_DOMAIN]
+    return out
+
+
 def corpus_docs(r50k: tiktoken.Encoding) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for domain in ("prose", "code", "hindi"):
@@ -143,8 +164,12 @@ def main() -> int:
 
     o200k = tiktoken.get_encoding("o200k_base")
     r50k = tiktoken.get_encoding("r50k_base")
-    log(f"decoding {DOCS_PER_DOMAIN} docs x {DOC_TOKENS} r50k tokens per domain from {CORPUS}")
-    domains = corpus_docs(r50k)
+    if CORPUS.exists():
+        log(f"decoding {DOCS_PER_DOMAIN} docs x {DOC_TOKENS} r50k tokens per domain from {CORPUS}")
+        domains = corpus_docs(r50k)
+    else:
+        log(f"{CORPUS} not found, so checking this repository's own READMEs and source files")
+        domains = repo_docs()
 
     failures: list[str] = []
     summary = []

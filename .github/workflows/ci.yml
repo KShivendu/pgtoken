@@ -150,3 +150,34 @@ jobs:
           cargo pgrx install --release \
             --features pg${{ matrix.pg }} --no-default-features \
             --pg-config /usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
+
+      # The checks above run inside pgrx's own test cluster. These run against a real server with
+      # the installed extension, as a user would: dump and restore on every version, and the
+      # client libraries and the tokenizer once, since they do not depend on the version.
+      - name: Start the packaged PostgreSQL
+        run: |
+          # The runner image may ship another PostgreSQL too, so start this version's cluster by
+          # name and use its port rather than assuming 5432.
+          sudo pg_ctlcluster ${{ matrix.pg }} main start
+          port=$(pg_lsclusters -h | awk '$1 == "${{ matrix.pg }}" && $2 == "main" {print $3}')
+          sudo -u postgres psql -p "$port" -c "CREATE ROLE \"$USER\" SUPERUSER LOGIN"
+          echo "PGHOST=/var/run/postgresql" >> "$GITHUB_ENV"
+          echo "PGPORT=$port" >> "$GITHUB_ENV"
+          echo "PGDATABASE=postgres" >> "$GITHUB_ENV"
+          echo "/usr/lib/postgresql/${{ matrix.pg }}/bin" >> "$GITHUB_PATH"
+
+      - name: pg_dump and pg_restore
+        run: bash scripts/test_dump_restore.sh
+
+      - uses: actions/setup-python@v5
+        if: matrix.pg == 18
+        with:
+          python-version: "3.12"
+
+      - name: Python clients and the server tokenizer against the server
+        if: matrix.pg == 18
+        run: |
+          pip install "./py[psycopg]" "psycopg[binary]" numpy tiktoken
+          python py/tests/test_psycopg.py
+          python benchmarks/test_client.py
+          python scripts/test_tokenizer_parity.py
