@@ -46,7 +46,7 @@ fn quote_ident(name: &str) -> String {
         .unwrap_or_else(|| bail("quote_ident returned NULL"))
 }
 
-/// Whether `tokens.<name>` currently exists as a type.
+/// Whether `pgtoken.<name>` currently exists as a type.
 ///
 /// A catalog row surviving `drop_vocabulary` does not imply the domain still does — the row is
 /// permanent, the domain is not — so this is a real catalog lookup rather than inferred from
@@ -55,7 +55,7 @@ fn quote_ident(name: &str) -> String {
 /// `CREATE DOMAIN` would even apply.
 fn domain_exists(name: &str) -> bool {
     Spi::get_one_with_args::<bool>(
-        "SELECT to_regtype('tokens.' || quote_ident($1)) IS NOT NULL",
+        "SELECT to_regtype('pgtoken.' || quote_ident($1)) IS NOT NULL",
         &[name.into()],
     )
     .unwrap_or_else(|e| bail(e))
@@ -108,14 +108,14 @@ SELECT pg_catalog.pg_extension_config_dump('pgtoken.vocabulary', '');
 -- between vocabularies takes an explicit cast (see `tokens::tokens_typmod_apply_impl`). A hint that
 -- stopped at "ALTER TABLE ... TYPE" would walk the user straight into a second error. Inner
 -- dollar-quoting keeps the SQL readable rather than doubling every quote.
--- The exact statement shape printed here — the `tokens.<name>` domain spelling, since the docs
+-- The exact statement shape printed here — the `pgtoken.<name>` domain spelling, since the docs
 -- call the domain the intended surface, not the `pgtoken.tokens('<name>')` base-type one — is
 -- executed by `tokens::tests::an_explicit_cast_moves_a_value_to_another_vocabulary`.
 CREATE FUNCTION pgtoken.vocabulary_is_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'vocabulary % is immutable', OLD.name
-        USING HINT = $h$create a new vocabulary, then: ALTER TABLE t ALTER COLUMN c TYPE tokens.<new> USING c::tokens.<new>$h$;
+        USING HINT = $h$create a new vocabulary, then: ALTER TABLE t ALTER COLUMN c TYPE pgtoken.<new> USING c::pgtoken.<new>$h$;
 END
 $$;
 
@@ -124,10 +124,9 @@ CREATE TRIGGER vocabulary_is_immutable
     BEFORE UPDATE OR DELETE ON pgtoken.vocabulary
     FOR EACH ROW EXECUTE FUNCTION pgtoken.vocabulary_is_immutable();
 
--- Vocabularies also appear as domains, so a column reads `body tokens.o200k` and psql can
--- complete `tokens.<tab>`. Task 6 fills this schema.
-CREATE SCHEMA tokens;
-GRANT USAGE ON SCHEMA tokens TO PUBLIC;
+-- Vocabularies appear as domains in this schema, so a column reads `body pgtoken.o200k`. They
+-- live here rather than in a schema of their own so that installing never collides with a
+-- user's schema: an app with API or auth tokens may well have one called `tokens`.
 "#,
     name = "vocabulary_catalog",
 );
@@ -183,7 +182,7 @@ DROP FUNCTION pgtoken.tokens_to_int4array_impl(bytea);
     finalize,
 );
 
-/// Create a vocabulary and its `tokens.<name>` domain, and return its id.
+/// Create a vocabulary and its `pgtoken.<name>` domain, and return its id.
 ///
 /// Two kinds. A **preset** vocabulary (`create_vocabulary('o200k')`, or any name with
 /// `preset => 'o200k'`) uses a ranking and mapping bundled in the extension: it defaults to `freq`
@@ -301,11 +300,27 @@ fn create_vocabulary(
     )
     .unwrap_or_else(|e| bail(e));
 
+    // The domain shares schema `pgtoken` with the extension's own types, so a name taken by one
+    // of those (`tokens`, `vocabulary`, their array types) cannot be a vocabulary.
+    let taken = Spi::get_one_with_args::<bool>(
+        "SELECT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace \
+           WHERE n.nspname = 'pgtoken' AND t.typname = $1 \
+             AND NOT (t.typtype = 'd' AND t.typbasetype = 'pgtoken.tokens'::regtype))",
+        &[name.into()],
+    )
+    .unwrap_or_else(|e| bail(e))
+    .unwrap_or(false);
+    if taken {
+        bail(format!(
+            "vocabulary name {name:?} is taken: pgtoken already has a type called pgtoken.{name}"
+        ));
+    }
+
     // The domain is what users write. It carries the packed typmod, so the base type name never
     // has to appear in a schema definition — and two vocabularies become two distinct types,
     // which makes mixing tokenizers a type error rather than a silent recode.
     Spi::run(&format!(
-        "CREATE DOMAIN tokens.{} AS pgtoken.tokens('{}')",
+        "CREATE DOMAIN pgtoken.{} AS pgtoken.tokens('{}')",
         quote_ident(name),
         name
     ))
@@ -383,7 +398,7 @@ fn drop_vocabulary(name: &str) {
              be dropped again"
         ));
     }
-    Spi::run(&format!("DROP DOMAIN tokens.{}", quote_ident(name))).unwrap_or_else(|e| bail(e));
+    Spi::run(&format!("DROP DOMAIN pgtoken.{}", quote_ident(name))).unwrap_or_else(|e| bail(e));
 }
 
 /// Resolve a name to the three fields a typmod needs. Called at DDL time only.
@@ -554,6 +569,31 @@ fn vocabulary_codec(
 #[pg_schema]
 mod tests {
     use pgrx::prelude::*;
+
+    #[pg_test(
+        error = "vocabulary name \"vocabulary\" is taken: pgtoken already has a type called pgtoken.vocabulary"
+    )]
+    fn a_vocabulary_cannot_take_the_name_of_a_pgtoken_type() {
+        // Vocabulary domains share schema pgtoken with the extension's own types.
+        Spi::run("SELECT pgtoken.create_vocabulary('vocabulary', vocab_size => 300)").unwrap();
+    }
+
+    #[pg_test]
+    fn vocabulary_types_live_in_schema_pgtoken_and_no_other_schema_is_made() {
+        // pgtoken creates no schema besides its own, so a database that already has a schema
+        // called `tokens` (API keys, auth tokens) installs it fine.
+        let tokens_schema = Spi::get_one::<bool>(
+            "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'tokens')",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!tokens_schema, "no schema called tokens should exist");
+        Spi::run("SELECT pgtoken.create_vocabulary('in_pgtoken', vocab_size => 300)").unwrap();
+        let t = Spi::get_one::<String>("SELECT 'pgtoken.in_pgtoken'::regtype::text")
+            .unwrap()
+            .unwrap();
+        assert_eq!(t, "pgtoken.in_pgtoken");
+    }
 
     #[pg_test]
     fn vocabulary_codec_reports_a_raw_vocabulary() {
@@ -730,7 +770,7 @@ mod tests {
 
     /// A binary-coercible `pgtoken.tokens -> bytea` cast, so a test can inspect a stored value's
     /// actual byte length. Domains are binary-compatible with their base type, so this also
-    /// works on a value whose declared column type is `tokens.<name>`. Created inside the test's
+    /// works on a value whose declared column type is `pgtoken.<name>`. Created inside the test's
     /// own transaction, which pgrx rolls back, and skipped if one already exists.
     fn ensure_bytea_cast() {
         Spi::run(
@@ -749,7 +789,7 @@ mod tests {
     fn creating_a_vocabulary_emits_a_domain() {
         // A table declared with the domain accepts a literal and reads it back.
         Spi::run("SELECT pgtoken.create_vocabulary('dom1', 32000)").expect("create");
-        Spi::run("CREATE TABLE dom1_docs (body tokens.dom1)").expect("create table");
+        Spi::run("CREATE TABLE dom1_docs (body pgtoken.dom1)").expect("create table");
         Spi::run("INSERT INTO dom1_docs (body) VALUES ('{1,2,3}')").expect("insert");
         let got =
             Spi::get_one::<Vec<i32>>("SELECT body::int[] FROM dom1_docs").expect("query failed");
@@ -761,7 +801,7 @@ mod tests {
         Spi::run("SELECT pgtoken.create_vocabulary('dom2', 256)").expect("create");
         let base = Spi::get_one::<String>(
             "SELECT format_type(typbasetype, typtypmod) FROM pg_type \
-             WHERE oid = 'tokens.dom2'::regtype",
+             WHERE oid = 'pgtoken.dom2'::regtype",
         )
         .expect("query failed");
         // The long typmod form (name, id, compression, width) that pg_dump needs; see typmod.rs.
@@ -777,7 +817,7 @@ mod tests {
         // inserted through it lands at dom2's declared width (256 -> raw8, one byte per token)
         // rather than the wider unresolved encoding.
         ensure_bytea_cast();
-        Spi::run("CREATE TABLE dom2_docs (body tokens.dom2)").expect("create table");
+        Spi::run("CREATE TABLE dom2_docs (body pgtoken.dom2)").expect("create table");
         Spi::run("INSERT INTO dom2_docs (body) VALUES ('{1,2,3}')").expect("insert");
         let len = Spi::get_one::<i32>("SELECT length(pgtoken.tokens_send(body)) FROM dom2_docs")
             .expect("query failed");
@@ -800,8 +840,8 @@ mod tests {
         Spi::run(
             "SELECT pgtoken.create_vocabulary('dom_a', 32000); \
              SELECT pgtoken.create_vocabulary('dom_b', 32000); \
-             CREATE TABLE dom_a_t (body tokens.dom_a); \
-             CREATE TABLE dom_b_t (body tokens.dom_b); \
+             CREATE TABLE dom_a_t (body pgtoken.dom_a); \
+             CREATE TABLE dom_b_t (body pgtoken.dom_b); \
              INSERT INTO dom_b_t (body) VALUES ('{1,2}');",
         )
         .expect("setup");
@@ -815,7 +855,7 @@ mod tests {
         // id list, with no per-vocabulary helper functions behind them.
         create("'ovl_hit', 8, id => 62301");
         Spi::run(
-            "CREATE TABLE ovl_hit_t (b tokens.ovl_hit); \
+            "CREATE TABLE ovl_hit_t (b pgtoken.ovl_hit); \
              INSERT INTO ovl_hit_t VALUES ('{0,1}'); \
              CREATE TEMP TABLE ovl_stage (id int, bytes bytea); \
              INSERT INTO ovl_stage VALUES (0, 'hello'), (1, ' world');",
@@ -840,13 +880,13 @@ mod tests {
         assert_eq!(helpers, Some(1), "only pgtoken.text(pgtoken.tokens) itself");
     }
 
-    #[pg_test(error = "function text(tokens.ovl_bare) does not exist")]
+    #[pg_test(error = "function text(pgtoken.ovl_bare) does not exist")]
     fn bare_text_without_pgtoken_on_search_path_is_an_error_not_the_ids() {
         // Without `pgtoken` on search_path PostgreSQL finds no function named `text` for this
         // type, and it only reads `text(b)` as a cast for I/O and binary-coercible casts, not for
         // a cast with a function. An error is the honest outcome; it used to print the id list.
         create("'ovl_bare', 8, id => 62304");
-        Spi::run("CREATE TABLE ovl_bare_t (b tokens.ovl_bare); SET search_path = public")
+        Spi::run("CREATE TABLE ovl_bare_t (b pgtoken.ovl_bare); SET search_path = public")
             .expect("setup");
         Spi::get_one::<String>("SELECT text(b) FROM ovl_bare_t").unwrap();
     }
@@ -854,7 +894,7 @@ mod tests {
     #[pg_test(error = "vocabulary ovl_nomap has no mapping; run pgtoken.load_mapping first")]
     fn the_text_cast_needs_a_mapping() {
         create("'ovl_nomap', 8, id => 62305");
-        Spi::get_one::<String>("SELECT '{0}'::tokens.ovl_nomap::text").unwrap();
+        Spi::get_one::<String>("SELECT '{0}'::pgtoken.ovl_nomap::text").unwrap();
     }
 
     #[pg_test]
@@ -862,7 +902,7 @@ mod tests {
         // Backing a GIN index over to_tsvector is most of why the text cast exists.
         create("'ovl_idx', 8, id => 62302");
         Spi::run(
-            "CREATE TABLE ovl_idx_t (b tokens.ovl_idx); \
+            "CREATE TABLE ovl_idx_t (b pgtoken.ovl_idx); \
              INSERT INTO ovl_idx_t VALUES ('{0,1}'); \
              CREATE TEMP TABLE ovl_idx_stage (id int, bytes bytea); \
              INSERT INTO ovl_idx_stage VALUES (0, 'hello'), (1, ' world');",
@@ -906,7 +946,7 @@ mod tests {
         // The catalog row `drop_vocabulary`'s guard checks via `lookup_by_name` is permanent by
         // design, so it cannot tell a second drop from a first one — only `domain_exists` can.
         // Without that second check this fell through to Postgres's raw
-        // `type "tokens.dom_double" does not exist` on the second call, which does not say the
+        // `type "pgtoken.dom_double" does not exist` on the second call, which does not say the
         // vocabulary itself is fine and only its domain is already gone.
         Spi::run("SELECT pgtoken.create_vocabulary('dom_double', 300)").expect("create");
         Spi::run("SELECT pgtoken.drop_vocabulary('dom_double')").expect("first drop");
@@ -961,7 +1001,7 @@ mod tests {
              CREATE TEMP TABLE g_stage (id int, bytes bytea); \
              INSERT INTO g_stage VALUES (0, 'Hello'), (1, ', '), (2, 'world'), (3, '!'); \
              SELECT pgtoken.load_mapping('grantee', 'SELECT id, bytes FROM g_stage'); \
-             CREATE TABLE g_docs (body tokens.grantee); \
+             CREATE TABLE g_docs (body pgtoken.grantee); \
              INSERT INTO g_docs VALUES ('{0,1,2,3}'); \
              GRANT SELECT ON g_docs TO PUBLIC; \
              CREATE ROLE pgtoken_reader;",
@@ -1001,7 +1041,7 @@ mod tests {
         let id = create("'o200k'");
         assert_eq!(id, 65280, "the first id in o200k's reserved range");
         Spi::run(
-            "CREATE TABLE p_docs (body tokens.o200k); \
+            "CREATE TABLE p_docs (body pgtoken.o200k); \
              INSERT INTO p_docs VALUES ('{13225,11,2375,0}');",
         )
         .expect("setup");
@@ -1054,9 +1094,9 @@ mod tests {
         let raw = create("'chat_raw', preset => 'o200k', compression => 'raw'");
         assert_eq!((chat, raw), (65280, 65281));
         let (a, b, codec) = Spi::get_three::<String, String, String>(
-            "SELECT pgtoken.text('{13225,0}'::tokens.chat), \
-                    pgtoken.text('{13225,0}'::tokens.chat_raw), \
-                    (pgtoken.describe('{13225,0}'::tokens.chat_raw)).codec",
+            "SELECT pgtoken.text('{13225,0}'::pgtoken.chat), \
+                    pgtoken.text('{13225,0}'::pgtoken.chat_raw), \
+                    (pgtoken.describe('{13225,0}'::pgtoken.chat_raw)).codec",
         )
         .expect("query failed");
         assert_eq!(a.as_deref(), Some("Hello!"));
@@ -1068,7 +1108,7 @@ mod tests {
         assert_eq!(ranking, None, "raw reads no ranking");
         let typ = Spi::get_one::<String>(
             "SELECT format_type(typbasetype, typtypmod) FROM pg_type \
-             WHERE oid = 'tokens.chat'::regtype",
+             WHERE oid = 'pgtoken.chat'::regtype",
         )
         .expect("query failed");
         assert_eq!(

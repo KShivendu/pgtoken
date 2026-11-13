@@ -1,6 +1,6 @@
 # pgtoken-rs
 
-Python client for [pgtoken](../README.md). It reads and writes `tokens.<vocabulary>` columns as
+Python client for [pgtoken](../README.md). It reads and writes `pgtoken.<vocabulary>` columns as
 numpy arrays of token IDs. Values are encoded and decoded on your machine, with the same Rust codec
 the extension uses, so the server does no work per token.
 
@@ -45,7 +45,7 @@ After `register`, the connection knows three things:
 docs = [[24912, 2375], [9906, 11, 1917]]   # token ids from your tokenizer
 
 with conn.cursor() as cur, cur.copy("COPY documents (id, body) FROM STDIN (FORMAT BINARY)") as cp:
-    cp.set_types(["int8", vocab.type_name])   # vocab.type_name is 'tokens.o200k'
+    cp.set_types(["int8", vocab.type_name])   # vocab.type_name is 'pgtoken.o200k'
     for i, ids in enumerate(docs, start=1):
         cp.write_row((i, ids))
 ```
@@ -62,7 +62,7 @@ a 1-D sequence of integers. This matters for `COPY BINARY`, because the server c
 header of a binary value.
 
 The server still checks that a value belongs to the column's vocabulary. Inserting an `o200k` value
-into a `tokens.cl100k` column fails.
+into a `pgtoken.cl100k` column fails.
 
 Reading a `freq` value whose vocabulary was not registered on that connection raises a
 `ValueError` that names the missing vocabulary id. `raw` values need no ranking, so they always

@@ -34,8 +34,8 @@ DB = "pgtoken_eq"
 TABLES = {
     "text (pglz)": ("eq_text", "text"),
     "text (lz4)": ("eq_lz4", "text COMPRESSION lz4"),
-    "tokens raw": ("eq_raw", "tokens.eq_raw"),
-    "tokens freq": ("eq_freq", "tokens.eq_freq"),
+    "tokens raw": ("eq_raw", "pgtoken.eq_raw"),
+    "tokens freq": ("eq_freq", "pgtoken.eq_freq"),
 }
 QUERIES = {
     # count(DISTINCT body) is not here: an aggregate's DISTINCT always sorts, and tokens has no

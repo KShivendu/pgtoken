@@ -184,7 +184,7 @@ def main() -> int:
 
     # The text input path must agree with tokenize(): a literal cast to the column type.
     for text in HARD_CASES:
-        got = conn.execute("SELECT (%s::text)::tokens.o200k::int[]", [text]).fetchone()[0]
+        got = conn.execute("SELECT (%s::text)::pgtoken.o200k::int[]", [text]).fetchone()[0]
         if got != o200k.encode_ordinary(text) and text not in ("{1,2,3}",):
             failures.append(f"text input {text[:40]!r}: {got[:8]} vs {o200k.encode_ordinary(text)[:8]}")
             log("  MISMATCH " + failures[-1])
