@@ -84,7 +84,8 @@ fn zcomp<'a>(level: i32, dict: Option<&'a EncoderDictionary<'static>>) -> Compre
         Some(d) => Compressor::with_prepared_dictionary(d).unwrap(),
         None => Compressor::new(level).unwrap(),
     };
-    c.set_parameter(CParameter::Format(FrameFormat::Magicless)).unwrap();
+    c.set_parameter(CParameter::Format(FrameFormat::Magicless))
+        .unwrap();
     c.set_parameter(CParameter::ChecksumFlag(false)).unwrap();
     c.set_parameter(CParameter::ContentSizeFlag(false)).unwrap();
     c.set_parameter(CParameter::DictIdFlag(false)).unwrap();
@@ -96,7 +97,8 @@ fn zdecomp<'a>(dict: Option<&'a DecoderDictionary<'static>>) -> Decompressor<'a>
         Some(d) => Decompressor::with_prepared_dictionary(d).unwrap(),
         None => Decompressor::new().unwrap(),
     };
-    d.set_parameter(DParameter::Format(FrameFormat::Magicless)).unwrap();
+    d.set_parameter(DParameter::Format(FrameFormat::Magicless))
+        .unwrap();
     d
 }
 
@@ -104,9 +106,14 @@ fn main() {
     let dir = std::env::args()
         .nth(1)
         .expect("usage: lz_on_freq <dir from export_codec_corpus.py>");
-    let table = RankTable::from_bytes(&std::fs::read(format!("{dir}/o200k.tntt")).unwrap()).unwrap();
+    let table =
+        RankTable::from_bytes(&std::fs::read(format!("{dir}/o200k.tntt")).unwrap()).unwrap();
     let map = ByteMap::from_bytes(&std::fs::read(format!("{dir}/o200k.tnmap")).unwrap()).unwrap();
-    let text_of = |ids: &[u32]| -> Vec<u8> { ids.iter().flat_map(|&t| map.get(t).unwrap_or(&[]).iter().copied()).collect() };
+    let text_of = |ids: &[u32]| -> Vec<u8> {
+        ids.iter()
+            .flat_map(|&t| map.get(t).unwrap_or(&[]).iter().copied())
+            .collect()
+    };
     let freq_of = |ids: &[u32]| -> Vec<u8> {
         let mut o = Vec::new();
         encode_freq(ids, &table, &mut o).unwrap();
@@ -156,7 +163,11 @@ fn main() {
         }
     }
     let t = &table;
-    let freq_dec = move |p: &[u8], n: usize, scratch: &mut Vec<u8>, inflate: &mut dyn FnMut(&[u8], &mut Vec<u8>)| -> Vec<u32> {
+    let freq_dec = move |p: &[u8],
+                         n: usize,
+                         scratch: &mut Vec<u8>,
+                         inflate: &mut dyn FnMut(&[u8], &mut Vec<u8>)|
+          -> Vec<u32> {
         if p[0] == 0 {
             decode_freq(&p[1..], n, t).unwrap()
         } else {
@@ -280,10 +291,22 @@ fn main() {
 
     let test = read_records(&format!("{dir}/test.bin"));
     let texts: Vec<Vec<u8>> = test.iter().map(|(_, ids)| text_of(ids)).collect();
-    println!("{} test values; sizes include the 4-byte header + LEB128 count for token arms", test.len());
+    println!(
+        "{} test values; sizes include the 4-byte header + LEB128 count for token arms",
+        test.len()
+    );
     println!(
         "{:<15} {:<22} {:>9} {:>9} {:>7} {:>7} {:>6} {:>9} {:>9} {:>9}",
-        "values", "method", "B/value", "p50 B", "vs text", "vs freq", "plain", "enc ns/t", "dec ns/t", "dec µs/v"
+        "values",
+        "method",
+        "B/value",
+        "p50 B",
+        "vs text",
+        "vs freq",
+        "plain",
+        "enc ns/t",
+        "dec ns/t",
+        "dec µs/v"
     );
 
     let mut groups: Vec<(u8, usize)> = Vec::new();
@@ -295,7 +318,9 @@ fn main() {
     // Per arm, per value: stored bytes, for the examples printed after the table.
     let mut sizes: Vec<Vec<usize>> = vec![vec![0; test.len()]; arms.len()];
     for &(dom, len) in &groups {
-        let idx: Vec<usize> = (0..test.len()).filter(|&i| test[i].0 == dom && test[i].1.len() == len).collect();
+        let idx: Vec<usize> = (0..test.len())
+            .filter(|&i| test[i].0 == dom && test[i].1.len() == len)
+            .collect();
         let tokens: usize = idx.len() * len;
         let text_bytes: usize = idx.iter().map(|&i| texts[i].len()).sum();
         let mut freq_total = 0usize;
@@ -308,11 +333,19 @@ fn main() {
                 (arm.enc)(&test[i].1, &texts[i], &mut p);
                 let back = (arm.dec)(&p, len, &mut scratch);
                 if arm.text {
-                    assert!(back.iter().map(|&b| b as u8).eq(texts[i].iter().copied()), "{} round trip", arm.name);
+                    assert!(
+                        back.iter().map(|&b| b as u8).eq(texts[i].iter().copied()),
+                        "{} round trip",
+                        arm.name
+                    );
                 } else {
                     assert_eq!(back, test[i].1, "{} round trip", arm.name);
                 }
-                sizes[a][i] = if arm.text { p.len() - 1 } else { stored(len, &p) };
+                sizes[a][i] = if arm.text {
+                    p.len() - 1
+                } else {
+                    stored(len, &p)
+                };
                 payloads.push(p);
             }
             let mut per: Vec<usize> = idx.iter().map(|&i| sizes[a][i]).collect();
@@ -352,7 +385,11 @@ fn main() {
                 per[per.len() / 2],
                 text_bytes as f64 / total as f64,
                 freq_total as f64 / total as f64,
-                if arm.text { "-".to_string() } else { plain.to_string() },
+                if arm.text {
+                    "-".to_string()
+                } else {
+                    plain.to_string()
+                },
                 ns(be),
                 ns(bd),
                 bd * 1e6 / (reps * idx.len()) as f64,
@@ -370,12 +407,24 @@ fn main() {
         if dom == 2 {
             continue;
         }
-        let mut idx: Vec<usize> = (0..test.len()).filter(|&i| test[i].0 == dom && test[i].1.len() == len).collect();
-        idx.sort_by(|&x, &y| (sizes[1][x] as f64 / sizes[0][x] as f64).total_cmp(&(sizes[1][y] as f64 / sizes[0][y] as f64)));
+        let mut idx: Vec<usize> = (0..test.len())
+            .filter(|&i| test[i].0 == dom && test[i].1.len() == len)
+            .collect();
+        idx.sort_by(|&x, &y| {
+            (sizes[1][x] as f64 / sizes[0][x] as f64)
+                .total_cmp(&(sizes[1][y] as f64 / sizes[0][y] as f64))
+        });
         for (tag, i) in [("most", idx[0]), ("least", idx[idx.len() - 1])] {
             println!(
                 "  {} {:>4} ids, lz4 helps {:<5}: text {:>5}, {:>5} -> {:>5} -> {:>5}  {:?}",
-                DOMAINS[dom as usize], len, tag, texts[i].len(), sizes[0][i], sizes[1][i], sizes[4][i], snippet(i)
+                DOMAINS[dom as usize],
+                len,
+                tag,
+                texts[i].len(),
+                sizes[0][i],
+                sizes[1][i],
+                sizes[4][i],
+                snippet(i)
             );
             if dom == 3 {
                 break;

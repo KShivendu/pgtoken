@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use crate::codec::{freq, freq_lz4, raw};
 #[cfg(test)]
 use crate::header::VarintError;
-use crate::header::{Codec, Header, HeaderError, MAX_HEADER_LEN};
+use crate::header::{Codec, Header, HeaderError, MAX_HEADER_LEN, MAX_TOKENS};
 use crate::tables::RankTable;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +18,7 @@ pub enum ValueError {
     Freq(freq::FreqError),
     /// The codec needs a coding table that was not supplied.
     MissingTable(Codec),
-    /// More IDs than the 32-bit token count can express.
+    /// More IDs than one value may hold ([`MAX_TOKENS`]).
     TooManyTokens(usize),
 }
 
@@ -38,8 +38,7 @@ impl std::fmt::Display for ValueError {
             ValueError::TooManyTokens(n) => {
                 write!(
                     f,
-                    "{n} tokens exceeds the {} the format can address",
-                    u32::MAX
+                    "{n} tokens is more than the {MAX_TOKENS} one value may hold"
                 )
             }
         }
@@ -74,7 +73,10 @@ pub fn encode(
     vocabulary_id: u16,
     table: Option<&RankTable>,
 ) -> Result<Vec<u8>, ValueError> {
-    let n_tokens = u32::try_from(ids.len()).map_err(|_| ValueError::TooManyTokens(ids.len()))?;
+    let n_tokens = u32::try_from(ids.len())
+        .ok()
+        .filter(|&n| n <= MAX_TOKENS)
+        .ok_or(ValueError::TooManyTokens(ids.len()))?;
     let mut out = Vec::with_capacity(MAX_HEADER_LEN + ids.len() * 2);
 
     match codec {
@@ -371,7 +373,10 @@ mod tests {
             ),
             (
                 &[0x14, 0, 1, 0, 0],
-                ValueError::Header(HeaderError::FreqPayloadLen { n_tokens: 0, got: 0 }),
+                ValueError::Header(HeaderError::FreqPayloadLen {
+                    n_tokens: 0,
+                    got: 0,
+                }),
             ),
             (
                 &[0x14, 0, 1, 0, 3, 0xFF],
@@ -435,6 +440,33 @@ mod tests {
     }
 
     #[test]
+    fn token_count_is_capped_on_read_and_write() {
+        // A 1 MB freq_lz4 value could otherwise claim 255 million tokens. Header only: the cap
+        // must fire before any payload is looked at or any buffer is reserved.
+        let mut v = Header::new(Codec::FreqLz4, 1, MAX_TOKENS + 1).to_bytes();
+        v.extend(std::iter::repeat_n(0u8, 1 << 20));
+        assert_eq!(
+            Header::parse(&v).unwrap_err(),
+            HeaderError::TooManyTokens(MAX_TOKENS + 1)
+        );
+        let mut v = Header::new(Codec::Raw8, 0, MAX_TOKENS + 1).to_bytes();
+        v.extend(std::iter::repeat_n(0u8, MAX_TOKENS as usize + 1));
+        assert!(matches!(
+            Header::parse(&v),
+            Err(HeaderError::TooManyTokens(_))
+        ));
+        // Exactly MAX_TOKENS still reads, and the encoder refuses one more.
+        let ids = vec![0u32; MAX_TOKENS as usize];
+        let at_cap = encode(&ids, Codec::Raw8, 0, None).unwrap();
+        assert_eq!(decode(&at_cap, None).unwrap().len(), MAX_TOKENS as usize);
+        let over = vec![0u32; MAX_TOKENS as usize + 1];
+        assert!(matches!(
+            encode(&over, Codec::Raw8, 0, None),
+            Err(ValueError::TooManyTokens(_))
+        ));
+    }
+
+    #[test]
     fn freq_writes_lz4_only_when_smaller() {
         let t = table();
         let short = encode(&[3, 1, 2], Codec::Freq, 1, Some(&t)).unwrap();
@@ -443,7 +475,12 @@ mod tests {
         let v = encode(&ids, Codec::Freq, 1, Some(&t)).unwrap();
         assert_eq!(v[0], Codec::FreqLz4.tag());
         let plain = canonical(&v).unwrap();
-        assert!(v.len() * 4 < plain.len(), "{} vs {} bytes", v.len(), plain.len());
+        assert!(
+            v.len() * 4 < plain.len(),
+            "{} vs {} bytes",
+            v.len(),
+            plain.len()
+        );
         assert_eq!(decode(&v, Some(&t)).unwrap(), ids);
         assert_eq!(describe(&v).unwrap().0.n_tokens, ids.len() as u32);
     }
@@ -470,7 +507,11 @@ mod tests {
         literal_only.extend_from_slice(freq_payload);
         assert_eq!(decode(&literal_only, Some(&t)).unwrap(), ids);
 
-        for (a, b) in [(&ours, &plain), (&ours, &literal_only), (&plain, &literal_only)] {
+        for (a, b) in [
+            (&ours, &plain),
+            (&ours, &literal_only),
+            (&plain, &literal_only),
+        ] {
             assert_ne!(a, b);
             assert!(same(a, b).unwrap(), "same tokens must compare equal");
             assert_eq!(canonical(a).unwrap(), canonical(b).unwrap());
@@ -488,6 +529,9 @@ mod tests {
         let hex = |v: &[u8]| v.iter().map(|b| format!("{b:02x}")).collect::<String>();
         let v = encode(&repetitive(), Codec::Freq, 65280, Some(&table())).unwrap();
         // tag 14 (freq_lz4), flags 00, id 65280, count 0xf0 0x01 (240), then the lz4 block.
-        assert_eq!(hex(&v), "140000fff0018f00010203d59a0c0a0800ff20600203d59a0c0a");
+        assert_eq!(
+            hex(&v),
+            "140000fff0018f00010203d59a0c0a0800ff20600203d59a0c0a"
+        );
     }
 }

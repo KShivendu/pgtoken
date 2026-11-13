@@ -53,6 +53,12 @@ pub const MIN_LEN: usize = FIXED_LEN + 1;
 pub const MAX_HEADER_LEN: usize = FIXED_LEN + 5;
 /// Flag bits this build understands. None yet.
 pub const KNOWN_FLAGS: u8 = 0;
+/// The most tokens one value may hold: 2^26 = 67,108,864. Far past any model's context window,
+/// and its ids as `int[]` (256 MB) stay well under PostgreSQL's 1 GB allocation limit. The real
+/// point is `freq_lz4`: lz4 expands up to 255-fold, so without a cap a 1 MB value could claim
+/// 255 million tokens and make every reader allocate over a gigabyte. With it, the worst 1 MB
+/// value decodes to about 330 MB. Raising it later keeps every stored value readable.
+pub const MAX_TOKENS: u32 = 1 << 26;
 
 /// How the token-ID sequence is encoded in the payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -189,6 +195,9 @@ impl Header {
         }
         let vocabulary_id = u16::from_le_bytes([buf[2], buf[3]]);
         let (n_tokens, used) = read_varint(&buf[FIXED_LEN..]).map_err(HeaderError::Count)?;
+        if n_tokens > MAX_TOKENS {
+            return Err(HeaderError::TooManyTokens(n_tokens));
+        }
 
         // `freq` cannot decode without its ranking, so a zero id is a broken value. The converse
         // is deliberately allowed: a `raw` value names the vocabulary it belongs to even though
@@ -327,6 +336,8 @@ pub enum HeaderError {
         want: usize,
         got: usize,
     },
+    /// A token count above [`MAX_TOKENS`].
+    TooManyTokens(u32),
     /// A `freq` payload that cannot hold `n_tokens` varints of 1 to 5 bytes, or a `freq_lz4`
     /// payload that cannot decompress to that many.
     FreqPayloadLen {
@@ -362,6 +373,10 @@ impl fmt::Display for HeaderError {
                 "value has flags 0x{b:02X}, which this build does not understand"
             ),
             HeaderError::Count(e) => write!(f, "token count {e}"),
+            HeaderError::TooManyTokens(n) => write!(
+                f,
+                "value claims {n} tokens, more than the {MAX_TOKENS} one value may hold"
+            ),
             HeaderError::MissingTable(c) => {
                 write!(
                     f,

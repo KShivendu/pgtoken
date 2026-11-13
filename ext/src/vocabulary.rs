@@ -157,6 +157,24 @@ REVOKE EXECUTE ON FUNCTION pgtoken.create_vocabulary(text, int, text, int, text)
 REVOKE EXECUTE ON FUNCTION pgtoken.drop_vocabulary(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pgtoken.train(text, text, int) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION pgtoken.load_mapping(text, text) FROM PUBLIC;
+
+-- pgrx declares every `#[pg_extern]` against `bytea`, and the type's SQL re-declares the `_impl`
+-- ones against `pgtoken.tokens`, pointing at the same C symbols. The `bytea` versions would
+-- otherwise stay installed and callable by anyone, as a second API that skips the type's checks
+-- (`tokens_eq_impl(bytea, bytea)` takes any bytes). Dropped here, last, so nothing depends on
+-- them; the C symbols stay, used by the re-declared functions.
+DROP FUNCTION pgtoken.tokens_in_impl(cstring, oid, int);
+DROP FUNCTION pgtoken.tokens_out_impl(bytea);
+DROP FUNCTION pgtoken.tokens_send_impl(bytea);
+DROP FUNCTION pgtoken.tokens_recv_impl(internal, oid, int);
+DROP FUNCTION pgtoken.tokens_typmod_apply_impl(bytea, int, bool);
+DROP FUNCTION pgtoken.text_impl(bytea);
+DROP FUNCTION pgtoken.tokens_eq_impl(bytea, bytea);
+DROP FUNCTION pgtoken.tokens_ne_impl(bytea, bytea);
+DROP FUNCTION pgtoken.tokens_hash_impl(bytea);
+DROP FUNCTION pgtoken.tokens_from_int4array_impl(int[], int, bool);
+DROP FUNCTION pgtoken.tokens_from_text_impl(text, int, bool);
+DROP FUNCTION pgtoken.tokens_to_int4array_impl(bytea);
 "#,
     name = "privileges",
     // Emitted last, after every function it names exists. The alternative -- a `requires` list --

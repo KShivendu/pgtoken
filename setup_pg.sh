@@ -17,10 +17,10 @@
 # the PGDG apt repository or a source build; see README.md.
 #
 # Usage:
-#   bash 12_postgres/setup_pg.sh            # install and initialise
-#   bash 12_postgres/setup_pg.sh --start    # start the server
-#   bash 12_postgres/setup_pg.sh --stop     # stop it
-#   bash 12_postgres/setup_pg.sh --psql     # open a shell against it
+#   bash setup_pg.sh            # install and initialise
+#   bash setup_pg.sh --start    # start the server
+#   bash setup_pg.sh --stop     # stop it
+#   bash setup_pg.sh --psql     # open a shell against it
 
 set -euo pipefail
 
@@ -115,7 +115,7 @@ cat <<EOF
 
 Done. PostgreSQL $PG_MAJOR is installed at $DEST and registered with pgrx.
 
-  start:  bash 12_postgres/setup_pg.sh --start
-  psql:   bash 12_postgres/setup_pg.sh --psql
-  env:    eval "\$(bash 12_postgres/setup_pg.sh --env)"
+  start:  bash setup_pg.sh --start
+  psql:   bash setup_pg.sh --psql
+  env:    eval "\$(bash setup_pg.sh --env)"
 EOF

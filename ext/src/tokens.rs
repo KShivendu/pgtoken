@@ -1342,15 +1342,27 @@ mod tests {
 
     #[pg_test(error = "pgtoken.tokens requires a vocabulary")]
     fn applying_a_negative_typmod_by_hand_errors() {
-        // The `_impl` functions stay callable from SQL (a known wart of hand-writing the type),
-        // so the length coercion has to refuse a typmod that names no vocabulary rather than
-        // trusting the planner never to pass one. This is the only reachable caller of that arm.
+        // The length coercion is an ordinary function anyone can call, so it has to refuse a
+        // typmod that names no vocabulary rather than trusting the planner never to pass one.
+        // This is the only reachable caller of that arm.
         vocab("t_bare_tm", 300);
-        Spi::get_one::<Vec<u8>>(
-            "SELECT pgtoken.tokens_typmod_apply_impl(\
-               pgtoken.tokens_send('{1,2}'::pgtoken.tokens('t_bare_tm')), -1, false)",
+        Spi::get_one::<String>(
+            "SELECT pgtoken.tokens('{1,2}'::pgtoken.tokens('t_bare_tm'), -1, false)::text",
         )
         .unwrap();
+    }
+
+    #[pg_test]
+    fn no_bytea_helper_functions_are_left_installed() {
+        // pgrx declares each `_impl` function against `bytea`. They must not survive the install:
+        // `tokens_eq_impl(bytea, bytea)` would compare any bytes, outside the type's checks.
+        let left = Spi::get_one::<String>(
+            "SELECT string_agg(p.oid::regprocedure::text, ', ') FROM pg_proc p \
+             JOIN pg_namespace n ON n.oid = p.pronamespace \
+             WHERE n.nspname = 'pgtoken' AND p.proname LIKE '%\\_impl'",
+        )
+        .unwrap();
+        assert_eq!(left, None, "still installed: {left:?}");
     }
 
     #[pg_test(error = "cannot read a pgtoken.tokens value that has no vocabulary")]
@@ -1555,7 +1567,9 @@ mod tests {
         let stored = Spi::get_one::<Vec<u8>>("SELECT pgtoken.tokens_send(body) FROM rep")
             .expect("send")
             .expect("NULL");
-        let plain = pgtoken_core::value::canonical(&stored).unwrap().into_owned();
+        let plain = pgtoken_core::value::canonical(&stored)
+            .unwrap()
+            .into_owned();
         assert_eq!(plain[0], pgtoken_core::header::Codec::Freq.tag());
         let hex: String = plain.iter().map(|b| format!("{b:02x}")).collect();
         Spi::run(&format!(
@@ -1569,7 +1583,10 @@ mod tests {
              FROM rep a, rep b WHERE a.id = 1 AND b.id = 2",
         )
         .expect("compare");
-        assert_eq!((bytes_differ, equal, same_hash), (Some(true), Some(true), Some(true)));
+        assert_eq!(
+            (bytes_differ, equal, same_hash),
+            (Some(true), Some(true), Some(true))
+        );
         assert_eq!(
             Spi::get_one::<i64>("SELECT count(*) FROM (SELECT DISTINCT body FROM rep) s")
                 .expect("distinct"),
