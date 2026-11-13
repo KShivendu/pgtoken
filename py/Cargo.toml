@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Python bindings for pgtoken-core: decode stored pgtoken values client-side."
 license = "Apache-2.0"
+repository = "https://github.com/KShivendu/pgtoken"
+# `<[T]>::as_chunks`, stable since 1.88.
+rust-version = "1.88"
 publish = false
 
 # A client reading a pgtoken column in binary mode gets the stored value bytes. This decodes

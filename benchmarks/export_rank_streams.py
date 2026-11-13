@@ -22,7 +22,9 @@ import tiktoken
 import zstandard
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CORPUS = os.path.expanduser("~/projects/token-storage/data/corpus")
+CORPUS = os.path.join(
+    os.environ.get("TOKEN_STORAGE_REPO", os.path.expanduser("~/projects/token-storage")), "data/corpus"
+)
 
 
 def main() -> int:
