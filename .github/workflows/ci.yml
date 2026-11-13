@@ -156,8 +156,12 @@ jobs:
       # client libraries and the tokenizer once, since they do not depend on the version.
       - name: Start the packaged PostgreSQL
         run: |
-          # The runner image may ship another PostgreSQL too, so start this version's cluster by
-          # name and use its port rather than assuming 5432.
+          # The packages create a cluster only for some versions on the runner, and the image may
+          # ship another PostgreSQL too. So create this version's cluster if it is missing, start
+          # it by name, and use its port rather than assuming 5432.
+          if ! pg_lsclusters -h | awk '$1 == "${{ matrix.pg }}" && $2 == "main"' | grep -q .; then
+            sudo pg_createcluster ${{ matrix.pg }} main
+          fi
           sudo pg_ctlcluster ${{ matrix.pg }} main start
           port=$(pg_lsclusters -h | awk '$1 == "${{ matrix.pg }}" && $2 == "main" {print $3}')
           sudo -u postgres psql -p "$port" -c "CREATE ROLE \"$USER\" SUPERUSER LOGIN"
