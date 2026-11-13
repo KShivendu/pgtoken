@@ -3,7 +3,9 @@
 //! Everything here operates on token IDs. Turning text into IDs is the caller's job, done
 //! with whatever tokenizer they already use — that stays outside this library on purpose.
 
-use crate::codec::{freq, raw};
+use std::borrow::Cow;
+
+use crate::codec::{freq, freq_lz4, raw};
 #[cfg(test)]
 use crate::header::VarintError;
 use crate::header::{Codec, Header, HeaderError, MAX_HEADER_LEN};
@@ -63,6 +65,9 @@ impl From<freq::FreqError> for ValueError {
 }
 
 /// Encode token IDs into a stored value.
+///
+/// Asking for `freq` (or `freq_lz4`) writes whichever of the two is smaller, so the header may
+/// say `freq_lz4` though `freq` was asked for. Both decode the same way and compare equal.
 pub fn encode(
     ids: &[u32],
     codec: Codec,
@@ -71,15 +76,30 @@ pub fn encode(
 ) -> Result<Vec<u8>, ValueError> {
     let n_tokens = u32::try_from(ids.len()).map_err(|_| ValueError::TooManyTokens(ids.len()))?;
     let mut out = Vec::with_capacity(MAX_HEADER_LEN + ids.len() * 2);
-    Header::new(codec, vocabulary_id, n_tokens).write_to(&mut out);
 
     match codec {
-        Codec::Raw8 => raw::encode8(ids, &mut out)?,
-        Codec::Raw16 => raw::encode16(ids, &mut out)?,
-        Codec::Raw24 => raw::encode24(ids, &mut out)?,
-        Codec::Freq => {
+        Codec::Raw8 | Codec::Raw16 | Codec::Raw24 => {
+            Header::new(codec, vocabulary_id, n_tokens).write_to(&mut out);
+            match codec {
+                Codec::Raw8 => raw::encode8(ids, &mut out)?,
+                Codec::Raw16 => raw::encode16(ids, &mut out)?,
+                _ => raw::encode24(ids, &mut out)?,
+            }
+        }
+        Codec::Freq | Codec::FreqLz4 => {
             let t = table.ok_or(ValueError::MissingTable(codec))?;
-            freq::encode_freq(ids, t, &mut out)?
+            let mut payload = Vec::with_capacity(ids.len() * 2);
+            freq::encode_freq(ids, t, &mut payload)?;
+            match freq_lz4::compress(&payload) {
+                Some(c) => {
+                    Header::new(Codec::FreqLz4, vocabulary_id, n_tokens).write_to(&mut out);
+                    out.extend_from_slice(&c);
+                }
+                None => {
+                    Header::new(Codec::Freq, vocabulary_id, n_tokens).write_to(&mut out);
+                    out.extend_from_slice(&payload);
+                }
+            }
         }
     }
     Ok(out)
@@ -96,7 +116,50 @@ pub fn decode(value: &[u8], table: Option<&RankTable>) -> Result<Vec<u32>, Value
             let t = table.ok_or(ValueError::MissingTable(h.codec))?;
             freq::decode_freq(payload, h.n_tokens as usize, t)?
         }
+        Codec::FreqLz4 => {
+            let t = table.ok_or(ValueError::MissingTable(h.codec))?;
+            let n = h.n_tokens as usize;
+            freq::decode_freq(&freq_lz4::decompress(payload, n)?, n, t)?
+        }
     })
+}
+
+/// The one byte form of a value that equality and hashing use: a `freq_lz4` value rewritten as
+/// the plain `freq` value it decompresses to, anything else as it is.
+///
+/// Every other codec has exactly one byte form per token list (`encoding_is_canonical`). lz4
+/// does not: many blocks decompress to the same bytes, and a newer lz4 library may choose a
+/// different one, so equal tokens could otherwise sit in unequal bytes. Needs no ranking table.
+pub fn canonical(value: &[u8]) -> Result<Cow<'_, [u8]>, ValueError> {
+    let (h, payload) = Header::parse(value)?;
+    if h.codec != Codec::FreqLz4 {
+        return Ok(Cow::Borrowed(value));
+    }
+    let freq_payload = freq_lz4::decompress(payload, h.n_tokens as usize)?;
+    let mut out = Header::new(Codec::Freq, h.vocabulary_id, h.n_tokens).to_bytes();
+    out.extend_from_slice(&freq_payload);
+    Ok(Cow::Owned(out))
+}
+
+/// Whether two stored values hold the same tokens under the same vocabulary. Identical bytes
+/// answer at once; a `freq_lz4` value is decompressed only when the bytes differ and the
+/// headers agree on vocabulary, codec family and token count.
+pub fn same(a: &[u8], b: &[u8]) -> Result<bool, ValueError> {
+    if a == b {
+        return Ok(true);
+    }
+    let (ha, _) = Header::parse(a)?;
+    let (hb, _) = Header::parse(b)?;
+    if ha.codec != Codec::FreqLz4 && hb.codec != Codec::FreqLz4 {
+        return Ok(false);
+    }
+    if ha.vocabulary_id != hb.vocabulary_id
+        || ha.n_tokens != hb.n_tokens
+        || ha.codec.family() != hb.codec.family()
+    {
+        return Ok(false);
+    }
+    Ok(canonical(a)? == canonical(b)?)
 }
 
 /// Re-encode a value under a different codec, without leaving the token-ID domain.
@@ -303,8 +366,18 @@ mod tests {
                 ValueError::Header(HeaderError::LegacyFormat),
             ),
             (
+                &[0x15, 0, 1, 0, 0],
+                ValueError::Header(HeaderError::UnknownTag(0x15)),
+            ),
+            (
                 &[0x14, 0, 1, 0, 0],
-                ValueError::Header(HeaderError::UnknownTag(0x14)),
+                ValueError::Header(HeaderError::FreqPayloadLen { n_tokens: 0, got: 0 }),
+            ),
+            (
+                &[0x14, 0, 1, 0, 3, 0xFF],
+                ValueError::Freq(freq::FreqError::Lz4(
+                    "expected another byte, found none".into(),
+                )),
             ),
             (
                 &[0x21, 0, 1, 0, 0],
@@ -354,5 +427,67 @@ mod tests {
         for (bytes, want) in cases {
             assert_eq!(decode(bytes, Some(&t)).as_ref(), Err(want), "{bytes:02x?}");
         }
+    }
+
+    /// A value with lines that repeat, which lz4 shrinks and plain `freq` cannot.
+    fn repetitive() -> Vec<u32> {
+        [3u32, 1, 2, 0, 200_018, 7].repeat(40)
+    }
+
+    #[test]
+    fn freq_writes_lz4_only_when_smaller() {
+        let t = table();
+        let short = encode(&[3, 1, 2], Codec::Freq, 1, Some(&t)).unwrap();
+        assert_eq!(short[0], Codec::Freq.tag(), "3 tokens stay plain freq");
+        let ids = repetitive();
+        let v = encode(&ids, Codec::Freq, 1, Some(&t)).unwrap();
+        assert_eq!(v[0], Codec::FreqLz4.tag());
+        let plain = canonical(&v).unwrap();
+        assert!(v.len() * 4 < plain.len(), "{} vs {} bytes", v.len(), plain.len());
+        assert_eq!(decode(&v, Some(&t)).unwrap(), ids);
+        assert_eq!(describe(&v).unwrap().0.n_tokens, ids.len() as u32);
+    }
+
+    #[test]
+    fn equality_ignores_how_lz4_chose_to_compress() {
+        // The same tokens, three byte forms: what this build writes, plain freq, and an lz4
+        // block that copies nothing (all literals), as a different lz4 version might write.
+        let t = table();
+        let ids = repetitive();
+        let ours = encode(&ids, Codec::Freq, 1, Some(&t)).unwrap();
+        let plain = canonical(&ours).unwrap().into_owned();
+        let (h, freq_payload) = Header::parse(&plain).unwrap();
+        let mut literal_only = Header::new(Codec::FreqLz4, 1, h.n_tokens).to_bytes();
+        // One lz4 sequence of only literals: token 0xF0 (15+ literals), length extension
+        // bytes, then the bytes themselves.
+        let mut rest = freq_payload.len() - 15;
+        literal_only.push(0xF0);
+        while rest >= 255 {
+            literal_only.push(255);
+            rest -= 255;
+        }
+        literal_only.push(rest as u8);
+        literal_only.extend_from_slice(freq_payload);
+        assert_eq!(decode(&literal_only, Some(&t)).unwrap(), ids);
+
+        for (a, b) in [(&ours, &plain), (&ours, &literal_only), (&plain, &literal_only)] {
+            assert_ne!(a, b);
+            assert!(same(a, b).unwrap(), "same tokens must compare equal");
+            assert_eq!(canonical(a).unwrap(), canonical(b).unwrap());
+        }
+        let other = encode(&repetitive()[1..], Codec::Freq, 1, Some(&t)).unwrap();
+        assert!(!same(&ours, &other).unwrap());
+        let other_vocab = encode(&ids, Codec::Freq, 2, Some(&t)).unwrap();
+        assert!(!same(&ours, &other_vocab).unwrap());
+    }
+
+    #[test]
+    fn golden_freq_lz4_value() {
+        // Pins this build's lz4 output. If an lz4 upgrade changes it, old values still decode
+        // and compare equal (see above); update the golden after checking that.
+        let hex = |v: &[u8]| v.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let v = encode(&repetitive(), Codec::Freq, 65280, Some(&table())).unwrap();
+        // tag 14 (freq_lz4), flags 00, id 65280, count 0xf0 0x01 (240), then the lz4 block.
+        assert_eq!(hex(&v), "140000fff0018f00010203d59a0c0a0800ff20600203d59a0c0a");
     }
 }

@@ -6,7 +6,9 @@ the one in the database, so this asserts it rather than assuming it:
 
   * bytes the extension wrote decode correctly in Python,
   * bytes Python wrote decode correctly in the extension,
-  * and the two produce byte-identical output for the same input.
+  * and the two produce byte-identical output for the same input, except where the extension
+    wrote `freq_lz4` (lz4 made it smaller): Python writes plain `freq` there, and the extension
+    must compare the two equal.
 
 The Rust client in py/ (`pgtoken_rs`) gets the same encode and decode checks, since that is
 the codec the read benchmark times.
@@ -45,6 +47,7 @@ CASES = [
     [65536, 200018, 1000000],  # beyond raw16
     [199999, 3, 1, 7654321],  # ids the coding table never saw
     list(range(300)),
+    [464, 13, 11, 262, 0] * 80,  # repeats: a freq vocabulary stores this as freq_lz4
 ]
 
 # (codec, vocabulary name, vocab_size). vocab_size is what selects the width under test now,
@@ -155,7 +158,7 @@ def main() -> int:
             if codec == "freq"
         }
 
-        n_cases = 0
+        n_cases = n_lz4 = 0
         for ids in CASES:
             arr = np.asarray(ids, dtype=np.uint32)
             lit = "{" + ",".join(map(str, ids)) + "}"
@@ -176,8 +179,16 @@ def main() -> int:
                 )
                 py_blob = K.encode(arr, codec, vocab_id, rank_table)
 
-                # 1. identical output for identical input
-                if pg_blob != py_blob:
+                # 1. identical output for identical input; for freq_lz4, equal under `=`
+                if pg_blob[0] == 0x14:
+                    n_lz4 += 1
+                    same = conn.execute(
+                        "SELECT pgtoken.tokens_recv_bytes(%s) = pgtoken.tokens_recv_bytes(%s)",
+                        (pg_blob, py_blob),
+                    ).fetchone()[0]
+                    if py_blob[0] != 0x12 or not same:
+                        failures.append(f"{tag}: python's freq is not equal to the extension's freq_lz4")
+                elif pg_blob != py_blob:
                     failures.append(f"{tag}: encode differs (pg {len(pg_blob)}B, py {len(py_blob)}B)")
 
                 # 2. Python decodes what the extension wrote
@@ -209,7 +220,11 @@ def main() -> int:
         for f in failures:
             print("  -", f)
         return 1
-    print(f"ok: python client, rust client and extension agree on {n_cases} (case, codec) combinations")
+    if n_lz4 == 0:
+        print("FAILED: no case was stored as freq_lz4")
+        return 1
+    print(f"ok: python client, rust client and extension agree on {n_cases} (case, codec) combinations, "
+          f"{n_lz4} stored as freq_lz4")
     return 0
 
 

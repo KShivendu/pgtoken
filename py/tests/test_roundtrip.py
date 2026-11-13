@@ -3,7 +3,9 @@
 
 benchmarks/test_client.py checks both clients against a live extension. This is the fast,
 server-free half that CI runs: for every codec, the Rust and Python clients must produce
-byte-identical values and decode each other's output back to the same ids.
+byte-identical values and decode each other's output back to the same ids. The one exception is
+a value Rust writes as `freq_lz4` (lz4 made it smaller): Python writes plain `freq` for it, and
+each must still decode the other's.
 
 Usage:
     uv run python py/tests/test_roundtrip.py
@@ -49,16 +51,20 @@ def main() -> int:
         "raw16": [[], [65535, 0], rng.integers(0, 65536, 512)],
         "raw24": [[200018, 7], rng.integers(0, 1 << 24, 512)],
         "freq": [[], [464, 13, 99999], ranking * 3, rng.integers(0, 1 << 24, 512),
-                 rng.choice(ranking, 512)],
+                 rng.choice(ranking, 512), [464, 13, 99999, 11] * 100],
     }
-    n = 0
+    n = n_lz4 = 0
     for codec, lists in cases.items():
         for ids in lists:
             arr = np.asarray(ids, dtype=np.uint32)
             rs_tbl, py_tbl = (tbl_rs, tbl_py) if codec == "freq" else (None, None)
             rs = R.encode(arr, codec, 3, rs_tbl)
             py = K.encode(arr, codec, 3, py_tbl)
-            assert rs == py, f"{codec} n={len(arr)}: rust and python encode differ"
+            if rs[0] == 0x14:
+                n_lz4 += 1
+                assert py[0] == 0x12 and len(rs) < len(py), f"n={len(arr)}: freq_lz4 must be smaller"
+            else:
+                assert rs == py, f"{codec} n={len(arr)}: rust and python encode differ"
             assert np.array_equal(R.decode(py, rs_tbl), arr), f"{codec}: rust decode failed"
             assert np.array_equal(K.decode(rs, py_tbl), arr), f"{codec}: python decode failed"
             n += 1
@@ -72,7 +78,9 @@ def main() -> int:
         else:
             raise AssertionError("expected ValueError")
 
-    print(f"ok: rust and python clients agree on {n} values, and reject 4 bad inputs")
+    assert n_lz4 >= 1, "no case exercised freq_lz4"
+    print(f"ok: rust and python clients agree on {n} values ({n_lz4} stored by rust as freq_lz4), "
+          f"and reject 4 bad inputs")
     return 0
 
 

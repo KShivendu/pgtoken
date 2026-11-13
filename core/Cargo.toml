@@ -13,10 +13,11 @@ license = "Apache-2.0"
 
 [dependencies]
 sha2 = "0.10"
+# Pure Rust lz4 for `freq_lz4`; safe encode and decode, no frame format (values are blocks).
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode", "safe-decode", "checked-decode"] }
 
 # Only for the benchmarks in examples/: `leb_vs_svb.rs` (chose LEB128 over streamvbyte for
 # `freq`) and `lz_on_freq.rs` (LZ compression on top of `freq`).
 [dev-dependencies]
 stream-vbyte = "0.4"
-lz4_flex = "0.11"
 zstd = { version = "0.13", features = ["experimental", "zdict_builder"] }

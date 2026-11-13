@@ -30,6 +30,8 @@ pub enum FreqError {
     Overflow { offset: usize },
     /// The payload holds a different number of ranks than the header's count.
     CountMismatch { want: usize, got: usize },
+    /// A `freq_lz4` payload is not a valid lz4 block, or decompresses past its bound.
+    Lz4(String),
 }
 
 impl std::fmt::Display for FreqError {
@@ -49,6 +51,7 @@ impl std::fmt::Display for FreqError {
                 f,
                 "freq payload holds {got} tokens but the header says {want}"
             ),
+            FreqError::Lz4(e) => write!(f, "freq_lz4 payload does not decompress: {e}"),
         }
     }
 }

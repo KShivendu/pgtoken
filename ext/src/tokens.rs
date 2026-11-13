@@ -289,8 +289,9 @@ fn check_against_typmod(v: &[u8], typmod: i32) {
     }
     // Right vocabulary, wrong packing is equally wrong: a column's stride has to be uniform for
     // the header's width to mean anything.
+    // `freq_lz4` is how a `freq` column stores values that lz4 shrinks, so it counts as `freq`.
     let want = codec_for(target);
-    if h.codec != want {
+    if h.codec.family() != want {
         bail(format!(
             "binary value is encoded {}, but vocabulary {} stores {}",
             h.codec.as_str(),
@@ -462,7 +463,7 @@ fn typmod_of(h: &pgtoken_core::header::Header) -> i32 {
         Codec::Raw16 => (COMPRESSION_RAW, 2),
         Codec::Raw24 => (COMPRESSION_RAW, 3),
         // Freq ignores the width, except as the bound when the catalog row is missing.
-        Codec::Freq => (
+        Codec::Freq | Codec::FreqLz4 => (
             COMPRESSION_FREQ,
             vocab_size(id).map_or(3, |s| width_for(s as i32) as u8),
         ),
@@ -496,17 +497,18 @@ struct ResolvedConstant {
 /// covers what it cannot see, such as a parameter in a generic plan.
 fn tokens_equal(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
     let (unresolved, resolved) = match (is_unresolved(a), is_unresolved(b)) {
-        (false, false) | (true, true) => return a == b,
+        (true, true) => return a == b,
+        (false, false) => return same(a, b),
         (true, false) => (a, b),
         (false, true) => (b, a),
     };
     let (h, _) = value::describe(resolved).unwrap_or_else(|e| bail(e));
-    let target = (h.vocabulary_id, h.codec as u8);
+    let target = (h.vocabulary_id, h.codec.family() as u8);
     // Safety: `fcinfo` is the live call's. `flinfo` is null only under `DirectFunctionCall`,
     // where there is no call site to cache on.
     let has_flinfo = !fcinfo.is_null() && unsafe { !(*fcinfo).flinfo.is_null() };
     if !has_flinfo {
-        return resolve(unresolved, typmod_of(&h)) == resolved;
+        return same(&resolve(unresolved, typmod_of(&h)), resolved);
     }
     let mut cache = unsafe { pgrx::pg_func_extra(fcinfo, ResolvedConstant::default) };
     if cache.target != target || cache.unresolved != unresolved {
@@ -515,7 +517,13 @@ fn tokens_equal(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
         cache.target = target;
         cache.resolved = bytes;
     }
-    cache.resolved == resolved
+    same(&cache.resolved, resolved)
+}
+
+/// Whether two resolved values hold the same tokens: equal bytes, or equal once any `freq_lz4`
+/// side is decompressed (see `pgtoken_core::value::canonical`).
+fn same(a: &[u8], b: &[u8]) -> bool {
+    value::same(a, b).unwrap_or_else(|e| bail(e))
 }
 
 /// Check a blob's **header** and return it unchanged.
@@ -583,7 +591,7 @@ fn tokens_typmod_apply_impl(value: &[u8], typmod: i32, is_explicit: bool) -> Vec
         no_vocabulary_typmod()
     };
     let (h, _) = value::describe(value).unwrap_or_else(|e| bail(e));
-    if h.vocabulary_id == target.id && h.codec == codec_for(target) {
+    if h.vocabulary_id == target.id && h.codec.family() == codec_for(target) {
         // Already in the column's encoding, so re-encoding could only produce the same bytes.
         return value.to_vec();
     }
@@ -719,11 +727,14 @@ fn tokenize(text: &str, vocabulary: &str) -> Vec<i32> {
 
 // ── equality and hashing ──────────────────────────────────────────────────────────────
 //
-// Two stored values are equal exactly when their bytes are equal. The encoding is canonical
-// (pgtoken_core::value::tests::encoding_is_canonical): the same ids under one vocabulary and codec
-// pack to the same bytes, and the header carries the vocabulary id and codec, so values
-// from different vocabularies never compare equal. Equality is therefore a memcmp with no decode,
-// and a hash opclass over the bytes lets GROUP BY, DISTINCT and hash joins use it. There is no
+// Two stored values are equal exactly when their canonical bytes are equal. Every codec but
+// `freq_lz4` has one byte form per token list (pgtoken_core::value::tests::encoding_is_canonical),
+// and the header carries the vocabulary id, so values from different vocabularies never compare
+// equal. `freq_lz4` does not: lz4 can write the same bytes as many different blocks, and a newer
+// lz4 library may pick another. So its canonical form is the plain `freq` value it decompresses
+// to (pgtoken_core::value::canonical). Equality is a memcmp, decompressing only when the bytes
+// differ and a side is `freq_lz4`; the hash opclass hashes the canonical bytes, so GROUP BY,
+// DISTINCT and hash joins agree with it. There is no
 // ORDER BY on purpose: the freq codec remaps ids to frequency rank before packing, so byte order
 // says nothing about the ids or the text. Sort on pgtoken.text(body) when you want alphabetical.
 
@@ -737,9 +748,10 @@ fn tokens_ne_impl(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool 
     !tokens_equal(a, b, fcinfo)
 }
 
-/// Hash the stored bytes so equal values land in the same bucket. FNV-1a, 32-bit: deterministic
-/// across backends, self-contained, and consistent with `tokens_eq` by construction, since that is
-/// a byte comparison too.
+/// Hash the canonical bytes so equal values land in the same bucket. FNV-1a, 32-bit:
+/// deterministic across backends, self-contained, and consistent with `tokens_eq` by
+/// construction, since that compares canonical bytes too. Only a `freq_lz4` value is rewritten
+/// first; every other value hashes its stored bytes, as before.
 ///
 /// An unresolved value has no hash that agrees with its resolved form, because a hash sees one
 /// value and so has no other operand to borrow a vocabulary from. Hashing one is therefore an
@@ -758,8 +770,9 @@ fn tokens_hash_impl(value: &[u8]) -> i32 {
         )
         .report(PgLogLevel::ERROR);
     }
+    let canonical = value::canonical(value).unwrap_or_else(|e| bail(e));
     let mut h: u32 = 0x811c_9dc5;
-    for &b in value {
+    for &b in canonical.iter() {
         h ^= b as u32;
         h = h.wrapping_mul(0x0100_0193);
     }
@@ -1512,6 +1525,72 @@ mod tests {
         );
     }
 
+    /// A line of code repeated: `freq` alone stores it at about 2 bytes a token, lz4 on top
+    /// finds the repeats. Equality, hashing and GROUP BY must treat the lz4 form and the plain
+    /// `freq` form of the same tokens as one value, since lz4 can write the same data many ways.
+    #[pg_test]
+    fn repeated_text_is_stored_as_freq_lz4_and_still_compares_by_tokens() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE rep (id int, body tokens.o200k); \
+             INSERT INTO rep VALUES (1, repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100))",
+        )
+        .expect("setup");
+        let (codec, n, bytes) = Spi::get_three::<String, i32, i32>(
+            "SELECT d.codec, d.n_tokens, d.total_bytes FROM rep, pgtoken.describe(body) d",
+        )
+        .expect("describe");
+        assert_eq!(codec.as_deref(), Some("freq_lz4"));
+        let (n, bytes) = (n.unwrap(), bytes.unwrap());
+        assert!(n > 1000 && bytes < 100, "{n} tokens in {bytes} bytes");
+        assert_eq!(
+            Spi::get_one::<bool>(
+                "SELECT body::text = repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100) FROM rep"
+            )
+            .expect("text"),
+            Some(true)
+        );
+
+        // The same tokens as a plain `freq` value, as an older build or another lz4 would write.
+        let stored = Spi::get_one::<Vec<u8>>("SELECT pgtoken.tokens_send(body) FROM rep")
+            .expect("send")
+            .expect("NULL");
+        let plain = pgtoken_core::value::canonical(&stored).unwrap().into_owned();
+        assert_eq!(plain[0], pgtoken_core::header::Codec::Freq.tag());
+        let hex: String = plain.iter().map(|b| format!("{b:02x}")).collect();
+        Spi::run(&format!(
+            "INSERT INTO rep VALUES (2, pgtoken.tokens_recv_bytes(decode('{hex}', 'hex')))"
+        ))
+        .expect("insert plain freq");
+
+        let (bytes_differ, equal, same_hash) = Spi::get_three::<bool, bool, bool>(
+            "SELECT pgtoken.tokens_send(a.body) <> pgtoken.tokens_send(b.body), a.body = b.body, \
+                    pgtoken.tokens_hash(a.body) = pgtoken.tokens_hash(b.body) \
+             FROM rep a, rep b WHERE a.id = 1 AND b.id = 2",
+        )
+        .expect("compare");
+        assert_eq!((bytes_differ, equal, same_hash), (Some(true), Some(true), Some(true)));
+        assert_eq!(
+            Spi::get_one::<i64>("SELECT count(*) FROM (SELECT DISTINCT body FROM rep) s")
+                .expect("distinct"),
+            Some(1)
+        );
+        Spi::run("SET enable_sort = off").expect("force hash aggregation");
+        assert_eq!(
+            Spi::get_one::<i64>("SELECT count(*) FROM (SELECT body FROM rep GROUP BY body) s")
+                .expect("group by"),
+            Some(1)
+        );
+        // Text cast to the column's type encodes to the lz4 form and matches both rows.
+        assert_eq!(
+            Spi::get_one::<i64>(
+                "SELECT count(*) FROM rep WHERE body = repeat('CThostFtdcLimitPosiSField[\"TotalVolume\"] = \"int\"' || E'\\n', 100)::tokens.o200k"
+            )
+            .expect("where"),
+            Some(2)
+        );
+    }
+
     #[pg_test]
     fn braces_alone_do_not_make_an_id_list() {
         Spi::run("SELECT pgtoken.create_vocabulary('o200k')").expect("create");
@@ -1709,7 +1788,7 @@ mod tests {
     }
 
     #[pg_test(
-        error = "unknown value format tag 0x00, this build reads format version 1 (tags 0x10-0x13)"
+        error = "unknown value format tag 0x00, this build reads format version 1 (tags 0x10-0x14)"
     )]
     fn recv_bytes_rejects_a_corrupt_buffer() {
         Spi::get_one::<String>(

@@ -8,6 +8,7 @@
 //! ```text
 //! off  size  field
 //!   0     1  tag = (version << 4) | codec    version 1; codec 0=raw16 1=raw24 2=freq 3=raw8
+//!                                                        4=freq_lz4
 //!   1     1  flags, all zero in version 1
 //!   2     2  vocabulary id (u16 LE; 0 = none)
 //!   4   1-5  token count, unsigned LEB128, minimally encoded, at most u32::MAX
@@ -17,19 +18,20 @@
 //! So `12 00 00 ff 03 …` is `freq` under vocabulary 65280 holding 3 tokens, and an empty `raw24`
 //! value with no vocabulary is the five bytes `11 00 00 00 00`.
 //!
-//! **Tag.** Only `0x10..=0x13` are valid. The high nibble `0xF` is reserved as an escape for a
+//! **Tag.** Only `0x10..=0x14` are valid. The high nibble `0xF` is reserved as an escape for a
 //! future, different header. Values from the pre-release 12-byte layout start with `0xA7` and
 //! are refused with an error that says so.
 //!
 //! **Flags.** A reader refuses any bit it does not know, so a future flag can never be silently
-//! ignored by an old reader. Because `=`, hashing and `DISTINCT` compare a value's raw bytes, a
-//! flag added later must either change what the value means (so unequal bytes are right) or be
-//! masked out of equality and hashing.
+//! ignored by an old reader. `=`, hashing and `DISTINCT` compare a value's canonical bytes (see
+//! [`crate::value::canonical`]), so a flag added later must either change what the value means
+//! (so unequal bytes are right) or be masked out of equality and hashing.
 //!
 //! **Count.** Stored for every codec, so `token_count` is O(1) and a large TOASTed value can be
 //! sized from a short detoast slice without reading its payload. For the raw codecs it is
 //! cross-checked here against the payload length (`count * width`). For `freq` the decoder
-//! checks that the payload holds exactly that many varints (see [`crate::codec::freq`]).
+//! checks that the payload holds exactly that many varints (see [`crate::codec::freq`]). For
+//! `freq_lz4` the count bounds how far the payload may decompress.
 //!
 //! Every field is minimally encoded, because two encodings of one value would compare unequal.
 //! Nothing needs alignment: every field is read with byte loads. (The SQL type still declares
@@ -65,6 +67,9 @@ pub enum Codec {
     Freq = 2,
     /// 1 byte/id. IDs must fit in `u8`.
     Raw8 = 3,
+    /// The `freq` payload compressed with an lz4 block. Never asked for directly: encoding as
+    /// `freq` writes this instead when it is smaller (see [`crate::codec::freq_lz4`]).
+    FreqLz4 = 4,
 }
 
 impl Codec {
@@ -74,13 +79,23 @@ impl Codec {
             1 => Some(Codec::Raw24),
             2 => Some(Codec::Freq),
             3 => Some(Codec::Raw8),
+            4 => Some(Codec::FreqLz4),
             _ => None,
         }
     }
 
     /// Whether this codec needs a trained ranking, and therefore a nonzero `vocabulary_id`.
     pub fn needs_table(self) -> bool {
-        matches!(self, Codec::Freq)
+        matches!(self, Codec::Freq | Codec::FreqLz4)
+    }
+
+    /// The codec a column chooses that writes this one: `freq` for `freq_lz4`, itself otherwise.
+    /// `freq` and `freq_lz4` values can sit in the same column and compare equal.
+    pub fn family(self) -> Codec {
+        match self {
+            Codec::FreqLz4 => Codec::Freq,
+            c => c,
+        }
     }
 
     /// Bytes per token for the fixed-width codecs, `None` for `freq`.
@@ -89,7 +104,7 @@ impl Codec {
             Codec::Raw8 => Some(1),
             Codec::Raw16 => Some(2),
             Codec::Raw24 => Some(3),
-            Codec::Freq => None,
+            Codec::Freq | Codec::FreqLz4 => None,
         }
     }
 
@@ -99,7 +114,7 @@ impl Codec {
         match self {
             Codec::Raw16 => Some(u16::MAX as u32),
             Codec::Raw24 => Some(0x00FF_FFFF),
-            Codec::Freq => None,
+            Codec::Freq | Codec::FreqLz4 => None,
             Codec::Raw8 => Some(u8::MAX as u32),
         }
     }
@@ -115,6 +130,7 @@ impl Codec {
             Codec::Raw24 => "raw24",
             Codec::Freq => "freq",
             Codec::Raw8 => "raw8",
+            Codec::FreqLz4 => "freq_lz4",
         }
     }
 }
@@ -188,6 +204,15 @@ impl Header {
                 if payload.len() != want {
                     return Err(HeaderError::PayloadLen {
                         want,
+                        got: payload.len(),
+                    });
+                }
+            }
+            // An lz4 block expands at most 255-fold, and each rank is at least one byte.
+            None if codec == Codec::FreqLz4 => {
+                if n_tokens == 0 || n_tokens as usize > payload.len().saturating_mul(255) {
+                    return Err(HeaderError::FreqPayloadLen {
+                        n_tokens,
                         got: payload.len(),
                     });
                 }
@@ -288,7 +313,7 @@ pub enum HeaderError {
     TooShort(usize),
     /// A value in the pre-release 12-byte layout, which started with `0xA7`.
     LegacyFormat,
-    /// A tag outside `0x10..=0x13`.
+    /// A tag outside `0x10..=0x14`.
     UnknownTag(u8),
     /// A tag whose high nibble is `0xF`, reserved for a future header.
     ReservedEscape(u8),
@@ -302,7 +327,8 @@ pub enum HeaderError {
         want: usize,
         got: usize,
     },
-    /// A `freq` payload that cannot hold `n_tokens` varints of 1 to 5 bytes.
+    /// A `freq` payload that cannot hold `n_tokens` varints of 1 to 5 bytes, or a `freq_lz4`
+    /// payload that cannot decompress to that many.
     FreqPayloadLen {
         n_tokens: u32,
         got: usize,
@@ -324,7 +350,7 @@ impl fmt::Display for HeaderError {
             HeaderError::UnknownTag(t) => write!(
                 f,
                 "unknown value format tag 0x{t:02X}, this build reads format version {VERSION} \
-                 (tags 0x10-0x13)"
+                 (tags 0x10-0x14)"
             ),
             HeaderError::ReservedEscape(t) => write!(
                 f,
@@ -437,6 +463,7 @@ mod tests {
             match tag {
                 0x10 | 0x11 | 0x13 => assert!(r.is_ok(), "tag 0x{tag:02X}"),
                 0x12 => assert_eq!(r, Err(HeaderError::MissingTable(Codec::Freq))),
+                0x14 => assert_eq!(r, Err(HeaderError::MissingTable(Codec::FreqLz4))),
                 0xA7 => assert_eq!(r, Err(HeaderError::LegacyFormat)),
                 0xF0..=0xFF => assert_eq!(r, Err(HeaderError::ReservedEscape(tag))),
                 _ => assert_eq!(r, Err(HeaderError::UnknownTag(tag)), "tag 0x{tag:02X}"),
@@ -541,6 +568,8 @@ mod tests {
         assert_eq!(Codec::Raw24.max_id(), Some(16_777_215));
         assert_eq!(Codec::Freq.max_id(), None);
         assert_eq!(Codec::Raw8.max_id(), Some(255));
-        assert_eq!(Codec::from_u8(4), None);
+        assert_eq!(Codec::FreqLz4.max_id(), None);
+        assert_eq!(Codec::from_u8(4), Some(Codec::FreqLz4));
+        assert_eq!(Codec::from_u8(5), None);
     }
 }

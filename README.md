@@ -177,16 +177,20 @@ Every value is a small header and then the payload:
 
 ```
 off  size  field
-  0     1  tag = (version 1 << 4) | codec    codec 0=raw16 1=raw24 2=freq 3=raw8
+  0     1  tag = (version 1 << 4) | codec    codec 0=raw16 1=raw24 2=freq 3=raw8 4=freq_lz4
   1     1  flags, all zero for now
   2     2  vocabulary id (u16 little-endian)
   4   1-5  token count (LEB128)
-  *     -  payload: raw = count x width bytes, freq = one LEB128 rank per token
+  *     -  payload: raw = count x width bytes, freq = one LEB128 rank per token,
+                    freq_lz4 = the freq payload as one lz4 block
 ```
 
 The header is 5 bytes for a value under 128 tokens and 6 bytes up to 16383. `'Hello, world!'` in
-an o200k column is 13 bytes on disk, against 14 for `text`. A reader refuses an unknown tag or flag,
-and every field has exactly one encoding, so equal token sequences are equal bytes. See
+an o200k column is 13 bytes on disk, against 14 for `text`. A reader refuses an unknown tag or flag.
+Every field has exactly one encoding, except a `freq_lz4` payload: lz4 can write the same bytes in
+many ways, and a newer lz4 may choose differently. So `=`, hashing, `GROUP BY` and `DISTINCT`
+decompress a `freq_lz4` value to plain `freq` before comparing, and equal token sequences always
+compare equal. See
 `core/src/header.rs` for the details.
 
 ## Benchmarks
@@ -217,14 +221,21 @@ values per row, with the o200k preset. It comes from `benchmarks/bench_length_bu
 | content | o200k tokens | `text` uncompressed | `text` pglz | `text` lz4 | `tokens.o200k` | vs smaller text |
 | --- | --: | --: | --: | --: | --: | --: |
 | English | 15 | 74 B | 74 B | 74 B | 33 B | 2.23x |
-| English | 123 | 591 B | 591 B | 591 B | 226 B | 2.61x |
-| English | 183 | 870 B | 870 B | 870 B | 335 B | 2.60x |
-| English | 488 | 2314 B | 1830 B | 1815 B | 878 B | 2.07x |
-| English | 1952 | 9249 B | 5538 B | 6344 B | 3468 B | 1.60x |
-| code | 68 | 281 B | 281 B | 281 B | 130 B | 2.16x |
-| code | 1102 | 4508 B | 1723 B | 2039 B | 1986 B | **0.87x** |
+| English | 123 | 591 B | 591 B | 591 B | 222 B | 2.66x |
+| English | 183 | 870 B | 870 B | 870 B | 327 B | 2.66x |
+| English | 488 | 2314 B | 1830 B | 1815 B | 847 B | 2.14x |
+| English | 1952 | 9249 B | 5538 B | 6344 B | 3306 B | 1.67x |
+| code | 68 | 281 B | 281 B | 281 B | 114 B | 2.45x |
+| code | 278 | 1130 B | 1130 B | 1130 B | 393 B | 2.88x |
+| code | 1102 | 4508 B | 1723 B | 2039 B | 1325 B | 1.30x |
 | Hindi | 30 | 220 B | 220 B | 220 B | 56 B | 3.92x |
-| Hindi | 447 | 3446 B | 1213 B | 1816 B | 759 B | 1.60x |
+| Hindi | 447 | 3446 B | 1213 B | 1816 B | 718 B | 1.69x |
+
+A `freq` vocabulary stores each value as plain `freq` or as `freq_lz4` (the same ranks run
+through lz4), whichever is smaller. lz4 finds repeated lines, which `freq` alone cannot see. In
+this run that was 2385 of 5400 values: 285 of 300 English values at 1952 tokens, but 3 of 300 at
+15 tokens, where there is nothing to repeat. The gain is largest on code. Before `freq_lz4`, the
+1102-token code row was 1986 B and lost to pglz on 167 of 300 values. It now loses on 10.
 
 Three values from that run:
 
@@ -233,9 +244,12 @@ Three values from that run:
   `tokens.o200k` stores 330 B, 2.60x smaller.
 - 1466 tokens of code, line after line of
   `CThostFtdcLimitPosiSField["OpenVolume"] = "int"`: 4398 B of UTF-8. pglz stores 871 B, lz4
-  1149 B, `tokens.o200k` 3121 B, 3.6x larger than pglz. pglz and lz4 find the repeated lines. The
-  freq codec packs each token on its own and cannot see repeats. In the 1102-token code row,
-  tokens lose to pglz on 167 of 300 values.
+  1149 B, `tokens.o200k` 888 B as `freq_lz4`. Plain `freq` stored it in 3121 B, since it packs
+  each token on its own and cannot see the repeated lines.
+- 1642 tokens of code, `assert modgcd_multivariate(f, g) == (x + y, 2*x - 3, 4*y - 2)` and
+  similar: 3623 B of UTF-8, pglz 969 B, `tokens.o200k` 1240 B. One of the 10 code values in the
+  1102-token row where pglz still wins: short symbols like `x`, `*`, `2` cost about a token
+  each, and lz4 over ranks finds less to reuse than pglz over the characters.
 - 14 tokens, `4): p. 332.\nGobburu, J.V.,`: 26 B of UTF-8. `text` stores 27 B, `tokens.o200k`
   32 B. Short strings of digits and punctuation cost about one token per two characters, and
   the header adds 5 bytes. A one-token value like `'hi'` is 3 B as `text` and 8 B as tokens.
