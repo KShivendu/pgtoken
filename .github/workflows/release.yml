@@ -4,7 +4,8 @@
 #   sudo apt install ./postgresql-16-pgtoken_0.1.0_amd64.deb
 #
 # Runs when a v* tag is pushed. To add packages to an existing release, run it by hand from the
-# Actions tab with that tag.
+# Actions tab with that tag. A pull request that changes this file builds and checks the packages
+# without uploading them.
 #
 # Built on Ubuntu 22.04 against the PGDG packages, so the packages work on Ubuntu 22.04 or newer
 # and Debian 12 or newer, with PostgreSQL from PGDG or the distribution.
@@ -13,6 +14,8 @@ name: release
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
   workflow_dispatch:
     inputs:
       tag:
@@ -23,7 +26,8 @@ permissions:
   contents: write
 
 env:
-  TAG: ${{ inputs.tag || github.ref_name }}
+  # Empty on a pull request: build the pull request's code and upload nothing.
+  TAG: ${{ inputs.tag || (github.event_name == 'push' && github.ref_name) || '' }}
 
 jobs:
   deb:
@@ -42,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || github.ref }}
 
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
@@ -84,7 +88,10 @@ jobs:
       # usr/lib/postgresql/16/lib/pgtoken.so, so the tree becomes the package as it is.
       - name: Make the .deb
         run: |
-          version="${TAG#v}"
+          version=$(grep -m1 '^version = ' ext/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          if [ -n "$TAG" ] && [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG does not match version $version in ext/Cargo.toml"; exit 1
+          fi
           name=postgresql-${{ matrix.pg }}-pgtoken
           root="pkg/${name}"
           mkdir -p "$root/DEBIAN"
@@ -135,6 +142,7 @@ jobs:
 
   upload:
     needs: deb
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
