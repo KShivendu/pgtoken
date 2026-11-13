@@ -360,14 +360,14 @@ fn main() {
         }
     }
 
-    // Examples: in each code group, the value lz4 helps most and the one it helps least.
+    // Examples: in each prose and code group, the value lz4 helps most and the one it helps least.
     let snippet = |i: usize| -> String {
         let s = String::from_utf8_lossy(&texts[i]).replace('\n', "⏎");
         s.chars().take(90).collect()
     };
     println!("\nexamples (freq -> freq + lz4 -> freq + zstd-3 + dict, stored bytes; text = UTF-8 bytes):");
     for &(dom, len) in &groups {
-        if dom != 1 && dom != 3 {
+        if dom == 2 {
             continue;
         }
         let mut idx: Vec<usize> = (0..test.len()).filter(|&i| test[i].0 == dom && test[i].1.len() == len).collect();
