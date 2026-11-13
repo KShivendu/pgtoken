@@ -66,7 +66,7 @@ pub const MAX_TOKENS: u32 = 1 << 26;
 pub enum Codec {
     /// 2 bytes/id, little-endian. IDs must fit in `u16`.
     Raw16 = 0,
-    /// 3 bytes/id, big-endian. IDs must fit in 24 bits, which covers every vocabulary in
+    /// 3 bytes/id, little-endian. IDs must fit in 24 bits, which covers every vocabulary in
     /// practical use.
     Raw24 = 1,
     /// Frequency-rank remap, then one LEB128 varint per rank.

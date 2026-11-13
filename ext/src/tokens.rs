@@ -759,6 +759,49 @@ fn tokens_ne_impl(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool 
 /// this is only reachable through a long `IN` list of literals, which PostgreSQL 14+ hashes.
 #[pg_extern(immutable, parallel_safe, strict)]
 fn tokens_hash_impl(value: &[u8]) -> i32 {
+    mix(fnv1a(FNV_BASIS, &hash_input(value))) as i32
+}
+
+/// The hash operator class's `FUNCTION 2`, which `PARTITION BY HASH` needs: a 64-bit hash with a
+/// seed. PostgreSQL requires that with seed 0 its low 32 bits equal [`tokens_hash_impl`]'s
+/// result, so the low half is that same hash with the seed folded into its starting value, and
+/// the high half is a second pass from a different starting value.
+#[pg_extern(immutable, parallel_safe, strict)]
+fn tokens_hash_extended_impl(value: &[u8], seed: i64) -> i64 {
+    let bytes = hash_input(value);
+    let seed = seed as u64;
+    let lo = mix(fnv1a(FNV_BASIS ^ seed as u32, &bytes));
+    let hi = mix(fnv1a(
+        0x050c_5d1f ^ (seed >> 32) as u32 ^ (seed as u32).rotate_left(16),
+        &bytes,
+    ));
+    (((hi as u64) << 32) | lo as u64) as i64
+}
+
+const FNV_BASIS: u32 = 0x811c_9dc5;
+
+/// murmur3's `fmix32`. FNV-1a alone has weak low bits (its lowest bit is just the XOR of the
+/// input bytes' lowest bits), and PostgreSQL picks hash-index buckets, hash-join buckets and hash
+/// partitions from the low bits. This spreads every input bit over every output bit.
+fn mix(mut h: u32) -> u32 {
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^ (h >> 16)
+}
+
+fn fnv1a(basis: u32, bytes: &[u8]) -> u32 {
+    let mut h = basis;
+    for &b in bytes {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
+
+/// What both hash functions hash: the canonical form, so values `=` calls equal hash equal.
+fn hash_input(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     if is_unresolved(value) {
         pgrx::pg_sys::panic::ErrorReport::new(
             PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
@@ -770,13 +813,7 @@ fn tokens_hash_impl(value: &[u8]) -> i32 {
         )
         .report(PgLogLevel::ERROR);
     }
-    let canonical = value::canonical(value).unwrap_or_else(|e| bail(e));
-    let mut h: u32 = 0x811c_9dc5;
-    for &b in canonical.iter() {
-        h ^= b as u32;
-        h = h.wrapping_mul(0x0100_0193);
-    }
-    h as i32
+    value::canonical(value).unwrap_or_else(|e| bail(e))
 }
 
 /// Planner support for `=` and `<>`: resolve an unresolved constant at plan time.
@@ -1029,6 +1066,10 @@ CREATE FUNCTION pgtoken.tokens_hash(pgtoken.tokens) RETURNS integer
     LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
     AS 'MODULE_PATHNAME', 'tokens_hash_impl_wrapper';
 
+CREATE FUNCTION pgtoken.tokens_hash_extended(pgtoken.tokens, bigint) RETURNS bigint
+    LANGUAGE c IMMUTABLE STRICT PARALLEL SAFE
+    AS 'MODULE_PATHNAME', 'tokens_hash_extended_impl_wrapper';
+
 CREATE OPERATOR pg_catalog.= (
     LEFTARG = pgtoken.tokens, RIGHTARG = pgtoken.tokens,
     FUNCTION = pgtoken.tokens_eq,
@@ -1047,7 +1088,8 @@ CREATE OPERATOR pg_catalog.<> (
 
 CREATE OPERATOR CLASS pgtoken.tokens_hash_ops DEFAULT FOR TYPE pgtoken.tokens USING hash AS
     OPERATOR 1 pg_catalog.= (pgtoken.tokens, pgtoken.tokens),
-    FUNCTION 1 pgtoken.tokens_hash(pgtoken.tokens);
+    FUNCTION 1 pgtoken.tokens_hash(pgtoken.tokens),
+    FUNCTION 2 pgtoken.tokens_hash_extended(pgtoken.tokens, bigint);
 "#,
     name = "tokens_equality",
     requires = [
@@ -1055,6 +1097,7 @@ CREATE OPERATOR CLASS pgtoken.tokens_hash_ops DEFAULT FOR TYPE pgtoken.tokens US
         tokens_eq_impl,
         tokens_ne_impl,
         tokens_hash_impl,
+        tokens_hash_extended_impl,
     ],
 );
 
@@ -1350,6 +1393,50 @@ mod tests {
             "SELECT pgtoken.tokens('{1,2}'::pgtoken.tokens('t_bare_tm'), -1, false)::text",
         )
         .unwrap();
+    }
+
+    #[pg_test]
+    fn hash_partitioning_on_a_tokens_column_works() {
+        // PARTITION BY HASH needs the opclass's FUNCTION 2. With seed 0 its low 32 bits must
+        // equal the plain hash, or hash indexes and partitions would disagree.
+        vocab("t_part", 300);
+        Spi::run(
+            "CREATE TABLE parts (body tokens.t_part) PARTITION BY HASH (body);
+             CREATE TABLE parts_0 PARTITION OF parts FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+             CREATE TABLE parts_1 PARTITION OF parts FOR VALUES WITH (MODULUS 2, REMAINDER 1);
+             INSERT INTO parts SELECT ('{' || i || ',' || (i * 7 % 300) || '}')
+               FROM generate_series(1, 200) i;",
+        )
+        .expect("partitioned table");
+        let (a, b) = (
+            Spi::get_one::<i64>("SELECT count(*) FROM parts_0")
+                .unwrap()
+                .unwrap(),
+            Spi::get_one::<i64>("SELECT count(*) FROM parts_1")
+                .unwrap()
+                .unwrap(),
+        );
+        assert_eq!(a + b, 200);
+        assert!(
+            a > 50 && b > 50,
+            "rows should spread over both partitions: {a} / {b}"
+        );
+        // Partition pruning finds the row by its value.
+        let n = Spi::get_one::<i64>("SELECT count(*) FROM parts WHERE body = '{5,35}'")
+            .unwrap()
+            .unwrap();
+        assert_eq!(n, 1);
+        let low_matches = Spi::get_one::<bool>(
+            "SELECT bool_and((pgtoken.tokens_hash_extended(body, 0) & 4294967295)
+                             = (pgtoken.tokens_hash(body)::bigint & 4294967295))
+               FROM parts",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            low_matches,
+            "seed 0 must give the plain hash in the low 32 bits"
+        );
     }
 
     #[pg_test]

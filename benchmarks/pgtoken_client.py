@@ -271,11 +271,8 @@ def encode(ids, codec: str, vocabulary_id: int = 0, table: RankTable | None = No
     if cid == RAW24:
         if len(v) and v.max() > 0xFFFFFF:
             raise ValueError(f"token id {v.max()} does not fit raw24")
-        b = np.zeros((len(v), 3), dtype=np.uint8)
-        b[:, 0] = (v >> 16) & 0xFF  # big-endian, matching the extension
-        b[:, 1] = (v >> 8) & 0xFF
-        b[:, 2] = v & 0xFF
-        return head + b.tobytes()
+        # little-endian, like every field in the format: the low 3 bytes of each <u4
+        return head + v.astype("<u4").view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
     if table is None:
         raise ValueError("freq needs a coding table")
     return head + leb_encode(table.ranks(v))
@@ -290,7 +287,7 @@ def decode(blob: bytes, table: RankTable | None = None) -> np.ndarray:
         return np.frombuffer(payload, dtype="<u2", count=n).astype(np.uint32)
     if codec == RAW24:
         b = np.frombuffer(payload, dtype=np.uint8, count=n * 3).reshape(n, 3).astype(np.uint32)
-        return (b[:, 0] << 16) | (b[:, 1] << 8) | b[:, 2]
+        return b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
     if table is None:
         raise ValueError("freq needs a coding table")
     if codec == FREQ_LZ4:

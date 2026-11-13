@@ -114,6 +114,8 @@ These work the same as on `text`:
 SELECT DISTINCT body FROM chunks;
 SELECT body, count(*) FROM chunks GROUP BY body;
 SELECT * FROM a JOIN b ON a.body = b.body;
+CREATE INDEX ON chunks USING hash (body);
+CREATE TABLE parts (body tokens.o200k) PARTITION BY HASH (body);
 SELECT * FROM chunks WHERE body = '{24912,2375}';                    -- 'hello world'
 SELECT * FROM chunks WHERE body::text LIKE '%invoice%';
 CREATE INDEX ON chunks USING gin (to_tsvector('english', body::text));
@@ -286,7 +288,8 @@ off  size  field
                     freq_lz4 = the freq payload as one lz4 block
 ```
 
-The header is 5 bytes under 128 tokens and 6 bytes up to 16,383. `'Hello, world!'` is 13 bytes as
+Every multi-byte field is little-endian, `raw16` and `raw24` ids included. The header is 5 bytes
+under 128 tokens and 6 bytes up to 16,383. `'Hello, world!'` is 13 bytes as
 `tokens.o200k` and 14 as `text`. A reader refuses an unknown tag or flag. lz4 can write the same
 data in more than one way, so `=`, hashing, `GROUP BY` and `DISTINCT` decompress a `freq_lz4`
 value before comparing. Equal token IDs always compare equal. Details are in `core/src/header.rs`.

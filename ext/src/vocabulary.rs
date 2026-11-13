@@ -172,6 +172,7 @@ DROP FUNCTION pgtoken.text_impl(bytea);
 DROP FUNCTION pgtoken.tokens_eq_impl(bytea, bytea);
 DROP FUNCTION pgtoken.tokens_ne_impl(bytea, bytea);
 DROP FUNCTION pgtoken.tokens_hash_impl(bytea);
+DROP FUNCTION pgtoken.tokens_hash_extended_impl(bytea, bigint);
 DROP FUNCTION pgtoken.tokens_from_int4array_impl(int[], int, bool);
 DROP FUNCTION pgtoken.tokens_from_text_impl(text, int, bool);
 DROP FUNCTION pgtoken.tokens_to_int4array_impl(bytea);

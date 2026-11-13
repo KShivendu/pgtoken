@@ -1,7 +1,7 @@
 //! Raw token-ID packing: no table, no model.
 //!
-//! `raw24` is **big-endian**, `raw16` **little-endian**. Both orders are fixed by the format
-//! and pinned by tests, since either would roundtrip within this module if reversed.
+//! Every multi-byte field in the format is **little-endian**, `raw16` and `raw24` included. The
+//! order is pinned by tests, since either order would roundtrip within this module.
 
 use crate::header::{Codec, HeaderError};
 
@@ -39,7 +39,7 @@ pub fn encode16(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     Ok(())
 }
 
-/// 3 bytes/id, big-endian.
+/// 3 bytes/id, little-endian.
 pub fn encode24(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
     out.reserve(ids.len() * 3);
     for &id in ids {
@@ -49,9 +49,7 @@ pub fn encode24(ids: &[u32], out: &mut Vec<u8>) -> Result<(), RawError> {
                 codec: Codec::Raw24,
             });
         }
-        out.push((id >> 16) as u8);
-        out.push((id >> 8) as u8);
-        out.push(id as u8);
+        out.extend_from_slice(&id.to_le_bytes()[..3]);
     }
     Ok(())
 }
@@ -103,7 +101,7 @@ pub fn decode24(payload: &[u8]) -> Result<Vec<u32>, HeaderError> {
     }
     Ok(chunks
         .iter()
-        .map(|c| ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32))
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], 0]))
         .collect())
 }
 
@@ -112,10 +110,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn raw24_is_big_endian() {
+    fn raw24_is_little_endian() {
         let mut out = Vec::new();
         encode24(&[0x01_02_03], &mut out).unwrap();
-        assert_eq!(out, vec![0x01, 0x02, 0x03]);
+        assert_eq!(out, vec![0x03, 0x02, 0x01]);
     }
 
     #[test]

@@ -349,7 +349,7 @@ mod tests {
         );
         assert_eq!(
             hex(&encode(&raw, Codec::Raw24, 5, None).unwrap()),
-            "11000500".to_string() + "03" + "0000030000010000c8"
+            "11000500".to_string() + "03" + "030000010000c80000"
         );
         let t = table();
         let v = encode(&[3, 1, 200, 0], Codec::Freq, 65280, Some(&t)).unwrap();
