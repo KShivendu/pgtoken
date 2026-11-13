@@ -1,0 +1,150 @@
+# Build a .deb of the extension for every supported PostgreSQL version and attach them to the
+# GitHub release, so installing pgtoken needs no Rust toolchain:
+#
+#   sudo apt install ./postgresql-16-pgtoken_0.1.0_amd64.deb
+#
+# Runs when a v* tag is pushed. To add packages to an existing release, run it by hand from the
+# Actions tab with that tag.
+#
+# Built on Ubuntu 22.04 against the PGDG packages, so the packages work on Ubuntu 22.04 or newer
+# and Debian 12 or newer, with PostgreSQL from PGDG or the distribution.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build packages for, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  deb:
+    name: deb (pg${{ matrix.pg }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [14, 15, 16, 17, 18]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install PostgreSQL ${{ matrix.pg }} and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates gnupg lsb-release build-essential pkg-config libclang-dev
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            postgresql-${{ matrix.pg }} postgresql-server-dev-${{ matrix.pg }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ext
+          key: release-pg${{ matrix.pg }}-${{ matrix.arch }}
+
+      # Pinned to the pgrx version in ext/Cargo.toml: cargo-pgrx and the pgrx crate must match.
+      - name: Install cargo-pgrx
+        run: |
+          version=$(grep -m1 '^pgrx = ' ext/Cargo.toml | sed 's/.*"=\?\([0-9.]*\)".*/\1/')
+          cargo install cargo-pgrx --version "=$version" --locked
+
+      - name: Build
+        working-directory: ext
+        run: |
+          pg_config=/usr/lib/postgresql/${{ matrix.pg }}/bin/pg_config
+          cargo pgrx init --pg${{ matrix.pg }} "$pg_config"
+          cargo pgrx package --features pg${{ matrix.pg }} --no-default-features \
+            --pg-config "$pg_config"
+
+      # `cargo pgrx package` lays the files out under their install paths, e.g.
+      # usr/lib/postgresql/16/lib/pgtoken.so, so the tree becomes the package as it is.
+      - name: Make the .deb
+        run: |
+          version="${TAG#v}"
+          name=postgresql-${{ matrix.pg }}-pgtoken
+          root="pkg/${name}"
+          mkdir -p "$root/DEBIAN"
+          cp -r ext/target/release/pgtoken-pg${{ matrix.pg }}/. "$root/"
+          mkdir -p "$root/usr/share/doc/$name"
+          cp LICENSE NOTICE "$root/usr/share/doc/$name/"
+          cat > "$root/DEBIAN/control" <<EOF
+          Package: $name
+          Version: $version
+          Architecture: ${{ matrix.arch }}
+          Maintainer: KShivendu <KShivendu@users.noreply.github.com>
+          Depends: postgresql-${{ matrix.pg }}, libc6 (>= 2.35)
+          Section: database
+          Priority: optional
+          Homepage: https://github.com/KShivendu/pgtoken
+          Description: Store text in PostgreSQL as LLM token IDs
+           pgtoken stores text as compressed LLM token IDs, with the o200k
+           tokenizer built in. Run CREATE EXTENSION pgtoken as a superuser.
+          EOF
+          deb="${name}_${version}_${{ matrix.arch }}.deb"
+          dpkg-deb --root-owner-group --build "$root" "$deb"
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb"
+          echo "DEB=$deb" >> "$GITHUB_ENV"
+
+      # Install the package the way a user would, then check the extension works.
+      - name: Install the .deb and try it
+        run: |
+          sudo apt-get install -y "./$DEB"
+          if ! pg_lsclusters -h | awk '$1 == "${{ matrix.pg }}" && $2 == "main"' | grep -q .; then
+            sudo pg_createcluster ${{ matrix.pg }} main
+          fi
+          sudo pg_ctlcluster ${{ matrix.pg }} main start
+          port=$(pg_lsclusters -h | awk '$1 == "${{ matrix.pg }}" && $2 == "main" {print $3}')
+          got=$(sudo -u postgres psql -p "$port" -tAq \
+            -c "CREATE EXTENSION pgtoken" \
+            -c "SELECT pgtoken.create_vocabulary('o200k')" \
+            -c "CREATE TABLE t (body pgtoken.o200k)" \
+            -c "INSERT INTO t VALUES ('Hello, world!')" \
+            -c "SELECT body::text || ' ' || body::int[]::text FROM t" | tail -1)
+          echo "got: $got"
+          test "$got" = "Hello, world! {13225,11,2375,0}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DEB }}
+          path: ${{ env.DEB }}
+
+  upload:
+    needs: deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: debs
+          merge-multiple: true
+
+      - name: Attach the packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l debs
+          gh release upload "$TAG" debs/*.deb --clobber --repo "$GITHUB_REPOSITORY"
