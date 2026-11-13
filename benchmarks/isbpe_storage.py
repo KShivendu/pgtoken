@@ -9,6 +9,10 @@ Tokenizers, all with 65,536-ish ids:
   o200k   OpenAI's, via tiktoken (200k ids)
   bpe     BPE trained on the same text with the same pretokenizer as ISBPE (exp138 "same")
   isbpe   ISBPE dual-flag, exp138 model
+  glue    ISBPE dual-flag with 61,536 regular ids plus 4,000 glue ids (an id for a common pair
+          of adjacent tokens, like `#.#` + `get`), 65,536 in all. Built like the paper's
+          exp138 earned_glue: the exp138 61,536 model, glue counted on the same 20 MB it was
+          trained on, rule "marks".
 
 Each tokenizer gets its own `freq` ranking, trained on the same first TRAIN_BYTES of the
 domain's training split. Test values are cut from the held-out split at fixed byte sizes, on
@@ -36,6 +40,7 @@ import pgtoken_rs._native as pg
 
 RESEARCH = os.path.expanduser("~/projects/research/tokenizer")
 DOMAINS = {"code": "code", "english": "c4"}
+GLUE_CORPUS = {"code": "code_20mb.txt", "english": "c4_20mb.txt"}  # exp138 training text
 TRAIN_BYTES = 8_000_000
 SIZES = ((256, 400), (1024, 300), (4096, 200), (16384, 60))  # (value bytes, values)
 
@@ -70,6 +75,9 @@ def tokenizers_for(dom: str):
     o200k = tiktoken.get_encoding("o200k_base")
     bpe = Tokenizer.from_file(f"{RESEARCH}/models/exp138/bpe_{dom}_same_65536.json")
     isb = isbpe_rs.ISBPE.load(f"{RESEARCH}/models/exp138/isbpe_{dom}_dual_65536.json")
+    glue = isbpe_rs.ISBPE.load(f"{RESEARCH}/models/exp138/isbpe_{dom}_dual_61536.json")
+    glue.add_glue(open(f"{RESEARCH}/data/{GLUE_CORPUS[dom]}", "rb").read(), 4000, "marks")
+    assert len(glue) == 65536, len(glue)
 
     def dec(b):
         return b.decode("utf-8", errors="surrogatepass")
@@ -78,6 +86,7 @@ def tokenizers_for(dom: str):
         "o200k": lambda b: o200k.encode(dec(b), disallowed_special=()),
         "bpe": lambda b: bpe.encode(dec(b), add_special_tokens=False).ids,
         "isbpe": lambda b: isb.encode(dec(b)),
+        "glue": lambda b: glue.encode(dec(b)),
     }, {"isbpe": lambda ids: isb.decode(ids), "bpe": lambda ids: bpe.decode(ids)}
 
 
@@ -132,6 +141,13 @@ def main() -> int:
                 print(f"    {tag:11s} {d:+5d} B  bpe {res['bpe'][k][1]} B / isbpe "
                       f"{res['isbpe'][k][1]} B / o200k {res['o200k'][k][1]} B  "
                       f"text {len(vals[k])} B: {snippet!r}", flush=True)
+            gd = sorted((res["glue"][k][1] - res["isbpe"][k][1], k) for k in range(len(vals)))
+            for tag, (d, k) in (("glue best", gd[0]), ("glue worst", gd[-1])):
+                snippet = vals[k][:90].decode("utf-8", errors="replace").replace("\n", "\\n")
+                print(f"    {tag:11s} {d:+5d} B vs isbpe  isbpe {res['isbpe'][k][1]} B / glue "
+                      f"{res['glue'][k][1]} B  text {len(vals[k])} B: {snippet!r}", flush=True)
+            print(f"    glue vs isbpe: smaller on {sum(d < 0 for d, _ in gd)}, larger on "
+                  f"{sum(d > 0 for d, _ in gd)}, of {len(vals)}", flush=True)
             wins = sum(1 for d, _ in diff if d < 0)
             losses = sum(1 for d, _ in diff if d > 0)
             print(f"    isbpe vs bpe: smaller on {wins}, larger on {losses}, of {len(vals)}",

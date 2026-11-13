@@ -35,7 +35,10 @@ def main() -> int:
     from tokenizers import Tokenizer
     isb = isbpe_rs.ISBPE.load(f"{RESEARCH}/models/exp138/isbpe_code_dual_65536.json")
     bpe = Tokenizer.from_file(f"{RESEARCH}/models/exp138/bpe_code_same_65536.json")
-    show = {"bpe": lambda i: bpe.id_to_token(i).replace("Ġ", " ").replace("Ċ", "\\n"),
+    glue = isbpe_rs.ISBPE.load(f"{RESEARCH}/models/exp138/isbpe_code_dual_61536.json")
+    glue.add_glue(open(f"{RESEARCH}/data/code_20mb.txt", "rb").read(), 4000, "marks")
+    show = {"glue": lambda i: str(glue[i]).replace("\n", "\\n"),
+            "bpe": lambda i: bpe.id_to_token(i).replace("Ġ", " ").replace("Ċ", "\\n"),
             "isbpe": lambda i: str(isb[i]).replace("\n", "\\n")}
 
     ranks, tables = {}, {}
@@ -71,6 +74,15 @@ def main() -> int:
         cb.update(show["bpe"](i) for i in toks["bpe"](v))
         ci.update(show["isbpe"](i) for i in toks["isbpe"](v))
     print("\nmost-used tokens, per 16 KB value (string, uses, stored width)")
+    cg = Counter()
+    for v in vals:
+        cg.update(i for i in toks["glue"](v) if i >= 61536)
+    print("  glue ids used most (string, uses per value, stored width):")
+    for i, k in cg.most_common(12):
+        print(f"    {show['glue'](i)!r:40} {k/len(vals):6.1f}  {widths([i], ranks['glue'])[0]}")
+    gw = np.concatenate([widths([i]*k, ranks["glue"]) for i, k in cg.items()])
+    print(f"  glue ids: {gw.size/len(vals):.0f} uses per value, width mix "
+          f"1B {np.mean(gw==1):.0%} 2B {np.mean(gw==2):.0%} 3B {np.mean(gw==3):.0%}")
     for name, c in (("bpe", cb), ("isbpe", ci)):
         print(f"  {name}:")
         for s, k in c.most_common(12):
