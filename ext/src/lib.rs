@@ -8,14 +8,14 @@
 //!
 //! ```sql
 //! SELECT pgtoken.create_vocabulary('cl100k', 100277);
-//! CREATE TABLE documents (id bigserial PRIMARY KEY, body tokens.cl100k);
+//! CREATE TABLE documents (id bigserial PRIMARY KEY, body pgtoken.cl100k);
 //!
 //! INSERT INTO documents (body) VALUES ('{24912,2375}');
 //! SELECT body::int[] FROM documents;
 //! ```
 //!
 //! A vocabulary's declared size is the only source of a storage width, and `pgtoken.tokens` —
-//! aliased per vocabulary as `tokens.<name>` — is `STORAGE EXTERNAL` by construction, so
+//! aliased per vocabulary as `pgtoken.<name>` — is `STORAGE EXTERNAL` by construction, so
 //! PostgreSQL never spends cycles recompressing a payload that is already compressed.
 //!
 //! An agent reads `SELECT body` and decodes the blob client-side. Casting to `int[]` exists for
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(ranked, Some(3), "only the three distinct tokens are ranked");
 
         Spi::run(
-            "CREATE TABLE tr1_docs (body tokens.tr1); \
+            "CREATE TABLE tr1_docs (body pgtoken.tr1); \
              INSERT INTO tr1_docs (body) VALUES ('{7,3,199999}');",
         )
         .expect("insert");

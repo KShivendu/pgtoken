@@ -5,7 +5,7 @@
 --                  a Postgres column holding RAG chunks looks like today.
 --   docs_text_lz4  text with COMPRESSION lz4. Matches the paper's LZ4 baseline and what
 --                  Qdrant and Elasticsearch actually do.
---   docs_tnt       a real pgtoken column, `tokens.<vocabulary>`. Its type names a vocabulary
+--   docs_tnt       a real pgtoken column, `pgtoken.<vocabulary>`. Its type names a vocabulary
 --                  that depends on the tokenizer, so bench_storage_wal.py creates this table
 --                  itself, after creating the vocabulary. create_vocabulary already sets
 --                  STORAGE EXTERNAL, so Postgres never recompresses the encoded payload.

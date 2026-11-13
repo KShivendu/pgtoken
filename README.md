@@ -56,7 +56,7 @@ column of a `tokens` type.
 CREATE EXTENSION pgtoken;
 SELECT pgtoken.create_vocabulary('o200k');   -- OpenAI's o200k_base tokenizer, bundled
 
-CREATE TABLE documents (id bigserial PRIMARY KEY, body tokens.o200k);
+CREATE TABLE documents (id bigserial PRIMARY KEY, body pgtoken.o200k);
 
 INSERT INTO documents (body) VALUES ('{13225,11,2375,0}');   -- token IDs from tiktoken
 INSERT INTO documents (body) VALUES ('Hello, world!');       -- or text: the server tokenizes it
@@ -66,7 +66,7 @@ SELECT * FROM documents WHERE body = 'Hello, world!';        -- both rows
 ```
 
 A **vocabulary** is one tokenizer's set of IDs. `create_vocabulary('o200k')` creates the column
-type `tokens.o200k`. Each vocabulary gets its own type, so PostgreSQL won't let you mix IDs from
+type `pgtoken.o200k`. Each vocabulary gets its own type, so PostgreSQL won't let you mix IDs from
 two tokenizers. o200k is a **preset**, which means its frequency table, its ID-to-bytes table and its
 tokenizer are built into the extension. The server tokenizer matches `tiktoken`'s `o200k_base` ID for ID.
 
@@ -104,7 +104,7 @@ SELECT pgtoken.train('corpus', 'SELECT ids FROM my_corpus');   -- ids is an int[
 ```
 
 The mapping and the training are write-once. A vocabulary can't change after that, so to change
-one, create a new vocabulary and `ALTER TABLE ... TYPE tokens.<new>`.
+one, create a new vocabulary and `ALTER TABLE ... TYPE pgtoken.<new>`.
 
 ## Coming from a text column
 
@@ -115,7 +115,7 @@ SELECT DISTINCT body FROM chunks;
 SELECT body, count(*) FROM chunks GROUP BY body;
 SELECT * FROM a JOIN b ON a.body = b.body;
 CREATE INDEX ON chunks USING hash (body);
-CREATE TABLE parts (body tokens.o200k) PARTITION BY HASH (body);
+CREATE TABLE parts (body pgtoken.o200k) PARTITION BY HASH (body);
 SELECT * FROM chunks WHERE body = '{24912,2375}';                    -- 'hello world'
 SELECT * FROM chunks WHERE body::text LIKE '%invoice%';
 CREATE INDEX ON chunks USING gin (to_tsvector('english', body::text));
@@ -128,7 +128,7 @@ What doesn't work:
 - **`ORDER BY body` and `UNIQUE`.** Both need the values to have an order, and compressed token IDs
   have none. Sort on `body::text` instead.
 - **An `IN` list of nine or more literals** needs a cast on each value:
-  `body IN ('{1}'::tokens.o200k, ...)`. PostgreSQL hashes a long list before it knows the
+  `body IN ('{1}'::pgtoken.o200k, ...)`. PostgreSQL hashes a long list before it knows the
   column's type. Shorter lists and `body = '...'` need no cast.
 
 ## Use from Python
@@ -163,7 +163,7 @@ preset, on PostgreSQL 14. The script is `benchmarks/bench_length_buckets.py`. Po
 compresses `text` once a row passes about 2 KB, using pglz or lz4. `tokens` are compressed at every
 length:
 
-| content | tokens | `text` | `text` pglz | `text` lz4 | `tokens.o200k` | smaller by |
+| content | tokens | `text` | `text` pglz | `text` lz4 | `pgtoken.o200k` | smaller by |
 | --- | --: | --: | --: | --: | --: | --: |
 | English | 15 | 74 B | 74 B | 74 B | 33 B | 2.23x |
 | English | 183 | 870 B | 870 B | 870 B | 327 B | 2.66x |
@@ -175,17 +175,17 @@ length:
 | Hindi | 30 | 220 B | 220 B | 220 B | 56 B | 3.92x |
 | Hindi | 447 | 3446 B | 1213 B | 1816 B | 718 B | 1.69x |
 
-"Smaller by" compares `tokens.o200k` with the smallest `text` column. Four values from this run:
+"Smaller by" compares `pgtoken.o200k` with the smallest `text` column. Four values from this run:
 
 - **183 tokens of English**, starting `old copy of Mr. Popper’s Penguins and we are having a lot
-  of fun`. `text` stores 859 B and `tokens.o200k` 330 B, 2.60x smaller.
+  of fun`. `text` stores 859 B and `pgtoken.o200k` 330 B, 2.60x smaller.
 - **1466 tokens of one repeated code line**, `CThostFtdcLimitPosiSField["OpenVolume"] = "int"`.
-  pglz stores 871 B, lz4 1149 B and `tokens.o200k` 888 B. The repeats are found by lz4 run inside
+  pglz stores 871 B, lz4 1149 B and `pgtoken.o200k` 888 B. The repeats are found by lz4 run inside
   the value (see [Compression](#compression)). Without it this value took 3121 B.
 - **1642 tokens of math code**, `assert modgcd_multivariate(f, g) == (x + y, 2*x - 3, 4*y - 2)`.
-  pglz stores 969 B and `tokens.o200k` 1240 B. Short symbols like `x`, `*` and `2` cost about a
+  pglz stores 969 B and `pgtoken.o200k` 1240 B. Short symbols like `x`, `*` and `2` cost about a
   token each. pglz still wins on 10 of the 300 values in the 1102-token code row.
-- **14 tokens**, `4): p. 332.\nGobburu, J.V.,`. `text` stores 27 B and `tokens.o200k` 32 B.
+- **14 tokens**, `4): p. 332.\nGobburu, J.V.,`. `text` stores 27 B and `pgtoken.o200k` 32 B.
   Digits and punctuation cost about one token per two characters, and each value has a 5-byte
   header.
 
@@ -241,7 +241,7 @@ your data looks different. Tokens the table never saw still work, just a byte or
   `psql` shows numbers.
 - **No sorting and no `UNIQUE`** on the column. See [Coming from a text column](#coming-from-a-text-column).
 - **A column must name a vocabulary.** A column typed as bare `pgtoken.tokens` accepts inserts but
-  fails on read. Use `tokens.<name>`.
+  fails on read. Use `pgtoken.<name>`.
 - **Binary writes are trusted.** Text and `int[]` input check every ID. Binary `COPY` and the
   `bytea` cast check only the header, to keep writes fast.
 - **One value holds at most 67,108,864 tokens** (2^26). That is far past any model's context
@@ -256,7 +256,7 @@ All functions live in the `pgtoken` schema.
 
 | function | returns | |
 | --- | --- | --- |
-| `create_vocabulary(name [, vocab_size] [, compression] [, id] [, preset])` | `int` | also creates `tokens.<name>` |
+| `create_vocabulary(name [, vocab_size] [, compression] [, id] [, preset])` | `int` | also creates `pgtoken.<name>` |
 | `train(name, query [, max_ranks])` | `text` | frequency table for `freq`, write-once |
 | `load_mapping(name, query)` | `text` | ID-to-bytes table, write-once |
 | `text(tokens)` | `text` | same as `body::text`, `IMMUTABLE` so it can back an index |
@@ -290,7 +290,7 @@ off  size  field
 
 Every multi-byte field is little-endian, `raw16` and `raw24` ids included. The header is 5 bytes
 under 128 tokens and 6 bytes up to 16,383. `'Hello, world!'` is 13 bytes as
-`tokens.o200k` and 14 as `text`. A reader refuses an unknown tag or flag. lz4 can write the same
+`pgtoken.o200k` and 14 as `text`. A reader refuses an unknown tag or flag. lz4 can write the same
 data in more than one way, so `=`, hashing, `GROUP BY` and `DISTINCT` decompress a `freq_lz4`
 value before comparing. Equal token IDs always compare equal. Details are in `core/src/header.rs`.
 

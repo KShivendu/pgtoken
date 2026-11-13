@@ -110,7 +110,7 @@ def main() -> int:
         # The bundled o200k preset: the ranking comes from the extension binary, not a train.
         conn.execute("SELECT pgtoken.create_vocabulary('o200k')")
         o200k = register(conn, "o200k")
-        conn.execute("CREATE TABLE docs_o200k (body tokens.o200k)")
+        conn.execute("CREATE TABLE docs_o200k (body pgtoken.o200k)")
         hello = [13225, 11, 2375, 0]  # "Hello, world!" in o200k_base
         conn.execute("INSERT INTO docs_o200k VALUES (%s)", [o200k.encode(hello)])
         got, text = conn.execute(

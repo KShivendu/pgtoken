@@ -198,7 +198,7 @@ def run_one(conn, texts: list[str], domain: str, embedding_bytes: int) -> dict:
     conn.execute("DROP TABLE IF EXISTS docs_tnt")
     conn.execute(
         f"CREATE TABLE docs_tnt (id integer PRIMARY KEY, embedding bytea, "
-        f"body tokens.{C._vocab_name('freq')} NOT NULL)"
+        f"body pgtoken.{C._vocab_name('freq')} NOT NULL)"
     )
     conn.execute("ALTER TABLE docs_tnt ALTER COLUMN embedding SET STORAGE EXTERNAL")
     wal = measure_wal(conn, texts, vocab_id, table, embedding_bytes)

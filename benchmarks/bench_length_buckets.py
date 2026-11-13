@@ -18,9 +18,9 @@ for each value (inline or in TOAST, after any compression, including the varlena
   text_plain   text, STORAGE EXTERNAL, i.e. never compressed (the UTF-8 bytes + header)
   text_pglz    text, default storage, default_toast_compression (pglz)
   text_lz4     text, COMPRESSION lz4
-  tok_gpt2     tokens.bench_hfgpt2_freq: gpt2 ids, freq ranking trained on the prose train
+  tok_gpt2     pgtoken.bench_hfgpt2_freq: gpt2 ids, freq ranking trained on the prose train
                split (the vocabulary the other benchmarks use)
-  tok_o200k    tokens.o200k: the bundled preset, the server tokenizes the text
+  tok_o200k    pgtoken.o200k: the bundled preset, the server tokenizes the text
 
 Chunks are non-overlapping windows of the token-storage test splits, cut at a fixed number of
 r50k tokens and decoded to text, for prose, code and Hindi. The gpt2 vocabulary is trained on
@@ -59,11 +59,11 @@ def create_tables(conn, gpt2_vocab: str) -> None:
     conn.execute("ALTER TABLE text_plain ALTER COLUMN body SET STORAGE EXTERNAL")
     conn.execute(f"CREATE TABLE text_pglz ({cols}, body text NOT NULL)")
     conn.execute(f"CREATE TABLE text_lz4 ({cols}, body text COMPRESSION lz4 NOT NULL)")
-    conn.execute(f"CREATE TABLE tok_gpt2 ({cols}, body tokens.{gpt2_vocab} NOT NULL)")
-    conn.execute(f"CREATE TABLE tok_o200k ({cols}, body tokens.o200k NOT NULL)")
-    conn.execute(f"CREATE TABLE tok_o200k_pglz ({cols}, body tokens.o200k COMPRESSION pglz NOT NULL)")
+    conn.execute(f"CREATE TABLE tok_gpt2 ({cols}, body pgtoken.{gpt2_vocab} NOT NULL)")
+    conn.execute(f"CREATE TABLE tok_o200k ({cols}, body pgtoken.o200k NOT NULL)")
+    conn.execute(f"CREATE TABLE tok_o200k_pglz ({cols}, body pgtoken.o200k COMPRESSION pglz NOT NULL)")
     conn.execute("ALTER TABLE tok_o200k_pglz ALTER COLUMN body SET STORAGE EXTENDED")
-    conn.execute(f"CREATE TABLE tok_o200k_lz4 ({cols}, body tokens.o200k COMPRESSION lz4 NOT NULL)")
+    conn.execute(f"CREATE TABLE tok_o200k_lz4 ({cols}, body pgtoken.o200k COMPRESSION lz4 NOT NULL)")
     conn.execute("ALTER TABLE tok_o200k_lz4 ALTER COLUMN body SET STORAGE EXTENDED")
 
 
