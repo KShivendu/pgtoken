@@ -46,8 +46,10 @@ type PairMap = HashMap<u64, (u32, u32), BuildHasherDefault<PairHasher>>;
 fn read_u32s(path: &str) -> Vec<u32> {
     let b = std::fs::read(path)
         .unwrap_or_else(|e| panic!("{path}: {e} (run export_token_bpe_fixture.py)"));
-    b.chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    b.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&c| u32::from_le_bytes(c))
         .collect()
 }
 
@@ -68,7 +70,7 @@ impl Bpe {
             expand[s as usize] = vec![g as u32];
         }
         let mut merges = PairMap::default();
-        for (r, m) in v[2 + n_base..].chunks_exact(3).enumerate() {
+        for (r, m) in v[2 + n_base..].as_chunks::<3>().0.iter().enumerate() {
             let (a, b, c) = (m[0], m[1], m[2]);
             merges.insert(((a as u64) << 32) | b as u64, (r as u32, c));
             let mut e = expand[a as usize].clone();
@@ -302,7 +304,7 @@ fn main() {
         let name = format!("token_bpe_{dom}_65536");
         let bpe = Bpe::load(&name);
         let test = read_u32s(&format!("{DIR}/{dom}_test.u32"));
-        let chunks: Vec<&[u32]> = test.chunks_exact(512).collect();
+        let chunks: Vec<&[u32]> = test.as_chunks::<512>().0.iter().map(|c| &c[..]).collect();
         let reference = read_u32s(&format!("{DIR}/{name}.v1_out.u32"));
 
         // Correctness: identical symbols to tokenizers v1, and lossless back to gpt2 ids.
