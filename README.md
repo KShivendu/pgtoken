@@ -27,7 +27,17 @@ compiled extension on the server, which hosted services such as RDS or Supabase 
 
 ## Install
 
-You need:
+**On Ubuntu 22.04+ or Debian 12+**, download the package for your PostgreSQL version and CPU from
+the [latest release](https://github.com/KShivendu/pgtoken/releases/latest). No Rust needed:
+
+```sh
+curl -LO https://github.com/KShivendu/pgtoken/releases/download/v0.1.0/postgresql-16-pgtoken_0.1.0_amd64.deb
+sudo apt install ./postgresql-16-pgtoken_0.1.0_amd64.deb
+```
+
+There is one package for each PostgreSQL version from 14 to 18, for `amd64` and `arm64`.
+
+**From source**, on any Linux, you need:
 
 - Rust 1.88 or newer: [rustup.rs](https://rustup.rs)
 - PostgreSQL with its development files, so that `pg_config` exists, plus a C toolchain and clang.
