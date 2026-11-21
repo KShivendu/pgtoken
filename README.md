@@ -233,18 +233,16 @@ For 100 rows, the lz4 `text` column spends 1.10 ms fetching 233 KB and 2.25 ms t
 because the round trip to the server dominates. Reading `body::int[]` instead, with no client
 library, takes 7.0 ms for 100 rows, because psycopg builds 512 Python ints per row.
 
-The same 100-row numbers as throughput. Every row holds 512 tokens, and 2,333 bytes of text on
-average. Every column reads and writes the same rows, so each is divided by the same work, whatever
-it stores:
+The same 100-row numbers in tokens per second, for one client making one call of 100 rows at a
+time. Every row holds 512 tokens and every column handles the same rows, so the columns compare
+directly. Larger batches or more clients would raise every number.
 
-| column | read, M tokens/s | write, M tokens/s | read, MB of text/s | write, MB of text/s |
-| --- | --: | --: | --: | --: |
-| `text` lz4 | 15.2 | 9.0 | 69 | 41 |
-| `text` pglz | 13.5 | 4.9 | 61 | 22 |
-| `tokens` raw | 39.2 | **40.6** | 179 | **185** |
-| `tokens` freq | **42.7** | 23.9 | **195** | 109 |
-
-Single-row reads and writes are left out, since the round trip makes every column about 300 µs.
+| column | read, M tokens/s | write, M tokens/s |
+| --- | --: | --: |
+| `text` lz4 | 15.2 | 9.0 |
+| `text` pglz | 13.5 | 4.9 |
+| `tokens` raw | 39.2 | **40.6** |
+| `tokens` freq | **42.7** | 23.9 |
 
 Scripts for every number are in `benchmarks/`.
 
