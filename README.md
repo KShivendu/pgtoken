@@ -233,8 +233,9 @@ For 100 rows, the lz4 `text` column spends 1.10 ms fetching 233 KB and 2.25 ms t
 because the round trip to the server dominates. Reading `body::int[]` instead, with no client
 library, takes 7.0 ms for 100 rows, because psycopg builds 512 Python ints per row.
 
-The same 100-row numbers as throughput. Every row holds 512 tokens and 2,333 bytes of text, so each
-column is divided by the same work, whatever it stores:
+The same 100-row numbers as throughput. Every row holds 512 tokens, and 2,333 bytes of text on
+average. Every column reads and writes the same rows, so each is divided by the same work, whatever
+it stores:
 
 | column | read, M tokens/s | write, M tokens/s | read, MB of text/s | write, MB of text/s |
 | --- | --: | --: | --: | --: |
