@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pgtoken-rs"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python client for pgtoken: read and write token-id columns with the extension's Rust codec."
 readme = "README.md"
 license = "Apache-2.0"

@@ -508,7 +508,7 @@ wheels = [
 
 [[package]]
 name = "pgtoken-benchmarks"
-version = "0.1.1"
+version = "0.1.2"
 source = { virtual = "." }
 dependencies = [
     { name = "constriction" },
@@ -537,7 +537,7 @@ requires-dist = [
 
 [[package]]
 name = "pgtoken-rs"
-version = "0.1.1"
+version = "0.1.2"
 source = { directory = "py" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },

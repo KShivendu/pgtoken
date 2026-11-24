@@ -480,6 +480,22 @@ struct ResolvedConstant {
     /// such a column or domain is always resolved (the typmod coercion or `RECEIVE`'s check ran
     /// before it was stored). `None` until first computed.
     args_resolved: Option<[bool; 2]>,
+    /// Per argument, the last out-of-line value `=` saw there (see [`Operand`]).
+    seen: [Option<SeenValue>; 2],
+}
+
+/// An out-of-line value kept across rows by its TOAST identity. In
+/// `WHERE body = (SELECT body FROM t WHERE id = 7)` one side is the same TOAST pointer on every
+/// row; keeping its header and canonical bytes means it is fetched and decompressed once per
+/// query instead of once per row.
+struct SeenValue {
+    /// (TOAST relation, value id). A stored value never changes under its id, and the id is
+    /// not reused while the value is visible, so the id identifies the bytes.
+    id: (pg_sys::Oid, pg_sys::Oid),
+    /// Its header, once some row has read it.
+    header: Option<pgtoken_core::header::Header>,
+    /// [`value::canonical`] of the value, once it has been fetched on a repeat.
+    canonical: Option<Vec<u8>>,
 }
 
 /// Compare two values, resolving an unresolved one against the other's vocabulary first.
@@ -541,6 +557,20 @@ fn same(a: &[u8], b: &[u8]) -> bool {
 pub fn validate(v: &[u8]) -> Vec<u8> {
     require_vocabulary(v);
     let (h, _) = value::describe(v).unwrap_or_else(|e| bail(e));
+    // pgtoken writes `freq_lz4` only when it is strictly smaller than the plain `freq` value, and
+    // `=` relies on that: no value equal to a `freq` value is larger than it. So a blob from
+    // another writer must keep the same promise.
+    if h.codec == Codec::FreqLz4 {
+        let plain = value::canonical(v).unwrap_or_else(|e| bail(e));
+        if v.len() >= plain.len() {
+            bail(format!(
+                "a freq_lz4 value must be smaller than the plain freq value it decompresses to \
+                 ({} bytes, plain freq {} bytes); send the plain freq value instead",
+                v.len(),
+                plain.len()
+            ));
+        }
+    }
     if let Some(size) = vocab_size(h.vocabulary_id) {
         if let Some(&bad) = decode_value(v).iter().find(|&&id| id >= size) {
             bail(format!(
@@ -751,8 +781,11 @@ fn tokenize(text: &str, vocabulary: &str) -> Vec<i32> {
 // header: vocabulary, codec, token count) usually settle the answer, so a long value that cannot
 // match is never fetched from TOAST. Only an undecided pair is detoasted and compared in full.
 // `WHERE body = <value>` over WildChat messages went from 564 ms (raw24) and 51 ms (freq) to
-// within a few ms of text's 29 ms. The C symbols keep pgrx's `_wrapper` names, so catalogs
-// created by earlier builds point at these unchanged.
+// within a few ms of text's 29 ms. A header held in line is parsed where it lies, without a
+// copy. A value held out of line costs a TOAST lookup per read, so it is read at most once per
+// row, and the side that repeats on every row (the looked-up value) only once per query. The C
+// symbols keep pgrx's `_wrapper` names, so catalogs created by earlier builds point at these
+// unchanged.
 
 #[no_mangle]
 pub extern "C" fn pg_finfo_tokens_eq_impl_wrapper() -> &'static pg_sys::Pg_finfo_record {
@@ -794,64 +827,226 @@ unsafe fn tokens_equal_datums(fcinfo: pg_sys::FunctionCallInfo) -> bool {
     ) else {
         bail("tokens equality called with a NULL argument");
     };
-    if let Some(answer) = settle_without_detoast(da, db, fcinfo) {
-        return answer;
+    // Two values in line of equal size: no header can settle them and nothing is worth keeping,
+    // so compare at once. Most `=` calls in a hash join or hash aggregate are this case.
+    let (pa, pb) = (
+        da.cast_mut_ptr::<pg_sys::varlena>(),
+        db.cast_mut_ptr::<pg_sys::varlena>(),
+    );
+    if !pgrx::varlena::varatt_is_1b_e(pa)
+        && !pgrx::varlena::varatt_is_1b_e(pb)
+        && pg_sys::toast_raw_datum_size(da) == pg_sys::toast_raw_datum_size(db)
+    {
+        return tokens_equal(detoasted(da), detoasted(db), fcinfo);
     }
-    tokens_equal(detoasted(da), detoasted(db), fcinfo)
+    let mut ops = [Operand::new(da), Operand::new(db)];
+    // Only a value in a TOAST table is worth keeping across rows. `flinfo` is null only under
+    // `DirectFunctionCall`, where there is no call site to cache on.
+    let has_cache = (ops[0].toast.is_some() || ops[1].toast.is_some())
+        && !fcinfo.is_null()
+        && !(*fcinfo).flinfo.is_null();
+    if has_cache {
+        let cache = pgrx::pg_func_extra(fcinfo, ResolvedConstant::default);
+        for (op, seen) in ops.iter_mut().zip(cache.seen.iter()) {
+            op.recall(seen.as_ref());
+        }
+    }
+    let settled = settle_without_detoast(&mut ops, fcinfo);
+    if settled.is_none() {
+        for op in ops.iter_mut() {
+            op.fetch();
+        }
+    }
+    if has_cache {
+        let mut cache = pgrx::pg_func_extra(fcinfo, ResolvedConstant::default);
+        for (op, seen) in ops.iter_mut().zip(cache.seen.iter_mut()) {
+            op.remember(seen);
+        }
+    }
+    match settled {
+        Some(answer) => answer,
+        None => tokens_equal(ops[0].bytes.unwrap(), ops[1].bytes.unwrap(), fcinfo),
+    }
+}
+
+/// Fetch a value held out of line whole, rather than its header alone, when it is at most this
+/// many bytes (four TOAST chunks). Either read is one TOAST index lookup, and when the header
+/// does not settle the pair the whole value is needed anyway.
+const FETCH_WHOLE_UP_TO: usize = 8192;
+
+/// One argument of `=` or `<>`, read no further than the answer needs.
+struct Operand<'a> {
+    datum: pg_sys::Datum,
+    /// The value's full size, from its varlena or TOAST pointer; reading it fetches nothing.
+    len: usize,
+    /// Held out of line, so reading any of its bytes costs a TOAST index lookup.
+    out_of_line: bool,
+    /// For a value in a TOAST table: its bytes there, and its identity (see [`SeenValue`]).
+    toast: Option<(usize, (pg_sys::Oid, pg_sys::Oid))>,
+    /// The stored value's header, once read or recalled.
+    header: Option<pgtoken_core::header::Header>,
+    /// The value in full: detoasted this call, or its canonical form kept from an earlier row.
+    bytes: Option<&'a [u8]>,
+    /// The same out-of-line value this argument held on the previous call.
+    repeat: bool,
+}
+
+impl<'a> Operand<'a> {
+    unsafe fn new(datum: pg_sys::Datum) -> Self {
+        let p = datum.cast_mut_ptr::<pg_sys::varlena>();
+        let out_of_line = pgrx::varlena::varatt_is_1b_e(p);
+        let toast = if out_of_line
+            && pgrx::varlena::vartag_external(p) == pg_sys::vartag_external::VARTAG_ONDISK as u8
+        {
+            // VARDATA_EXTERNAL: the pointer follows a one-byte header and a one-byte tag, unaligned.
+            let e = std::ptr::read_unaligned(
+                pgrx::varlena::vardata_1b_e(p).cast::<pg_sys::varatt_external>(),
+            );
+            let size = (e.va_extinfo & ((1u32 << pg_sys::VARLENA_EXTSIZE_BITS) - 1)) as usize;
+            Some((size, (e.va_toastrelid, e.va_valueid)))
+        } else {
+            None
+        };
+        Operand {
+            datum,
+            len: pg_sys::toast_raw_datum_size(datum),
+            out_of_line,
+            toast,
+            header: None,
+            bytes: None,
+            repeat: false,
+        }
+    }
+
+    /// Take the header and canonical bytes kept from an earlier row, if this is that value.
+    fn recall(&mut self, seen: Option<&SeenValue>) {
+        let (Some((_, id)), Some(seen)) = (self.toast, seen) else {
+            return;
+        };
+        if seen.id != id {
+            return;
+        }
+        self.repeat = true;
+        self.header = seen.header;
+        // Safety: the Vec lives in `fn_extra` until the call site is freed, and `remember` does
+        // not replace a repeated value's entry.
+        self.bytes = seen
+            .canonical
+            .as_ref()
+            .map(|c| unsafe { std::slice::from_raw_parts(c.as_ptr(), c.len()) });
+    }
+
+    /// Keep what this call learned about an out-of-line value for the next row.
+    fn remember(&mut self, seen: &mut Option<SeenValue>) {
+        let Some((_, id)) = self.toast else {
+            return;
+        };
+        // Kept even when its header went unread, so the next row knows which side repeats.
+        if !self.repeat {
+            *seen = Some(SeenValue {
+                id,
+                header: self.header,
+                canonical: None,
+            });
+            return;
+        }
+        let Some(s) = seen.as_mut() else {
+            return;
+        };
+        if s.header.is_none() {
+            s.header = self.header;
+        }
+        // Seen twice in a row, so likely on every row: keep its canonical bytes too.
+        let (Some(h), Some(bytes)) = (s.header, self.bytes) else {
+            return;
+        };
+        if s.canonical.is_some() || h.vocabulary_id == UNRESOLVED {
+            return;
+        }
+        let c = value::canonical(bytes)
+            .unwrap_or_else(|e| bail(e))
+            .into_owned();
+        // Compare against the kept copy, so a `freq_lz4` value is not decompressed twice.
+        let kept = s.canonical.insert(c);
+        self.bytes = Some(unsafe { std::slice::from_raw_parts(kept.as_ptr(), kept.len()) });
+    }
+
+    /// Whether the header can be had without a TOAST lookup.
+    fn cheap(&self) -> bool {
+        self.header.is_some() || self.bytes.is_some() || !self.out_of_line
+    }
+
+    /// The stored value's header, reading as little as possible. `None` if the bytes are not a
+    /// valid header; the full compare then reports the error.
+    unsafe fn header(&mut self) -> Option<pgtoken_core::header::Header> {
+        if self.header.is_none() {
+            self.header = match self.bytes {
+                Some(b) => parse_header(b),
+                None if self.out_of_line => match self.toast {
+                    Some((size, _)) if size <= FETCH_WHOLE_UP_TO => {
+                        self.fetch();
+                        parse_header(self.bytes.unwrap())
+                    }
+                    _ => header_of(self.datum),
+                },
+                None => header_in_place(self.datum),
+            };
+        }
+        self.header
+    }
+
+    /// Detoast the value in full, unless it already is.
+    unsafe fn fetch(&mut self) {
+        if self.bytes.is_none() {
+            self.bytes = Some(detoasted(self.datum));
+        }
+    }
 }
 
 /// `Some(false)` when two values cannot hold the same tokens, judged from their raw sizes and
-/// the headers of the values held in line; `None` when they must be compared in full.
+/// headers; `None` when they must be compared in full.
 ///
-/// Reading even the first bytes of a value stored out of line costs a TOAST index lookup, which
-/// is most of what a full detoast costs for a value of a few kB. So a header is read only from
-/// a side held in line. When the other side is out of line, its size alone often settles the
-/// pair: a value equal to a resolved `raw` value has identical bytes, so the same size; and no
-/// value equal to a plain `freq` value is larger than it, since `freq_lz4` is written only when
-/// strictly smaller. That needs the out-of-line side to be resolved, which its column's typmod
-/// guarantees. Otherwise both headers are read.
+/// A header is read from the cheap side first (held in line, or recalled from an earlier row),
+/// and it alone often settles the pair, so the other side is never read: a value equal to a
+/// resolved `raw` value has identical bytes, so the same size; and no value equal to a plain
+/// `freq` value is larger than it, since `freq_lz4` is only ever stored strictly smaller (the
+/// writer and `validate` both ensure it). That needs the other side to be resolved, which its
+/// column's typmod guarantees. Otherwise both headers are read.
 unsafe fn settle_without_detoast(
-    da: pg_sys::Datum,
-    db: pg_sys::Datum,
+    ops: &mut [Operand; 2],
     fcinfo: pg_sys::FunctionCallInfo,
 ) -> Option<bool> {
-    let len_a = pg_sys::toast_raw_datum_size(da);
-    let len_b = pg_sys::toast_raw_datum_size(db);
-    if len_a == len_b {
+    if ops[0].len == ops[1].len {
         return None;
     }
-    let out_a = pgrx::varlena::varatt_is_1b_e(da.cast_mut_ptr::<pg_sys::varlena>());
-    let out_b = pgrx::varlena::varatt_is_1b_e(db.cast_mut_ptr::<pg_sys::varlena>());
-    if out_a != out_b {
-        let (inline, len_in, other, len_other, other_arg) = if out_a {
-            (db, len_b, da, len_a, 0)
-        } else {
-            (da, len_a, db, len_b, 1)
-        };
-        let h = header_of(inline)?;
+    // Read the cheap side's header first: one header often settles the pair alone. When both
+    // would cost a TOAST lookup, read the side that repeats, so later rows find it kept.
+    let order = match (ops[0].cheap(), ops[1].cheap()) {
+        (false, true) => [1, 0],
+        (false, false) if ops[1].repeat && !ops[0].repeat => [1, 0],
+        _ => [0, 1],
+    };
+    for c in order {
+        let e = 1 - c;
+        let h = ops[c].header()?;
         if h.vocabulary_id == UNRESOLVED {
             return None;
         }
-        if args_resolved(fcinfo)[other_arg] {
+        if args_resolved(fcinfo)[e] {
             match h.codec {
                 Codec::Raw8 | Codec::Raw16 | Codec::Raw24 => return Some(false),
-                Codec::Freq if len_other > len_in => return Some(false),
+                Codec::Freq if ops[e].len > ops[c].len => return Some(false),
                 _ => {}
             }
         }
-        let ho = header_of(other)?;
-        if ho.vocabulary_id == UNRESOLVED {
-            return None;
-        }
-        return value::settle_by_header(&h, len_in, &ho, len_other);
     }
-    let ha = header_of(da)?;
-    let hb = header_of(db)?;
+    let ha = ops[0].header()?;
+    let hb = ops[1].header()?;
     // An unresolved literal is re-encoded against the other side first; leave it to that path.
     if ha.vocabulary_id == UNRESOLVED || hb.vocabulary_id == UNRESOLVED {
         return None;
     }
-    value::settle_by_header(&ha, len_a, &hb, len_b)
+    value::settle_by_header(&ha, ops[0].len, &hb, ops[1].len)
 }
 
 /// Whether each argument of this call is known to be resolved: its expression's declared type
@@ -893,15 +1088,32 @@ unsafe fn declared_resolved(expr: *mut pg_sys::Node) -> [bool; 2] {
 unsafe fn header_of(d: pg_sys::Datum) -> Option<pgtoken_core::header::Header> {
     let n = pgtoken_core::header::MAX_HEADER_LEN as i32;
     let v = pg_sys::pg_detoast_datum_slice(d.cast_mut_ptr::<pg_sys::varlena>(), 0, n);
-    let bytes = std::slice::from_raw_parts(
+    parse_header(std::slice::from_raw_parts(
         pgrx::varlena::vardata_any(v).cast::<u8>(),
         pgrx::varlena::varsize_any_exhdr(v),
-    );
+    ))
+}
+
+/// [`header_of`] for a value held in line: an uncompressed one is parsed where it lies, since
+/// `pg_detoast_datum_slice` copies even a value that needs no detoasting.
+unsafe fn header_in_place(d: pg_sys::Datum) -> Option<pgtoken_core::header::Header> {
+    let p = d.cast_mut_ptr::<pg_sys::varlena>();
+    let plain = pgrx::varlena::varatt_is_4b_u(p)
+        || (pgrx::varlena::varatt_is_1b(p) && !pgrx::varlena::varatt_is_1b_e(p));
+    if !plain {
+        return header_of(d);
+    }
+    parse_header(std::slice::from_raw_parts(
+        pgrx::varlena::vardata_any(p).cast::<u8>(),
+        pgrx::varlena::varsize_any_exhdr(p),
+    ))
+}
+
+fn parse_header(bytes: &[u8]) -> Option<pgtoken_core::header::Header> {
     pgtoken_core::header::Header::parse_prefix(bytes)
         .ok()
         .map(|(h, _)| h)
 }
-
 /// A value's bytes, detoasted (and decompressed) in full, valid for the rest of the call.
 unsafe fn detoasted<'a>(d: pg_sys::Datum) -> &'a [u8] {
     let v = pg_sys::pg_detoast_datum_packed(d.cast_mut_ptr::<pg_sys::varlena>());
@@ -1344,6 +1556,86 @@ mod tests {
             pairs("SELECT count(*) FROM eqt_t WHERE body <> (SELECT body FROM eqt_t WHERE id = 3)"),
             4
         );
+    }
+
+    /// Every row has the same token count and is held out of line as `freq_lz4`, so neither the
+    /// size nor the header settles a pair, and the looked-up value is kept across rows. Row 7
+    /// holds row 3's tokens as plain `freq`: other bytes, other size, same value.
+    #[pg_test]
+    fn equality_on_out_of_line_freq_lz4_values() {
+        Spi::run(
+            "SELECT pgtoken.create_vocabulary('o200k'); \
+             CREATE TABLE lz (id int, body pgtoken.o200k); \
+             INSERT INTO lz SELECT k, ('{' || string_agg((((i % 1500) * 131 + k) % 200000)::text, \
+                                                         ',' ORDER BY i) || '}') \
+             FROM generate_series(1, 6) k, generate_series(0, 2999) i GROUP BY k",
+        )
+        .expect("setup");
+        let stored =
+            Spi::get_one::<Vec<u8>>("SELECT pgtoken.tokens_send(body) FROM lz WHERE id = 3")
+                .expect("send")
+                .expect("NULL");
+        let plain = pgtoken_core::value::canonical(&stored)
+            .unwrap()
+            .into_owned();
+        assert_eq!(plain[0], pgtoken_core::header::Codec::Freq.tag());
+        let hex: String = plain.iter().map(|b| format!("{b:02x}")).collect();
+        Spi::run(&format!(
+            "INSERT INTO lz VALUES (7, pgtoken.tokens_recv_bytes(decode('{hex}', 'hex')))"
+        ))
+        .expect("insert plain freq");
+        assert_eq!(
+            Spi::get_two::<i64, bool>(
+                "SELECT count(*) FILTER (WHERE d.codec = 'freq_lz4'), \
+                        (SELECT pg_relation_size(reltoastrelid) > 0 FROM pg_class WHERE relname = 'lz') \
+                 FROM lz, pgtoken.describe(body) d"
+            )
+            .expect("describe"),
+            (Some(6), Some(true))
+        );
+        let count = |q: &str| Spi::get_one::<i64>(q).expect("query").unwrap();
+        for id in [3, 7] {
+            assert_eq!(
+                count(&format!(
+                    "SELECT count(*) FROM lz WHERE body = (SELECT body FROM lz WHERE id = {id})"
+                )),
+                2,
+                "lookup of row {id}"
+            );
+            assert_eq!(
+                count(&format!(
+                    "SELECT count(*) FROM lz WHERE body <> (SELECT body FROM lz WHERE id = {id})"
+                )),
+                5
+            );
+        }
+        assert_eq!(
+            count("SELECT count(*) FROM lz WHERE body = (SELECT body FROM lz WHERE id = 1)"),
+            1
+        );
+        Spi::run("SET enable_hashjoin = off; SET enable_mergejoin = off").expect("nested loop");
+        assert_eq!(
+            count("SELECT count(*) FROM lz a, lz b WHERE a.body = b.body AND a.id < b.id"),
+            1
+        );
+    }
+
+    /// 20 one-byte ranks as an lz4 block of only literals: 27 bytes against 25 for plain `freq`.
+    /// pgtoken never writes that, and `=` assumes no one does.
+    #[pg_test(
+        error = "a freq_lz4 value must be smaller than the plain freq value it decompresses to \
+                 (27 bytes, plain freq 25 bytes); send the plain freq value instead"
+    )]
+    fn binary_input_refuses_a_freq_lz4_value_larger_than_freq() {
+        let mut v = pgtoken_core::header::Header::new(pgtoken_core::header::Codec::FreqLz4, 1, 20)
+            .to_bytes();
+        v.extend_from_slice(&[0xF0, 5]);
+        v.extend(1u8..=20);
+        let hex: String = v.iter().map(|b| format!("{b:02x}")).collect();
+        Spi::run(&format!(
+            "SELECT pgtoken.tokens_recv_bytes(decode('{hex}', 'hex'))"
+        ))
+        .expect("recv");
     }
 
     #[pg_test]

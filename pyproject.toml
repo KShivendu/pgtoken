@@ -1,6 +1,6 @@
 [project]
 name = "pgtoken-benchmarks"
-version = "0.1.1"
+version = "0.1.2"
 description = "Benchmarks for the pgtoken PostgreSQL extension."
 requires-python = ">=3.10"
 

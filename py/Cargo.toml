@@ -1,6 +1,6 @@
 [package]
 name = "pgtoken-py"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Python bindings for pgtoken-core: decode stored pgtoken values client-side."
 license = "Apache-2.0"
