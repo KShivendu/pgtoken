@@ -538,7 +538,10 @@ mod tests {
                 }
             }
         }
-        assert!(settled > pool.len(), "the shortcut should settle most unequal pairs");
+        assert!(
+            settled > pool.len(),
+            "the shortcut should settle most unequal pairs"
+        );
         // Equal tokens in two byte forms of different lengths are left to the full compare.
         let (h1, _) = Header::parse_prefix(&ours).unwrap();
         let plain = canonical(&ours).unwrap();

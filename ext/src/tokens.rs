@@ -788,8 +788,10 @@ pub unsafe extern "C-unwind" fn tokens_ne_impl_wrapper(
 
 /// [`tokens_equal`] on the call's two arguments, deciding from sizes and headers first.
 unsafe fn tokens_equal_datums(fcinfo: pg_sys::FunctionCallInfo) -> bool {
-    let (Some(da), Some(db)) = (pgrx::pg_getarg_datum(fcinfo, 0), pgrx::pg_getarg_datum(fcinfo, 1))
-    else {
+    let (Some(da), Some(db)) = (
+        pgrx::pg_getarg_datum(fcinfo, 0),
+        pgrx::pg_getarg_datum(fcinfo, 1),
+    ) else {
         bail("tokens equality called with a NULL argument");
     };
     if let Some(answer) = settle_without_detoast(da, db, fcinfo) {
@@ -872,9 +874,9 @@ unsafe fn declared_resolved(expr: *mut pg_sys::Node) -> [bool; 2] {
         return [false, false];
     }
     let args = match (*expr).type_ {
-        pg_sys::NodeTag::T_OpExpr | pg_sys::NodeTag::T_DistinctExpr | pg_sys::NodeTag::T_NullIfExpr => {
-            (*expr.cast::<pg_sys::OpExpr>()).args
-        }
+        pg_sys::NodeTag::T_OpExpr
+        | pg_sys::NodeTag::T_DistinctExpr
+        | pg_sys::NodeTag::T_NullIfExpr => (*expr.cast::<pg_sys::OpExpr>()).args,
         pg_sys::NodeTag::T_FuncExpr => (*expr.cast::<pg_sys::FuncExpr>()).args,
         _ => return [false, false],
     };
@@ -895,7 +897,9 @@ unsafe fn header_of(d: pg_sys::Datum) -> Option<pgtoken_core::header::Header> {
         pgrx::varlena::vardata_any(v).cast::<u8>(),
         pgrx::varlena::varsize_any_exhdr(v),
     );
-    pgtoken_core::header::Header::parse_prefix(bytes).ok().map(|(h, _)| h)
+    pgtoken_core::header::Header::parse_prefix(bytes)
+        .ok()
+        .map(|(h, _)| h)
 }
 
 /// A value's bytes, detoasted (and decompressed) in full, valid for the rest of the call.
@@ -1251,11 +1255,7 @@ CREATE OPERATOR CLASS pgtoken.tokens_hash_ops DEFAULT FOR TYPE pgtoken.tokens US
     FUNCTION 2 pgtoken.tokens_hash_extended(pgtoken.tokens, bigint);
 "#,
     name = "tokens_equality",
-    requires = [
-        "tokens_type",
-        tokens_hash_impl,
-        tokens_hash_extended_impl,
-    ],
+    requires = ["tokens_type", tokens_hash_impl, tokens_hash_extended_impl,],
 );
 
 #[cfg(any(test, feature = "pg_test"))]
@@ -1327,7 +1327,10 @@ mod tests {
             pairs("SELECT count(*) FROM eqt_t a, eqt_t b WHERE a.body <> b.body AND a.id < b.id"),
             8
         );
-        assert_eq!(pairs("SELECT count(*) FROM eqt_t WHERE body = '{1,2,3}'"), 2);
+        assert_eq!(
+            pairs("SELECT count(*) FROM eqt_t WHERE body = '{1,2,3}'"),
+            2
+        );
         // An out-of-line row against an in-line value and the other way round.
         assert_eq!(
             pairs("SELECT count(*) FROM eqt_t WHERE body = (SELECT body FROM eqt_t WHERE id = 4)"),

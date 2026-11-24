@@ -182,7 +182,8 @@ impl Header {
     /// back plausible-looking wrong IDs.
     pub fn parse(buf: &[u8]) -> Result<(Header, &[u8]), HeaderError> {
         let (header, len) = Header::parse_prefix(buf)?;
-        let (codec, vocabulary_id, n_tokens) = (header.codec, header.vocabulary_id, header.n_tokens);
+        let (codec, vocabulary_id, n_tokens) =
+            (header.codec, header.vocabulary_id, header.n_tokens);
         let used = len - FIXED_LEN;
 
         // `freq` cannot decode without its ranking, so a zero id is a broken value. The converse
