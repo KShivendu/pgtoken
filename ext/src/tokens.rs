@@ -827,6 +827,18 @@ unsafe fn tokens_equal_datums(fcinfo: pg_sys::FunctionCallInfo) -> bool {
     ) else {
         bail("tokens equality called with a NULL argument");
     };
+    // Two values in line of equal size: no header can settle them and nothing is worth keeping,
+    // so compare at once. Most `=` calls in a hash join or hash aggregate are this case.
+    let (pa, pb) = (
+        da.cast_mut_ptr::<pg_sys::varlena>(),
+        db.cast_mut_ptr::<pg_sys::varlena>(),
+    );
+    if !pgrx::varlena::varatt_is_1b_e(pa)
+        && !pgrx::varlena::varatt_is_1b_e(pb)
+        && pg_sys::toast_raw_datum_size(da) == pg_sys::toast_raw_datum_size(db)
+    {
+        return tokens_equal(detoasted(da), detoasted(db), fcinfo);
+    }
     let mut ops = [Operand::new(da), Operand::new(db)];
     // Only a value in a TOAST table is worth keeping across rows. `flinfo` is null only under
     // `DirectFunctionCall`, where there is no call site to cache on.
