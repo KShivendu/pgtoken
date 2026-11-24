@@ -492,7 +492,8 @@ struct SeenValue {
     /// (TOAST relation, value id). A stored value never changes under its id, and the id is
     /// not reused while the value is visible, so the id identifies the bytes.
     id: (pg_sys::Oid, pg_sys::Oid),
-    header: pgtoken_core::header::Header,
+    /// Its header, once some row has read it.
+    header: Option<pgtoken_core::header::Header>,
     /// [`value::canonical`] of the value, once it has been fetched on a repeat.
     canonical: Option<Vec<u8>>,
 }
@@ -914,7 +915,7 @@ impl<'a> Operand<'a> {
             return;
         }
         self.repeat = true;
-        self.header = Some(seen.header);
+        self.header = seen.header;
         // Safety: the Vec lives in `fn_extra` until the call site is freed, and `remember` does
         // not replace a repeated value's entry.
         self.bytes = seen
@@ -928,21 +929,26 @@ impl<'a> Operand<'a> {
         let Some((_, id)) = self.toast else {
             return;
         };
+        // Kept even when its header went unread, so the next row knows which side repeats.
         if !self.repeat {
-            if let Some(header) = self.header {
-                *seen = Some(SeenValue {
-                    id,
-                    header,
-                    canonical: None,
-                });
-            }
+            *seen = Some(SeenValue {
+                id,
+                header: self.header,
+                canonical: None,
+            });
             return;
         }
-        // Seen twice in a row, so likely on every row: keep its canonical bytes too.
-        let (Some(s), Some(bytes)) = (seen.as_mut(), self.bytes) else {
+        let Some(s) = seen.as_mut() else {
             return;
         };
-        if s.canonical.is_some() || s.header.vocabulary_id == UNRESOLVED {
+        if s.header.is_none() {
+            s.header = self.header;
+        }
+        // Seen twice in a row, so likely on every row: keep its canonical bytes too.
+        let (Some(h), Some(bytes)) = (s.header, self.bytes) else {
+            return;
+        };
+        if s.canonical.is_some() || h.vocabulary_id == UNRESOLVED {
             return;
         }
         let c = value::canonical(bytes)
@@ -1001,11 +1007,12 @@ unsafe fn settle_without_detoast(
     if ops[0].len == ops[1].len {
         return None;
     }
-    // Read the cheap side's header first: one header often settles the pair alone.
-    let order = if !ops[0].cheap() && ops[1].cheap() {
-        [1, 0]
-    } else {
-        [0, 1]
+    // Read the cheap side's header first: one header often settles the pair alone. When both
+    // would cost a TOAST lookup, read the side that repeats, so later rows find it kept.
+    let order = match (ops[0].cheap(), ops[1].cheap()) {
+        (false, true) => [1, 0],
+        (false, false) if ops[1].repeat && !ops[0].repeat => [1, 0],
+        _ => [0, 1],
     };
     for c in order {
         let e = 1 - c;
