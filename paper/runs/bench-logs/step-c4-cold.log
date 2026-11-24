@@ -1,0 +1,45 @@
+ Container pgtoken-paper-server-1  Recreate
+ Container pgtoken-paper-server-1  Recreated
+ Container pgtoken-paper-server-1  Starting
+ Container pgtoken-paper-server-1  Started
+128MB
+run dir: /pgtoken/paper/runs/20261122-015312-c4-cold
+tokenizer for the text arms: hf-o200k (no check_o200k.py result found; defaulting)
+data: allenai/c4 en train shards 0..3 (/data/c4); 1000000 rows, dim 384; o200k tokens per row p1 512, p10 512, p25 512, p50 512, p75 512, p90 512, p99 512, mean 512.0
+server: {'server_version': '16.16 (Debian 16.16-1.pgdg12+1)', 'shared_buffers': '128MB', 'work_mem': '64MB', 'maintenance_work_mem': '16GB', 'max_connections': '100', 'synchronous_commit': 'off', 'jit': 'off', 'default_toast_compression': 'pglz', 'max_parallel_workers_per_gather': '0', 'max_parallel_maintenance_workers': '7', 'effective_cache_size': '48GB', 'vector': '0.8.7', 'pgtoken': '0.1.0'}
+  vocabularies: {'o200k': 65280, 'paper_o200k_raw': 65281}; info {'o200k': (65280, 200019, 'freq', 3, 77463, '743afb3cae0eac236f9bece91973ebe3038539b557ac3dcc955bb0d9a1de42af', 309864, 200000, '5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7', 2197790, 'o200k'), 'paper_o200k_raw': (65281, 200019, 'raw', 3, None, None, None, 200000, '5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7', 2197790, 'o200k')}
+  c4_vec: reusing (1000000 rows)
+  c4_text_pglz: reusing (1000000 rows)
+  c4_text_lz4: reusing (1000000 rows)
+  c4_text_lz4_forced: reusing (1000000 rows)
+  c4_int4_array: reusing (1000000 rows)
+  c4_bytea_raw24: reusing (1000000 rows)
+  c4_bytea_freq: reusing (1000000 rows)
+  c4_pgtoken_raw: reusing (1000000 rows)
+  c4_pgtoken_freq: reusing (1000000 rows)
+  storage bytea_freq: table c4_bytea_freq, heap_bytes 994574336, toast_bytes 0, index_bytes 22487040, rows_per_page 8.2, body_bytes_per_row 886.1, toasted_values 0
+  storage bytea_raw24: table c4_bytea_raw24, heap_bytes 1638400000, toast_bytes 0, index_bytes 22487040, rows_per_page 5.0, body_bytes_per_row 1540.0, toasted_values 0
+  storage int4_array: table c4_int4_array, heap_bytes 1525678080, toast_bytes 90644480, index_bytes 22487040, rows_per_page 5.4, body_bytes_per_row 1397.6, toasted_values 33193
+  storage oracle: table c4_vec, heap_bytes 1638400000, toast_bytes 0, index_bytes 2070495232, rows_per_page 5.0, emb_bytes_per_row 1544.0, toasted_values 0
+  storage pgtoken_freq: table c4_pgtoken_freq, heap_bytes 994574336, toast_bytes 0, index_bytes 22487040, rows_per_page 8.2, body_bytes_per_row 886.1, toasted_values 0
+  storage pgtoken_raw: table c4_pgtoken_raw, heap_bytes 1638400000, toast_bytes 0, index_bytes 22487040, rows_per_page 5.0, body_bytes_per_row 1546.0, toasted_values 0
+  storage text_lz4: table c4_text_lz4, heap_bytes 1609564160, toast_bytes 566591488, index_bytes 22487040, rows_per_page 5.1, body_bytes_per_row 1876.6, toasted_values 207492
+  storage text_lz4_forced: table c4_text_lz4_forced, heap_bytes 2051538944, toast_bytes 0, index_bytes 22487040, rows_per_page 4.0, body_bytes_per_row 1877.4, toasted_values 0
+  storage text_pglz: table c4_text_pglz, heap_bytes 1446510592, toast_bytes 747298816, index_bytes 22487040, rows_per_page 5.7, body_bytes_per_row 1891.5, toasted_values 273667
+  if emb and body shared one table (text_lz4, first 20000 rows): heap_bytes 33030144, toast_bytes 42164224, rows_per_page 5.0, body_bytes_per_row 1866.0, emb_bytes_per_row 1543.8, toasted_values 19996
+  if emb and body shared one table (pgtoken_freq, first 20000 rows): heap_bytes 20447232, toast_bytes 32735232, rows_per_page 8.0, body_bytes_per_row 886.9, emb_bytes_per_row 1540.0, toasted_values 19979
+  example p25 row 0: 512 tokens, 2313 B UTF-8, stored {'text_pglz': 1694, 'text_lz4': 1818, 'text_lz4_forced': 1818, 'int4_array': 1449, 'bytea_raw24': 1540, 'bytea_freq': 897, 'pgtoken_raw': 1546, 'pgtoken_freq': 897}: 'Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. T'
+  example p50 row 0: 512 tokens, 2313 B UTF-8, stored {'text_pglz': 1694, 'text_lz4': 1818, 'text_lz4_forced': 1818, 'int4_array': 1449, 'bytea_raw24': 1540, 'bytea_freq': 897, 'pgtoken_raw': 1546, 'pgtoken_freq': 897}: 'Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. T'
+  example p90 row 0: 512 tokens, 2313 B UTF-8, stored {'text_pglz': 1694, 'text_lz4': 1818, 'text_lz4_forced': 1818, 'int4_array': 1449, 'bytea_raw24': 1540, 'bytea_freq': 897, 'pgtoken_raw': 1546, 'pgtoken_freq': 897}: 'Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. T'
+
+== k=100, clients=1: 100 queries per arm, blocks of 10, sweep on, COLD
+    block 1/10 (client 0, 100 queries): e2e p50 ms  text_pglz 219.38  text_lz4 196.79  text_lz4_batch 193.61  text_lz4_forced 169.14  int4_array 167.24  bytea_raw24 161.63  bytea_freq 166.48  pgtoken_raw 169.31  pgtoken_freq 159.24  oracle_mem 4.26
+    block 2/10 (client 0, 200 queries): e2e p50 ms  text_pglz 215.86  text_lz4 200.59  text_lz4_batch 194.20  text_lz4_forced 169.14  int4_array 169.69  bytea_raw24 162.18  bytea_freq 166.95  pgtoken_raw 166.08  pgtoken_freq 160.39  oracle_mem 4.30
+    block 3/10 (client 0, 300 queries): e2e p50 ms  text_pglz 215.86  text_lz4 201.57  text_lz4_batch 195.89  text_lz4_forced 166.75  int4_array 169.89  bytea_raw24 162.18  bytea_freq 163.23  pgtoken_raw 165.11  pgtoken_freq 161.71  oracle_mem 4.50
+    block 4/10 (client 0, 400 queries): e2e p50 ms  text_pglz 212.41  text_lz4 201.57  text_lz4_batch 195.89  text_lz4_forced 166.86  int4_array 169.20  bytea_raw24 162.18  bytea_freq 160.53  pgtoken_raw 164.28  pgtoken_freq 162.51  oracle_mem 4.58
+    block 5/10 (client 0, 500 queries): e2e p50 ms  text_pglz 212.88  text_lz4 200.00  text_lz4_batch 194.24  text_lz4_forced 167.18  int4_array 169.89  bytea_raw24 162.10  bytea_freq 162.73  pgtoken_raw 165.11  pgtoken_freq 162.60  oracle_mem 4.58
+    block 6/10 (client 0, 600 queries): e2e p50 ms  text_pglz 212.54  text_lz4 201.57  text_lz4_batch 196.81  text_lz4_forced 166.75  int4_array 169.89  bytea_raw24 162.01  bytea_freq 162.52  pgtoken_raw 163.87  pgtoken_freq 162.86  oracle_mem 4.58
+    block 7/10 (client 0, 700 queries): e2e p50 ms  text_pglz 213.79  text_lz4 201.57  text_lz4_batch 196.88  text_lz4_forced 166.72  int4_array 169.89  bytea_raw24 162.10  bytea_freq 162.91  pgtoken_raw 163.06  pgtoken_freq 163.87  oracle_mem 4.59
+    block 8/10 (client 0, 800 queries): e2e p50 ms  text_pglz 213.79  text_lz4 201.57  text_lz4_batch 196.92  text_lz4_forced 166.75  int4_array 170.88  bytea_raw24 162.24  bytea_freq 163.12  pgtoken_raw 163.31  pgtoken_freq 164.73  oracle_mem 4.58
+    block 9/10 (client 0, 900 queries): e2e p50 ms  text_pglz 213.21  text_lz4 201.23  text_lz4_batch 197.15  text_lz4_forced 166.86  int4_array 170.88  bytea_raw24 163.17  bytea_freq 163.45  pgtoken_raw 163.53  pgtoken_freq 164.46  oracle_mem 4.58
+    block 10/10 (client 0, 1000 queries): e2e p50 ms  text_pglz 212.88  text_lz4 200.85  text_lz4_batch 197.57  text_lz4_forced 167.32  int4_array 171.49  bytea_raw24 163.38  bytea_freq 163.76  pgtoken_raw 163.27  pgtoken_freq 164.06  oracle_mem 4.58

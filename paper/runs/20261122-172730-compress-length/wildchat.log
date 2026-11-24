@@ -1,0 +1,40 @@
+run dir: /home/ubuntu/pgtoken-cl/pgtoken/paper/runs/20261122-172730-compress-length
+machine: {"cpu": "Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz", "cores": 4, "affinity": [2], "mem_gb": 15.3, "host": "ip-172-31-20-237", "python": "3.12.13", "loadavg": [2.939453125, 2.9130859375, 1.7939453125], "git": "b87cccc-dirty"}
+  wildchat: 1000 conversations read
+  wildchat: 11000 conversations read
+  wildchat: 21000 conversations read
+  wildchat: 31000 conversations read
+[wildchat] 118639 train values, 142864 test values (134864 natural), loaded in 117 s
+[wildchat/o200k] trained: freq table k=143382 (560 KB, 0.28 s), id dict 112 KB (1.6 s on 16.8 MB)
+[wildchat] text tables: zstd dict 112 KB (1.2 s), FSST table 393 B (2.1 ms), Schmidt vocab 65536 tokens
+[wildchat/o200k] 5000/142864 values, 1 s | median ratio: user freq_lz4=2.00 zstd3_dict=1.39 fsst=1.35 zstd3_dict_ids=1.63 | assistant freq_lz4=2.69 zstd3_dict=2.26 fsst=1.39 zstd3_dict_ids=2.58
+[wildchat/o200k] 10000/142864 values, 2 s | median ratio: user freq_lz4=1.92 zstd3_dict=1.28 fsst=1.32 zstd3_dict_ids=1.51 | assistant freq_lz4=2.62 zstd3_dict=2.19 fsst=1.36 zstd3_dict_ids=2.50
+[wildchat/o200k] 15000/142864 values, 3 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.26 fsst=1.31 zstd3_dict_ids=1.50 | assistant freq_lz4=2.63 zstd3_dict=2.20 fsst=1.36 zstd3_dict_ids=2.51
+[wildchat/o200k] 20000/142864 values, 3 s | median ratio: user freq_lz4=1.91 zstd3_dict=1.25 fsst=1.30 zstd3_dict_ids=1.50 | assistant freq_lz4=2.61 zstd3_dict=2.18 fsst=1.35 zstd3_dict_ids=2.49
+[wildchat/o200k] 25000/142864 values, 4 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.24 fsst=1.30 zstd3_dict_ids=1.49 | assistant freq_lz4=2.61 zstd3_dict=2.18 fsst=1.34 zstd3_dict_ids=2.49
+[wildchat/o200k] 30000/142864 values, 5 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.24 fsst=1.30 zstd3_dict_ids=1.49 | assistant freq_lz4=2.60 zstd3_dict=2.17 fsst=1.34 zstd3_dict_ids=2.48
+[wildchat/o200k] 35000/142864 values, 6 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.30 zstd3_dict_ids=1.49 | assistant freq_lz4=2.59 zstd3_dict=2.17 fsst=1.34 zstd3_dict_ids=2.47
+[wildchat/o200k] 40000/142864 values, 7 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.25 fsst=1.31 zstd3_dict_ids=1.50 | assistant freq_lz4=2.59 zstd3_dict=2.17 fsst=1.35 zstd3_dict_ids=2.47
+[wildchat/o200k] 45000/142864 values, 8 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.25 fsst=1.31 zstd3_dict_ids=1.50 | assistant freq_lz4=2.60 zstd3_dict=2.18 fsst=1.35 zstd3_dict_ids=2.48
+[wildchat/o200k] 50000/142864 values, 8 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.25 fsst=1.31 zstd3_dict_ids=1.50 | assistant freq_lz4=2.60 zstd3_dict=2.17 fsst=1.35 zstd3_dict_ids=2.47
+[wildchat/o200k] 55000/142864 values, 9 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.59 zstd3_dict=2.15 fsst=1.35 zstd3_dict_ids=2.46
+[wildchat/o200k] 60000/142864 values, 10 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.59 zstd3_dict=2.15 fsst=1.35 zstd3_dict_ids=2.46
+[wildchat/o200k] 65000/142864 values, 11 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.59 zstd3_dict=2.15 fsst=1.35 zstd3_dict_ids=2.45
+[wildchat/o200k] 70000/142864 values, 12 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.23 fsst=1.30 zstd3_dict_ids=1.48 | assistant freq_lz4=2.59 zstd3_dict=2.15 fsst=1.34 zstd3_dict_ids=2.45
+[wildchat/o200k] 75000/142864 values, 13 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.30 zstd3_dict_ids=1.49 | assistant freq_lz4=2.59 zstd3_dict=2.15 fsst=1.34 zstd3_dict_ids=2.45
+[wildchat/o200k] 80000/142864 values, 14 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.30 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.34 zstd3_dict_ids=2.44
+[wildchat/o200k] 85000/142864 values, 14 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.25 fsst=1.31 zstd3_dict_ids=1.50 | assistant freq_lz4=2.59 zstd3_dict=2.15 fsst=1.35 zstd3_dict_ids=2.45
+[wildchat/o200k] 90000/142864 values, 15 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.50 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.34 zstd3_dict_ids=2.45
+[wildchat/o200k] 95000/142864 values, 16 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.50 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.34 zstd3_dict_ids=2.44
+[wildchat/o200k] 100000/142864 values, 17 s | median ratio: user freq_lz4=1.90 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.50 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.44
+[wildchat/o200k] 105000/142864 values, 18 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.30 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.34 zstd3_dict_ids=2.44
+[wildchat/o200k] 110000/142864 values, 18 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.44
+[wildchat/o200k] 115000/142864 values, 19 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.45 | conversation freq_lz4=2.84 zstd3_dict=2.44 fsst=1.39 zstd3_dict_ids=2.74
+[wildchat/o200k] 120000/142864 values, 22 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.45 | conversation freq_lz4=2.86 zstd3_dict=2.49 fsst=1.36 zstd3_dict_ids=2.78
+[wildchat/o200k] 125000/142864 values, 24 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.45 | conversation freq_lz4=2.84 zstd3_dict=2.49 fsst=1.37 zstd3_dict_ids=2.77
+[wildchat/o200k] 130000/142864 values, 26 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.45 | conversation freq_lz4=2.84 zstd3_dict=2.49 fsst=1.37 zstd3_dict_ids=2.76
+[wildchat/o200k] 135000/142864 values, 28 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.45 | conversation freq_lz4=2.84 zstd3_dict=2.48 fsst=1.37 zstd3_dict_ids=2.76 | cut freq_lz4=2.00 zstd3_dict=1.35 fsst=1.36 zstd3_dict_ids=1.59
+[wildchat/o200k] 140000/142864 values, 29 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.45 | conversation freq_lz4=2.84 zstd3_dict=2.48 fsst=1.37 zstd3_dict_ids=2.76 | cut freq_lz4=2.33 zstd3_dict=1.78 fsst=1.35 zstd3_dict_ids=2.08
+[wildchat/o200k] 142864/142864 values, 30 s | median ratio: user freq_lz4=1.89 zstd3_dict=1.24 fsst=1.31 zstd3_dict_ids=1.49 | assistant freq_lz4=2.58 zstd3_dict=2.14 fsst=1.35 zstd3_dict_ids=2.45 | conversation freq_lz4=2.84 zstd3_dict=2.48 fsst=1.37 zstd3_dict_ids=2.76 | cut freq_lz4=2.53 zstd3_dict=2.07 fsst=1.36 zstd3_dict_ids=2.36
+wrote /home/ubuntu/pgtoken-cl/pgtoken/paper/runs/20261122-172730-compress-length/summary.md and results.json
+GATE (o200k): median message 71 tokens; freq+lz4 2.40x vs zstd-3 + dict 1.82x -> PASS

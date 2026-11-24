@@ -1,0 +1,55 @@
+run dir: /pgtoken/paper/runs/20261121-235756-dbpedia-load
+tokenizer for the text arms: hf-o200k (no check_o200k.py result found; defaulting)
+data: KShivendu/dbpedia-entities-openai-1M@af9b8869cc2d8debbd254d77737865bb09a2067f (/data/dbpedia); 999000 rows, dim 1536; o200k tokens per row p1 20, p10 39, p25 58, p50 84, p75 104, p90 118, p99 147, mean 81.9
+server: {'server_version': '16.16 (Debian 16.16-1.pgdg12+1)', 'shared_buffers': '24GB', 'work_mem': '64MB', 'maintenance_work_mem': '16GB', 'max_connections': '100', 'synchronous_commit': 'off', 'jit': 'off', 'default_toast_compression': 'pglz', 'max_parallel_workers_per_gather': '0', 'max_parallel_maintenance_workers': '7', 'effective_cache_size': '48GB', 'vector': '0.8.7', 'pgtoken': '0.1.0'}
+  vocabularies: {'o200k': 65280, 'paper_o200k_raw': 65281}; info {'o200k': (65280, 200019, 'freq', 3, 77463, '743afb3cae0eac236f9bece91973ebe3038539b557ac3dcc955bb0d9a1de42af', 309864, 200000, '5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7', 2197790, 'o200k'), 'paper_o200k_raw': (65281, 200019, 'raw', 3, None, None, None, 200000, '5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7', 2197790, 'o200k')}
+      0/999000 rows
+      102400/999000 rows
+      204800/999000 rows
+      307200/999000 rows
+      409600/999000 rows
+      512000/999000 rows
+      614400/999000 rows
+      716800/999000 rows
+      819200/999000 rows
+      921600/999000 rows
+  dbp_vec: building HNSW (m 16, ef_construction 64, cosine) ...
+  dbp_vec: 999000 vectors in 195 s, HNSW in 375 s
+      0/999000 rows
+      102400/999000 rows
+      204800/999000 rows
+      307200/999000 rows
+      409600/999000 rows
+      512000/999000 rows
+      614400/999000 rows
+      716800/999000 rows
+      819200/999000 rows
+      921600/999000 rows
+  dbp_text_pglz: loaded 999000 rows in 15 s
+      0/999000 rows
+      102400/999000 rows
+      204800/999000 rows
+      307200/999000 rows
+      409600/999000 rows
+      512000/999000 rows
+      614400/999000 rows
+      716800/999000 rows
+      819200/999000 rows
+      921600/999000 rows
+  dbp_text_lz4: loaded 999000 rows in 16 s
+Traceback (most recent call last):
+  File "/pgtoken/paper/rag_e2e.py", line 1057, in <module>
+    return 0
+             
+  File "/pgtoken/paper/rag_e2e.py", line 966, in main
+    if args.cold and settings["shared_buffers"] not in ("128MB", "256MB", "512MB"):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/pgtoken/paper/rag_e2e.py", line 434, in load_tables
+    conn.execute(f"CREATE TABLE {name} (id int PRIMARY KEY{emb_col}{body})")
+  File "/opt/venv/lib/python3.12/site-packages/psycopg/connection.py", line 300, in execute
+    raise ex.with_traceback(None)
+psycopg.errors.SyntaxError: syntax error at or near "STORAGE"
+LINE 1: ...ed (id int PRIMARY KEY, body text COMPRESSION lz4 STORAGE MA...
+                                                             ^
+
+EXIT 1

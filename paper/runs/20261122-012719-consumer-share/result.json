@@ -1,0 +1,142 @@
+{
+ "config": {
+  "dbpedia": "/data/dbpedia",
+  "c4": "/data/c4",
+  "rows": 1000,
+  "reps": 3,
+  "embed_docs": 320,
+  "smoke": false,
+  "machine": {
+   "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+   "cores": 16,
+   "affinity": [
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+   ],
+   "mem_gb": 61.8,
+   "host": "pgtoken-bench",
+   "python": "3.12.16",
+   "loadavg": [
+    1.0634765625,
+    5.96435546875,
+    7.25732421875
+   ],
+   "git": "b87cccc-dirty"
+  },
+  "threads": 8,
+  "models": {
+   "embedding": [
+    "Qwen/Qwen3-Embedding-0.6B",
+    "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
+   ],
+   "reranker": [
+    "Qwen/Qwen3-Reranker-0.6B",
+    "e61197ed45024b0ed8a2d74b80b4d909f1255473"
+   ],
+   "static": [
+    "futur/Qwen3-Embedding-0.6B-model2vec-onnx",
+    "a3f60a85a2570e7976ea7f2d6505ad3e5152a96f"
+   ]
+  }
+ },
+ "embedding_docs": {
+  "tokenize_ms": 29.729844998655608,
+  "model_ms": 47054.6163580002,
+  "tokenize_share": 0.0006314167530431182,
+  "tokens": 28291,
+  "tokenize_tokens_per_s": 951602.6740563002,
+  "model_tokens_per_s": 601.2375020711432,
+  "from_ids_ms": 6.105847998696845,
+  "saving_share": 0.0005017378153262777
+ },
+ "embedding_100_chunks": {
+  "tokenize_ms": 24.363049000385217,
+  "model_ms": 73897.05941800094,
+  "tokenize_share": 0.00032958035962120364,
+  "tokens": 53015,
+  "tokenize_tokens_per_s": 2176041.266393289,
+  "model_tokens_per_s": 717.4169096515608,
+  "from_ids_ms": 7.515707001402916,
+  "saving_share": 0.00022790879066894297
+ },
+ "reranker": {
+  "tokenize_ms": 10.615787999086024,
+  "model_ms": 28749.99760100127,
+  "tokenize_share": 0.0003691085393591114,
+  "tokens": 16611,
+  "tokenize_tokens_per_s": 1564744.8876550794,
+  "model_tokens_per_s": 577.7739612549217,
+  "from_ids_ms": 6.518470999253623,
+  "id_mismatched_pairs": 97,
+  "mismatch_example": {
+   "pair": 0,
+   "pos": 65,
+   "pair_tokenizer": [
+    ">:",
+    " Rot",
+    "tn",
+    "est"
+   ],
+   "stored_concat": [
+    ">:",
+    " ",
+    "Rot",
+    "tn"
+   ]
+  },
+  "max_score_diff": 0.0011606994085013866,
+  "saving_share": 0.0001424627821532986
+ },
+ "static_DBpedia": {
+  "tokenize_ms": 27.62840800005506,
+  "model_ms": 32.12136999991344,
+  "tokenize_share": 0.46240185193775324,
+  "tokens": 87030,
+  "tokenize_tokens_per_s": 3150018.6329891523,
+  "model_tokens_per_s": 2709411.2112974795,
+  "model": "Qwen3-Embedding-0.6B input embedding table (151669 x 1024); futur/Qwen3-Embedding-0.6B-model2vec-onnx's tokenizer differs from Qwen3's"
+ },
+ "static_C4": {
+  "tokenize_ms": 129.39094900048076,
+  "model_ms": 243.58965400006127,
+  "tokenize_share": 0.34691066495029693,
+  "tokens": 528996,
+  "tokenize_tokens_per_s": 4088353.9697821867,
+  "model_tokens_per_s": 2171668.588189985,
+  "model": "Qwen3-Embedding-0.6B input embedding table (151669 x 1024); futur/Qwen3-Embedding-0.6B-model2vec-onnx's tokenizer differs from Qwen3's"
+ },
+ "storage_bytes_per_row": {
+  "dbpedia": {
+   "utf8": 342.682,
+   "text_lz4": 345.773,
+   "text_lz4_forced": 345.793,
+   "qwen3_freq": 141.516,
+   "o200k_freq": 150.981,
+   "rows": 1000
+  },
+  "c4": {
+   "utf8": 2445.079,
+   "text_lz4": 1847.146,
+   "text_lz4_forced": 1851.146,
+   "qwen3_freq": 827.149,
+   "o200k_freq": 876.427,
+   "rows": 1000
+  }
+ },
+ "budgeting": {
+  "tokenize_in_hand_ms": 13.932993000253191,
+  "fetch_text_tokenize_ms": 15.535280999756651,
+  "token_count_sql_ms": 0.9279984997192514,
+  "fit": [
+   15,
+   15,
+   15
+  ]
+ }
+}

@@ -1,0 +1,366 @@
+{
+ "args": {
+  "datasets": "wildchat",
+  "tokenizers": "o200k",
+  "smoke": false,
+  "resume": null,
+  "wildchat_convs": 40000,
+  "dbpedia_rows": 50000,
+  "c4_docs": 40000,
+  "code_train_tokens": 4000000,
+  "code_test_tokens": 1500000,
+  "max_natural": 0,
+  "cut_n": 1000,
+  "dict_kb": 112,
+  "dict_sample_mb": 16,
+  "time_frac": 0.2,
+  "progress_every": 5000,
+  "seed": 2026,
+  "text_pass_tokenizer": "o200k"
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz",
+  "cores": 4,
+  "affinity": [
+   2
+  ],
+  "mem_gb": 15.3,
+  "host": "ip-172-31-20-237",
+  "python": "3.12.13",
+  "loadavg": [
+   2.939453125,
+   2.9130859375,
+   1.7939453125
+  ],
+  "git": "b87cccc-dirty"
+ },
+ "cache": "/home/ubuntu/.cache/pgtoken/compress_length",
+ "fsst_commit": "e638d4cf8c26129d73c242a4127b42b975de5b63",
+ "qwen3_tokenizer": "Qwen/Qwen3-Embedding-0.6B",
+ "o200k_hf": "/home/ubuntu/.cache/pgtoken/Xenova--gpt-4o@7956d98f2a83b2751a98ea7136fdf7fe6cf54e69.tokenizer.json",
+ "pg_toast_threshold": 2032,
+ "passes": [
+  {
+   "dataset": "wildchat",
+   "tokenizer": "o200k",
+   "n_train_values": 118639,
+   "n_test_values": 142864,
+   "train_tokens": 22642062,
+   "tokenize_train_s": 12.808112320955843,
+   "freq_table": {
+    "train_s": 0.280126566067338,
+    "bytes": 573540,
+    "k": 143382
+   },
+   "zstd_dict_ids": {
+    "train_s": 1.6381909740157425,
+    "bytes": 114688,
+    "sample_bytes": 16778664
+   },
+   "zstd_dict_text": {
+    "train_s": 1.2312275669537485,
+    "bytes": 114688,
+    "sample_bytes": 16777566
+   },
+   "fsst": {
+    "train_s": 0.002128148,
+    "table_bytes": 393,
+    "table_counted": "once per column (amortised), not per value"
+   },
+   "schmidt": {
+    "tokens": 65536,
+    "max_len": 7,
+    "by_len": {
+     "1": 256,
+     "2": 6649,
+     "3": 11939,
+     "4": 15057,
+     "5": 14792,
+     "6": 13149,
+     "7": 3694
+    }
+   },
+   "eval_s": 30.49696226324886,
+   "pass": [
+    "wildchat",
+    "o200k"
+   ],
+   "loadavg_end": [
+    3.17529296875,
+    3.236328125,
+    2.19970703125
+   ]
+  },
+  {
+   "dataset": "dbpedia",
+   "tokenizer": "o200k",
+   "n_train_values": 25196,
+   "n_test_values": 33266,
+   "train_tokens": 2145293,
+   "tokenize_train_s": 1.4045750247314572,
+   "freq_table": {
+    "train_s": 0.019423934165388346,
+    "bytes": 225916,
+    "k": 56476
+   },
+   "zstd_dict_ids": {
+    "train_s": 0.8609764277935028,
+    "bytes": 114688,
+    "sample_bytes": 6435879
+   },
+   "zstd_dict_text": {
+    "train_s": 0.8185413479804993,
+    "bytes": 114688,
+    "sample_bytes": 9138508
+   },
+   "fsst": {
+    "train_s": 0.002309723,
+    "table_bytes": 560,
+    "table_counted": "once per column (amortised), not per value"
+   },
+   "schmidt": {
+    "tokens": 65536,
+    "max_len": 7,
+    "by_len": {
+     "1": 256,
+     "2": 6649,
+     "3": 11939,
+     "4": 15057,
+     "5": 14792,
+     "6": 13149,
+     "7": 3694
+    }
+   },
+   "eval_s": 4.731242683716118,
+   "pass": [
+    "dbpedia",
+    "o200k"
+   ],
+   "loadavg_end": [
+    2.83935546875,
+    3.07568359375,
+    2.2373046875
+   ]
+  },
+  {
+   "dataset": "c4",
+   "tokenizer": "o200k",
+   "n_train_values": 19899,
+   "n_test_values": 28101,
+   "train_tokens": 8935542,
+   "tokenize_train_s": 3.536544385831803,
+   "freq_table": {
+    "train_s": 0.057118695229291916,
+    "bytes": 329216,
+    "k": 82301
+   },
+   "zstd_dict_ids": {
+    "train_s": 1.3384526898153126,
+    "bytes": 114688,
+    "sample_bytes": 16777545
+   },
+   "zstd_dict_text": {
+    "train_s": 1.1099536176770926,
+    "bytes": 114688,
+    "sample_bytes": 16777449
+   },
+   "fsst": {
+    "train_s": 0.002394227,
+    "table_bytes": 544,
+    "table_counted": "once per column (amortised), not per value"
+   },
+   "schmidt": {
+    "tokens": 65536,
+    "max_len": 7,
+    "by_len": {
+     "1": 256,
+     "2": 6649,
+     "3": 11939,
+     "4": 15057,
+     "5": 14792,
+     "6": 13149,
+     "7": 3694
+    }
+   },
+   "eval_s": 6.187077988870442,
+   "pass": [
+    "c4",
+    "o200k"
+   ],
+   "loadavg_end": [
+    2.9384765625,
+    3.0595703125,
+    2.28466796875
+   ]
+  },
+  {
+   "dataset": "code",
+   "tokenizer": "o200k",
+   "n_train_values": 4283,
+   "n_test_values": 7180,
+   "train_tokens": 2192888,
+   "tokenize_train_s": 0.9122203676961362,
+   "freq_table": {
+    "train_s": 0.013078426010906696,
+    "bytes": 157408,
+    "k": 39349
+   },
+   "zstd_dict_ids": {
+    "train_s": 0.46134044928476214,
+    "bytes": 114688,
+    "sample_bytes": 6578664
+   },
+   "zstd_dict_text": {
+    "train_s": 0.5471910582855344,
+    "bytes": 114688,
+    "sample_bytes": 8981520
+   },
+   "fsst": {
+    "train_s": 0.00234052,
+    "table_bytes": 603,
+    "table_counted": "once per column (amortised), not per value"
+   },
+   "schmidt": {
+    "tokens": 65536,
+    "max_len": 7,
+    "by_len": {
+     "1": 256,
+     "2": 6649,
+     "3": 11939,
+     "4": 15057,
+     "5": 14792,
+     "6": 13149,
+     "7": 3694
+    }
+   },
+   "eval_s": 1.3496395801194012,
+   "pass": [
+    "code",
+    "o200k"
+   ],
+   "loadavg_end": [
+    2.89013671875,
+    3.03662109375,
+    2.30224609375
+   ]
+  },
+  {
+   "dataset": "wildchat",
+   "tokenizer": "qwen3",
+   "n_train_values": 118639,
+   "n_test_values": 142864,
+   "train_tokens": 23155389,
+   "tokenize_train_s": 3.4993688543327153,
+   "freq_table": {
+    "train_s": 0.15296284295618534,
+    "bytes": 471344,
+    "k": 117833
+   },
+   "zstd_dict_ids": {
+    "train_s": 1.4188830102793872,
+    "bytes": 114688,
+    "sample_bytes": 16777587
+   },
+   "eval_s": 19.905289960093796,
+   "pass": [
+    "wildchat",
+    "qwen3"
+   ],
+   "loadavg_end": [
+    2.90576171875,
+    3.0068359375,
+    2.369140625
+   ]
+  },
+  {
+   "dataset": "dbpedia",
+   "tokenizer": "qwen3",
+   "n_train_values": 25196,
+   "n_test_values": 33266,
+   "train_tokens": 2271223,
+   "tokenize_train_s": 0.3417600803077221,
+   "freq_table": {
+    "train_s": 0.020358934998512268,
+    "bytes": 186444,
+    "k": 46608
+   },
+   "zstd_dict_ids": {
+    "train_s": 0.7859620451927185,
+    "bytes": 114688,
+    "sample_bytes": 6813669
+   },
+   "eval_s": 3.4570695040747523,
+   "pass": [
+    "dbpedia",
+    "qwen3"
+   ],
+   "loadavg_end": [
+    2.95703125,
+    3.00244140625,
+    2.39990234375
+   ]
+  },
+  {
+   "dataset": "c4",
+   "tokenizer": "qwen3",
+   "n_train_values": 19899,
+   "n_test_values": 28101,
+   "train_tokens": 9218222,
+   "tokenize_train_s": 0.941607650835067,
+   "freq_table": {
+    "train_s": 0.04703059000894427,
+    "bytes": 262752,
+    "k": 65685
+   },
+   "zstd_dict_ids": {
+    "train_s": 1.3365965988487005,
+    "bytes": 114688,
+    "sample_bytes": 16781367
+   },
+   "eval_s": 3.7027740608900785,
+   "pass": [
+    "c4",
+    "qwen3"
+   ],
+   "loadavg_end": [
+    3.05029296875,
+    3.015625,
+    2.439453125
+   ]
+  },
+  {
+   "dataset": "code",
+   "tokenizer": "qwen3",
+   "n_train_values": 4283,
+   "n_test_values": 7180,
+   "train_tokens": 2210404,
+   "tokenize_train_s": 0.21171377878636122,
+   "freq_table": {
+    "train_s": 0.013712894171476364,
+    "bytes": 156360,
+    "k": 39087
+   },
+   "zstd_dict_ids": {
+    "train_s": 0.4766468978486955,
+    "bytes": 114688,
+    "sample_bytes": 6631212
+   },
+   "eval_s": 0.8904299233108759,
+   "pass": [
+    "code",
+    "qwen3"
+   ],
+   "loadavg_end": [
+    3.0244140625,
+    3.01171875,
+    2.46533203125
+   ]
+  }
+ ],
+ "sources": {
+  "wildchat": "allenai/WildChat-1M (ODC-BY, not gated)",
+  "dbpedia": "KShivendu/dbpedia-entities-openai-1M (MIT)",
+  "c4": "allenai/c4 en/c4-validation.00000-of-00008.json.gz",
+  "code": "token-storage data/corpus/code_{train,test}.npy (r50k)"
+ }
+}

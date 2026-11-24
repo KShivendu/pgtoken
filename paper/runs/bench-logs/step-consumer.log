@@ -1,0 +1,28 @@
+run dir: /pgtoken/paper/runs/20261122-012719-consumer-share; torch 2.15.0+cpu, 8 threads
+  DBpedia: 1000 rows, Qwen3 tokens p25/p50/p90 63/90/128
+  C4: 1000 rows, Qwen3 tokens p25/p50/p90 519/525/548
+
+1. Qwen3-Embedding-0.6B (last-token pooling, left padding)
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/310 [00:00<?, ?it/s]Loading weights:   0%|          | 1/310 [00:04<21:13,  4.12s/it]Loading weights:  43%|████▎     | 133/310 [00:04<00:04, 43.92it/s]Loading weights:  62%|██████▏   | 191/310 [00:05<00:02, 43.97it/s]Loading weights:  73%|███████▎  | 225/310 [00:06<00:01, 44.91it/s]Loading weights:  80%|███████▉  | 247/310 [00:06<00:01, 44.83it/s]Loading weights:  85%|████████▍ | 263/310 [00:07<00:01, 46.80it/s]Loading weights:  89%|████████▉ | 276/310 [00:07<00:00, 47.10it/s]Loading weights:  92%|█████████▏| 286/310 [00:07<00:00, 45.20it/s]Loading weights:  95%|█████████▍| 294/310 [00:07<00:00, 46.74it/s]Loading weights:  97%|█████████▋| 302/310 [00:07<00:00, 44.14it/s]Loading weights: 100%|██████████| 310/310 [00:07<00:00, 38.90it/s]
+  special tokens the tokenizer adds after the text: [151643]; stored ids + that == tokenizer output on 200/200 docs
+  embed 320 DBpedia docs, batch 32             tokenize     29.73 ms  model   47054.62 ms  tokenize share   0.06%  (28291 tokens; tokenize 1.0 M tok/s, model 0.6 k tok/s) [stored-ID tensor build 6.11 ms]
+  embed 100 C4 chunks, batch 25                tokenize     24.36 ms  model   73897.06 ms  tokenize share   0.03%  (53015 tokens; tokenize 2.2 M tok/s, model 0.7 k tok/s) [stored-ID tensor build 7.52 ms]
+
+2. Qwen3-Reranker-0.6B (yes/no logit, model-card template)
+Loading weights:   0%|          | 0/310 [00:00<?, ?it/s]Loading weights:   0%|          | 1/310 [00:03<19:38,  3.81s/it]Loading weights:  37%|███▋      | 114/310 [00:03<00:04, 39.89it/s]Loading weights:  49%|████▊     | 151/310 [00:04<00:03, 42.32it/s]Loading weights:  56%|█████▌    | 174/310 [00:05<00:03, 44.16it/s]Loading weights:  61%|██████▏   | 190/310 [00:05<00:02, 41.64it/s]Loading weights:  65%|██████▌   | 202/310 [00:05<00:02, 44.66it/s]Loading weights:  68%|██████▊   | 212/310 [00:06<00:02, 44.92it/s]Loading weights:  71%|███████▏  | 221/310 [00:06<00:01, 46.78it/s]Loading weights:  74%|███████▍  | 229/310 [00:06<00:01, 46.87it/s]Loading weights:  76%|███████▌  | 236/310 [00:06<00:01, 42.77it/s]Loading weights:  79%|███████▉  | 245/310 [00:06<00:01, 46.19it/s]Loading weights:  81%|████████  | 251/310 [00:06<00:01, 46.52it/s]Loading weights:  83%|████████▎ | 257/310 [00:07<00:01, 45.28it/s]Loading weights:  85%|████████▌ | 264/310 [00:07<00:00, 46.83it/s]Loading weights:  87%|████████▋ | 270/310 [00:07<00:00, 44.27it/s]Loading weights:  90%|████████▉ | 278/310 [00:07<00:00, 46.99it/s]Loading weights:  92%|█████████▏| 286/310 [00:07<00:00, 49.65it/s]Loading weights:  94%|█████████▍| 292/310 [00:07<00:00, 43.20it/s]Loading weights:  97%|█████████▋| 300/310 [00:07<00:00, 45.25it/s]Loading weights: 100%|██████████| 310/310 [00:08<00:00, 38.44it/s]
+  ID check: stored-ID input == tokenizing the whole pair on 3/100 pairs; first difference {'pair': 0, 'pos': 65, 'pair_tokenizer': ['>:', ' Rot', 'tn', 'est'], 'stored_concat': ['>:', ' ', 'Rot', 'tn']}
+  score 100 (query, abstract) pairs, batch 25  tokenize     10.62 ms  model   28750.00 ms  tokenize share   0.04%  (16611 tokens; tokenize 1.6 M tok/s, model 0.6 k tok/s) [stored-ID path 6.52 ms (still tokenizes the query part)]
+  max |score(text path) - score(stored ids)| = 1.16e-03
+
+3. static embedder (lookup + mean pool)
+Loading weights:   0%|          | 0/310 [00:00<?, ?it/s]Loading weights:  75%|███████▍  | 231/310 [00:00<00:00, 2296.61it/s]Loading weights: 100%|██████████| 310/310 [00:00<00:00, 2396.82it/s]
+  model: Qwen3-Embedding-0.6B input embedding table (151669 x 1024); futur/Qwen3-Embedding-0.6B-model2vec-onnx's tokenizer differs from Qwen3's; tokenizer identical to Qwen3 on 200 docs: False
+  static embed 1000 DBpedia rows               tokenize     27.63 ms  model      32.12 ms  tokenize share  46.24%  (87030 tokens; tokenize 3.2 M tok/s, model 2709.4 k tok/s) 
+  static embed 1000 C4 rows                    tokenize    129.39 ms  model     243.59 ms  tokenize share  34.69%  (528996 tokens; tokenize 4.1 M tok/s, model 2171.7 k tok/s) 
+
+4. token budgeting and Qwen3 ids in pgtoken
+  dbpedia: bytes/row UTF-8 343, text lz4 346, text lz4 forced 346, pgtoken Qwen3 freq 142, pgtoken o200k freq 151 (1000 rows)
+  c4: bytes/row UTF-8 2445, text lz4 1847, text lz4 forced 1851, pgtoken Qwen3 freq 827, pgtoken o200k freq 876 (1000 rows)
+  fit 100 C4 chunks into 8192 Qwen3 tokens: tokenize text in hand 13.93 ms (15 fit); fetch text + tokenize 15.54 ms (15); SELECT pgtoken.token_count 0.93 ms (15)
+wrote /pgtoken/paper/runs/20261122-012719-consumer-share/result.json

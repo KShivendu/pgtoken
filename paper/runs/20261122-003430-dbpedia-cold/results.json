@@ -1,0 +1,2061 @@
+{
+ "config": {
+  "args": {
+   "data": "/data/dbpedia",
+   "rows": 999000,
+   "dim": 384,
+   "layout": "split",
+   "tag": "dbp",
+   "k": [
+    100
+   ],
+   "clients": [
+    1,
+    16
+   ],
+   "queries": 100,
+   "warmup": 3,
+   "block": 10,
+   "ef_search": 100,
+   "tokenizer": "hf-o200k",
+   "arms": [
+    "text_pglz",
+    "text_lz4",
+    "text_lz4_batch",
+    "text_lz4_forced",
+    "int4_array",
+    "bytea_raw24",
+    "bytea_freq",
+    "pgtoken_raw",
+    "pgtoken_freq",
+    "oracle_mem"
+   ],
+   "sweep": "both",
+   "cold": true,
+   "disk": "nvme0n1",
+   "load_only": false,
+   "p99_targets": [
+    10,
+    25,
+    50,
+    100
+   ],
+   "seed": 20261122,
+   "no_reuse": false,
+   "smoke": false,
+   "name": "dbpedia-cold"
+  },
+  "settings": {
+   "server_version": "16.16 (Debian 16.16-1.pgdg12+1)",
+   "shared_buffers": "128MB",
+   "work_mem": "64MB",
+   "maintenance_work_mem": "16GB",
+   "max_connections": "100",
+   "synchronous_commit": "off",
+   "jit": "off",
+   "default_toast_compression": "pglz",
+   "max_parallel_workers_per_gather": "0",
+   "max_parallel_maintenance_workers": "7",
+   "effective_cache_size": "48GB",
+   "vector": "0.8.7",
+   "pgtoken": "0.1.0"
+  },
+  "machine": {
+   "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+   "cores": 16,
+   "affinity": [
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+   ],
+   "mem_gb": 61.8,
+   "host": "pgtoken-bench",
+   "python": "3.12.16",
+   "loadavg": [
+    1.1787109375,
+    1.41943359375,
+    1.85400390625
+   ],
+   "git": "b87cccc-dirty"
+  },
+  "data": {
+   "source": "KShivendu/dbpedia-entities-openai-1M@af9b8869cc2d8debbd254d77737865bb09a2067f (/data/dbpedia)",
+   "rows": 999000,
+   "dim": 1536,
+   "tokens": {
+    "1": 20.0,
+    "10": 39.0,
+    "25": 58.0,
+    "50": 84.0,
+    "75": 104.0,
+    "90": 118.0,
+    "99": 147.0
+   },
+   "tokens_mean": 81.9442022022022,
+   "meta": {
+    "name": "dbpedia",
+    "source": "KShivendu/dbpedia-entities-openai-1M@af9b8869cc2d8debbd254d77737865bb09a2067f",
+    "dim": 1536,
+    "queries": 1000,
+    "queries_from": "1000 entities held out at random (seed 20261122)",
+    "body": "title + '\\n' + text",
+    "rows": 999000,
+    "tokens": {
+     "1": 20.0,
+     "10": 39.0,
+     "25": 58.0,
+     "50": 84.0,
+     "75": 104.0,
+     "90": 118.0,
+     "99": 147.0
+    },
+    "tokens_mean": 81.9442022022022,
+    "text_bytes_mean": 348.20854754754754,
+    "text_bytes": {
+     "25": 245.0,
+     "50": 367.0,
+     "90": 496.0
+    },
+    "built_s": 576.5762815475464,
+    "machine": {
+     "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+     "cores": 16,
+     "affinity": [
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+     ],
+     "mem_gb": 61.8,
+     "host": "docker",
+     "python": "3.12.16",
+     "loadavg": [
+      4.76904296875,
+      1.97119140625,
+      0.85205078125
+     ],
+     "git": "b87cccc-dirty"
+    },
+    "tokenizer": "hf-o200k /opt/o200k/Xenova--gpt-4o@7956d98f2a83b2751a98ea7136fdf7fe6cf54e69.tokenizer.json"
+   }
+  },
+  "arms": [
+   {
+    "key": "text_pglz",
+    "label": "text (pglz)",
+    "table": "text_pglz",
+    "coltype": "text",
+    "client": "tokenize"
+   },
+   {
+    "key": "text_lz4",
+    "label": "text (lz4)",
+    "table": "text_lz4",
+    "coltype": "text COMPRESSION lz4",
+    "client": "tokenize"
+   },
+   {
+    "key": "text_lz4_batch",
+    "label": "text (lz4), batch tokenize",
+    "table": "text_lz4",
+    "coltype": "text COMPRESSION lz4",
+    "client": "tokenize_batch"
+   },
+   {
+    "key": "text_lz4_forced",
+    "label": "text (lz4, forced)",
+    "table": "text_lz4_forced",
+    "coltype": "text COMPRESSION lz4",
+    "client": "tokenize"
+   },
+   {
+    "key": "int4_array",
+    "label": "int4[]",
+    "table": "int4_array",
+    "coltype": "int4[]",
+    "client": "int4"
+   },
+   {
+    "key": "bytea_raw24",
+    "label": "bytea raw24",
+    "table": "bytea_raw24",
+    "coltype": "bytea",
+    "client": "raw24"
+   },
+   {
+    "key": "bytea_freq",
+    "label": "bytea freq (client codec, no ext.)",
+    "table": "bytea_freq",
+    "coltype": "bytea",
+    "client": "pgtoken"
+   },
+   {
+    "key": "pgtoken_raw",
+    "label": "pgtoken raw (raw24)",
+    "table": "pgtoken_raw",
+    "coltype": "pgtoken.paper_o200k_raw",
+    "client": "pgtoken"
+   },
+   {
+    "key": "pgtoken_freq",
+    "label": "pgtoken freq",
+    "table": "pgtoken_freq",
+    "coltype": "pgtoken.o200k",
+    "client": "pgtoken"
+   },
+   {
+    "key": "oracle_mem",
+    "label": "oracle: IDs already in memory",
+    "table": "oracle",
+    "coltype": "",
+    "client": "oracle"
+   }
+  ],
+  "load": {
+   "dbp_vec": {
+    "reused": true
+   },
+   "dbp_text_pglz": {
+    "reused": true
+   },
+   "dbp_text_lz4": {
+    "reused": true
+   },
+   "dbp_text_lz4_forced": {
+    "reused": true
+   },
+   "dbp_int4_array": {
+    "reused": true
+   },
+   "dbp_bytea_raw24": {
+    "reused": true
+   },
+   "dbp_bytea_freq": {
+    "reused": true
+   },
+   "dbp_pgtoken_raw": {
+    "reused": true
+   },
+   "dbp_pgtoken_freq": {
+    "reused": true
+   }
+  },
+  "storage": {
+   "bytea_freq": {
+    "table": "dbp_bytea_freq",
+    "heap_bytes": 190644224,
+    "toast_bytes": 98304,
+    "index_bytes": 22462464,
+    "rows_per_page": 42.92712272258508,
+    "body_bytes_per_row": 152.5926956956957,
+    "toasted_values": 25
+   },
+   "bytea_raw24": {
+    "table": "dbp_bytea_raw24",
+    "heap_bytes": 290037760,
+    "toast_bytes": 114688,
+    "index_bytes": 22462464,
+    "rows_per_page": 28.216353622369724,
+    "body_bytes_per_row": 249.29284184184183,
+    "toasted_values": 29
+   },
+   "int4_array": {
+    "table": "dbp_int4_array",
+    "heap_bytes": 394592256,
+    "toast_bytes": 131072,
+    "index_bytes": 22462464,
+    "rows_per_page": 20.739910313901344,
+    "body_bytes_per_row": 351.3585955955956,
+    "toasted_values": 34
+   },
+   "oracle": {
+    "table": "dbp_vec",
+    "heap_bytes": 52297728,
+    "toast_bytes": 8183808000,
+    "index_bytes": 8206278656,
+    "rows_per_page": 156.48496240601503,
+    "emb_bytes_per_row": 6148.0,
+    "toasted_values": 999000
+   },
+   "pgtoken_freq": {
+    "table": "dbp_pgtoken_freq",
+    "heap_bytes": 190644224,
+    "toast_bytes": 98304,
+    "index_bytes": 22462464,
+    "rows_per_page": 42.92712272258508,
+    "body_bytes_per_row": 152.5926956956957,
+    "toasted_values": 25
+   },
+   "pgtoken_raw": {
+    "table": "dbp_pgtoken_raw",
+    "heap_bytes": 295288832,
+    "toast_bytes": 376832,
+    "index_bytes": 22462464,
+    "rows_per_page": 27.71458691671753,
+    "body_bytes_per_row": 254.54182182182183,
+    "toasted_values": 92
+   },
+   "text_lz4": {
+    "table": "dbp_text_lz4",
+    "heap_bytes": 396697600,
+    "toast_bytes": 122880,
+    "index_bytes": 22462464,
+    "rows_per_page": 20.62983995869902,
+    "body_bytes_per_row": 351.7873143143143,
+    "toasted_values": 32
+   },
+   "text_lz4_forced": {
+    "table": "dbp_text_lz4_forced",
+    "heap_bytes": 397221888,
+    "toast_bytes": 0,
+    "index_bytes": 22462464,
+    "rows_per_page": 20.602610901441565,
+    "body_bytes_per_row": 351.78744244244245,
+    "toasted_values": 0
+   },
+   "text_pglz": {
+    "table": "dbp_text_pglz",
+    "heap_bytes": 396697600,
+    "toast_bytes": 122880,
+    "index_bytes": 22462464,
+    "rows_per_page": 20.62983995869902,
+    "body_bytes_per_row": 351.7625075075075,
+    "toasted_values": 33
+   }
+  },
+  "single_table_probe": {
+   "text_lz4": {
+    "heap_bytes": 8912896,
+    "toast_bytes": 163840000,
+    "rows_per_page": 18.38235294117647,
+    "body_bytes_per_row": 375.37275,
+    "emb_bytes_per_row": 6148.0,
+    "toasted_values": 20000
+   },
+   "pgtoken_freq": {
+    "heap_bytes": 4718592,
+    "toast_bytes": 163840000,
+    "rows_per_page": 37.5234521575985,
+    "body_bytes_per_row": 159.3314,
+    "emb_bytes_per_row": 6148.0,
+    "toasted_values": 20000
+   }
+  },
+  "examples": [
+   {
+    "pct": 25,
+    "row": 37,
+    "tokens": 58,
+    "utf8_bytes": 287,
+    "text": "Appellate court\nAn appellate court, commonly called an appeals court, court of appeals (American English), appeal court (British English), court of second instance or second instance court, is any court of law that is empowered to hear an appeal of a trial court or other lower tribunal.",
+    "stored_bytes": {
+     "text_pglz": 291,
+     "text_lz4": 291,
+     "text_lz4_forced": 291,
+     "int4_array": 256,
+     "bytea_raw24": 178,
+     "bytea_freq": 107,
+     "pgtoken_raw": 183,
+     "pgtoken_freq": 107
+    }
+   },
+   {
+    "pct": 50,
+    "row": 270,
+    "tokens": 84,
+    "utf8_bytes": 414,
+    "text": "Area\nArea is the quantity that expresses the extent of a two-dimensional figure or shape, or planar lamina, in the plane. Surface area is its analog on the two-dimensional surface of a  three-dimensional object. Area can be understood as the amount of material with a given thickness that would be ne",
+    "stored_bytes": {
+     "text_pglz": 418,
+     "text_lz4": 418,
+     "text_lz4_forced": 418,
+     "int4_array": 360,
+     "bytea_raw24": 256,
+     "bytea_freq": 143,
+     "pgtoken_raw": 261,
+     "pgtoken_freq": 143
+    }
+   },
+   {
+    "pct": 90,
+    "row": 384,
+    "tokens": 118,
+    "utf8_bytes": 502,
+    "text": "Alemanni\nThe Alemanni (also Alamanni; Suebi \"Swabians\") were a confederation of  Germanic tribes on the upper Rhine river. First mentioned  by Cassius Dio in the context of the campaign of Caracalla of 213, the Alemanni captured the Agri Decumates in 260, and later expanded into present-day Alsace, ",
+    "stored_bytes": {
+     "text_pglz": 506,
+     "text_lz4": 506,
+     "text_lz4_forced": 506,
+     "int4_array": 496,
+     "bytea_raw24": 358,
+     "bytea_freq": 228,
+     "pgtoken_raw": 363,
+     "pgtoken_freq": 228
+    }
+   }
+  ],
+  "cpus": {
+   "client_affinity": [
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+   ],
+   "server_cpuset": "0-7"
+  }
+ },
+ "results": [
+  {
+   "cfg": {
+    "rows": 999000,
+    "k": 100,
+    "clients": 1,
+    "tokenizer": "hf-o200k",
+    "ef_search": 100,
+    "sweep": true,
+    "cold": true,
+    "stage_ann": false,
+    "block": 10,
+    "arms": [
+     "text_pglz",
+     "text_lz4",
+     "text_lz4_batch",
+     "text_lz4_forced",
+     "int4_array",
+     "bytea_raw24",
+     "bytea_freq",
+     "pgtoken_raw",
+     "pgtoken_freq",
+     "oracle_mem"
+    ],
+    "data": "/data/dbpedia",
+    "dim": 1536,
+    "seed": 20261122,
+    "tag": "dbp",
+    "layout": "split"
+   },
+   "summary": {
+    "text_pglz": {
+     "label": "text (pglz)",
+     "e2e_us": {
+      "n": 100,
+      "p50": 127506.84,
+      "p90": 156418.76670000004,
+      "p99": 175851.54373000003,
+      "mean": 111974.92072999998
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 125978.4225,
+      "p90": 154974.26,
+      "p99": 174403.47162000003,
+      "mean": 110786.05367000001
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 1253.061,
+      "p90": 1566.7585000000001,
+      "p99": 1917.3390400000058,
+      "mean": 1188.86706
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.010391936604773038,
+     "client_cpu_us_p50": 1716.9834999999998,
+     "server_cpu_us_p50": 9736.579,
+     "wire_bytes_per_query_p50": 34017.0,
+     "wire_bytes_per_row": 324.3711,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 351.7625075075075,
+     "throughput_qps": 0.748896243532689,
+     "littles_in_flight": 0.08385759750456762,
+     "littles_ratio": 0.08385759750456762,
+     "busy_ratio": 0.08385759750456762,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 56,
+      "slower_in": 44,
+      "sign_z": 1.2,
+      "median_speedup": 1.0057858199674694,
+      "speedup_ci95": [
+       0.9930582082745267,
+       1.022555227872478
+      ],
+      "p50_ratio": 1.0232005945720244
+     },
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 52,
+      "slower_in": 48,
+      "sign_z": 0.4,
+      "median_speedup": 1.006892888982605,
+      "speedup_ci95": [
+       0.9906559503648001,
+       1.0254859009110286
+      ],
+      "p50_ratio": 1.0488816874451599
+     },
+     "server_exec": {
+      "exec_us_p50": 1524811.5,
+      "shared_hit_blocks_p50": 929.5,
+      "shared_read_blocks_p50": 1847.0
+     }
+    },
+    "text_lz4": {
+     "label": "text (lz4)",
+     "e2e_us": {
+      "n": 100,
+      "p50": 130465.07449999999,
+      "p90": 160557.87330000004,
+      "p99": 179749.16154000003,
+      "mean": 113105.63773
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 129326.1315,
+      "p90": 159589.4687,
+      "p99": 178756.73810000002,
+      "mean": 112142.53958000001
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 990.915,
+      "p90": 1146.6276,
+      "p99": 1331.8450200000009,
+      "mean": 963.09815
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.00793665255934834,
+     "client_cpu_us_p50": 1475.134,
+     "server_cpu_us_p50": 9815.597,
+     "wire_bytes_per_query_p50": 34017.0,
+     "wire_bytes_per_row": 324.3711,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 351.7873143143143,
+     "throughput_qps": 0.6715312660415064,
+     "littles_in_flight": 0.07595397210125887,
+     "littles_ratio": 0.07595397210125887,
+     "busy_ratio": 0.07595397210125886,
+     "mismatched_rows": 0,
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 52,
+      "slower_in": 48,
+      "sign_z": 0.4,
+      "median_speedup": 1.0063195280814234,
+      "speedup_ci95": [
+       0.9896815484651335,
+       1.019756494015972
+      ],
+      "p50_ratio": 1.025098786112294
+     },
+     "server_exec": {
+      "exec_us_p50": 1345807.0,
+      "shared_hit_blocks_p50": 999.5,
+      "shared_read_blocks_p50": 1748.0
+     }
+    },
+    "text_lz4_batch": {
+     "label": "text (lz4), batch tokenize",
+     "e2e_us": {
+      "n": 100,
+      "p50": 123508.882,
+      "p90": 158829.83130000002,
+      "p99": 178193.94194000307,
+      "mean": 112455.28721
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 122376.7065,
+      "p90": 157767.0613,
+      "p99": 177164.82237000306,
+      "mean": 111499.03025000003
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 983.0174999999999,
+      "p90": 1126.058,
+      "p99": 1204.5128500000008,
+      "mean": 956.2569600000002
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.008233001648376051,
+     "client_cpu_us_p50": 2424.681,
+     "server_cpu_us_p50": 9676.2615,
+     "wire_bytes_per_query_p50": 34017.0,
+     "wire_bytes_per_row": 324.3711,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 351.7873143143143,
+     "throughput_qps": 0.7138909824071329,
+     "littles_in_flight": 0.08028081546322319,
+     "littles_ratio": 0.08028081546322319,
+     "busy_ratio": 0.08028081546322319,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 72,
+      "slower_in": 28,
+      "sign_z": 4.4,
+      "median_speedup": 1.0668825827452761,
+      "speedup_ci95": [
+       1.035864309952109,
+       1.113610991313366
+      ],
+      "p50_ratio": 1.0563213947641432
+     },
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 77,
+      "slower_in": 23,
+      "sign_z": 5.4,
+      "median_speedup": 1.090198269057327,
+      "speedup_ci95": [
+       1.039207205075277,
+       1.136390416950918
+      ],
+      "p50_ratio": 1.0828337795171687
+     },
+     "server_exec": {
+      "exec_us_p50": 1465831.5,
+      "shared_hit_blocks_p50": 996.5,
+      "shared_read_blocks_p50": 1746.0
+     }
+    },
+    "text_lz4_forced": {
+     "label": "text (lz4, forced)",
+     "e2e_us": {
+      "n": 100,
+      "p50": 134604.6705,
+      "p90": 164142.44210000001,
+      "p99": 175500.39931000004,
+      "mean": 115190.74739999998
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 133710.79450000002,
+      "p90": 163055.66230000003,
+      "p99": 174412.36189000003,
+      "mean": 114202.76581000003
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 988.3845,
+      "p90": 1157.7848,
+      "p99": 1739.9072900000017,
+      "mean": 987.9815900000001
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.007725683416429763,
+     "client_cpu_us_p50": 1467.211,
+     "server_cpu_us_p50": 9804.807,
+     "wire_bytes_per_query_p50": 34017.0,
+     "wire_bytes_per_row": 324.3711,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 351.78744244244245,
+     "throughput_qps": 0.7256920692989015,
+     "littles_in_flight": 0.08359301184479305,
+     "littles_ratio": 0.08359301184479305,
+     "busy_ratio": 0.08359301184479306,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 42,
+      "slower_in": 58,
+      "sign_z": -1.6,
+      "median_speedup": 0.9909563375262074,
+      "speedup_ci95": [
+       0.9651001817467885,
+       1.003456788296963
+      ],
+      "p50_ratio": 0.9692462677214456
+     },
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 40,
+      "slower_in": 60,
+      "sign_z": -2.0,
+      "median_speedup": 0.9806935815265407,
+      "speedup_ci95": [
+       0.966620929387402,
+       0.9966903926263653
+      ],
+      "p50_ratio": 0.9935731724851256
+     },
+     "server_exec": {
+      "exec_us_p50": 1431810.0,
+      "shared_hit_blocks_p50": 1011.5,
+      "shared_read_blocks_p50": 1752.0
+     }
+    },
+    "int4_array": {
+     "label": "int4[]",
+     "e2e_us": {
+      "n": 100,
+      "p50": 127359.11850000001,
+      "p90": 163501.06350000002,
+      "p99": 179751.09469000003,
+      "mean": 114078.97995999997
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 127165.31049999999,
+      "p90": 163323.01420000003,
+      "p99": 179563.28539,
+      "mean": 113894.10915999999
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 179.9405,
+      "p90": 203.1797,
+      "p99": 219.70100000000002,
+      "mean": 184.87080000000003
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.0014767389791571564,
+     "client_cpu_us_p50": 844.788,
+     "server_cpu_us_p50": 10057.685000000001,
+     "wire_bytes_per_query_p50": 65712.0,
+     "wire_bytes_per_row": 635.56,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 351.3585955955956,
+     "throughput_qps": 0.7348382990603121,
+     "littles_in_flight": 0.0838296035923418,
+     "littles_ratio": 0.0838296035923418,
+     "busy_ratio": 0.08382960359234183,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 41,
+      "slower_in": 59,
+      "sign_z": -1.8,
+      "median_speedup": 0.981812510607639,
+      "speedup_ci95": [
+       0.9647247992133317,
+       1.0001322402254207
+      ],
+      "p50_ratio": 1.0243873861297177
+     },
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 39,
+      "slower_in": 61,
+      "sign_z": -2.2,
+      "median_speedup": 0.9873685103743028,
+      "speedup_ci95": [
+       0.9774561310208516,
+       0.9926678161483965
+      ],
+      "p50_ratio": 1.0500982660303195
+     },
+     "server_exec": {
+      "exec_us_p50": 1470010.0,
+      "shared_hit_blocks_p50": 978.0,
+      "shared_read_blocks_p50": 1753.0
+     }
+    },
+    "bytea_raw24": {
+     "label": "bytea raw24",
+     "e2e_us": {
+      "n": 100,
+      "p50": 133739.5895,
+      "p90": 164534.35660000003,
+      "p99": 170740.88827,
+      "mean": 114978.45795999999
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 133513.526,
+      "p90": 164276.676,
+      "p99": 170502.66590000002,
+      "mean": 114740.74637000002
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 232.573,
+      "p90": 265.87140000000005,
+      "p99": 342.64199,
+      "mean": 237.71159
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.001812141851479494,
+     "client_cpu_us_p50": 627.479,
+     "server_cpu_us_p50": 9958.0235,
+     "wire_bytes_per_query_p50": 23892.0,
+     "wire_bytes_per_row": 230.835,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 249.29284184184183,
+     "throughput_qps": 0.7226718565024212,
+     "littles_in_flight": 0.08309169567173878,
+     "littles_ratio": 0.08309169567173878,
+     "busy_ratio": 0.08309169567173878,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 48,
+      "slower_in": 52,
+      "sign_z": -0.4,
+      "median_speedup": 0.9937201792027803,
+      "speedup_ci95": [
+       0.9806262631011374,
+       1.0104260320411844
+      ],
+      "p50_ratio": 0.9755157391147816
+     },
+     "server_exec": {
+      "exec_us_p50": 1402518.0,
+      "shared_hit_blocks_p50": 1014.5,
+      "shared_read_blocks_p50": 1747.5
+     }
+    },
+    "bytea_freq": {
+     "label": "bytea freq (client codec, no ext.)",
+     "e2e_us": {
+      "n": 100,
+      "p50": 132410.48750000002,
+      "p90": 163923.92799999999,
+      "p99": 174087.13400999998,
+      "mean": 111340.80766
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 132171.0905,
+      "p90": 163700.5116,
+      "p99": 173833.65657,
+      "mean": 111113.90715999999
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 228.36950000000002,
+      "p90": 262.95230000000004,
+      "p99": 312.2950900000001,
+      "mean": 226.90050000000002
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.0019491196359881537,
+     "client_cpu_us_p50": 582.2484999999999,
+     "server_cpu_us_p50": 9830.403999999999,
+     "wire_bytes_per_query_p50": 14400.5,
+     "wire_bytes_per_row": 138.6843,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 152.5926956956957,
+     "throughput_qps": 0.6941727536455122,
+     "littles_in_flight": 0.07728975504645755,
+     "littles_ratio": 0.07728975504645755,
+     "busy_ratio": 0.07728975504645755,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 62,
+      "slower_in": 38,
+      "sign_z": 2.4,
+      "median_speedup": 1.0342766841579878,
+      "speedup_ci95": [
+       1.0050487515617177,
+       1.059966712395647
+      ],
+      "p50_ratio": 0.9853077121251439
+     },
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 73,
+      "slower_in": 27,
+      "sign_z": 4.6,
+      "median_speedup": 1.0396033754627811,
+      "speedup_ci95": [
+       1.0168536998958808,
+       1.0604078030063222
+      ],
+      "p50_ratio": 1.0100377396465667
+     },
+     "server_exec": {
+      "exec_us_p50": 1480884.5,
+      "shared_hit_blocks_p50": 994.5,
+      "shared_read_blocks_p50": 1746.0
+     }
+    },
+    "pgtoken_raw": {
+     "label": "pgtoken raw (raw24)",
+     "e2e_us": {
+      "n": 100,
+      "p50": 130652.91649999999,
+      "p90": 160836.8842,
+      "p99": 188626.14951000002,
+      "mean": 114051.94314000002
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 130515.3635,
+      "p90": 160714.5142,
+      "p99": 188506.55073000002,
+      "mean": 113933.47435
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 116.4695,
+      "p90": 136.2196,
+      "p99": 154.77562000000003,
+      "mean": 118.46878999999998
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.0009482636275285777,
+     "client_cpu_us_p50": 521.885,
+     "server_cpu_us_p50": 10090.173999999999,
+     "wire_bytes_per_query_p50": 24393.0,
+     "wire_bytes_per_row": 235.8784,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 254.54182182182183,
+     "throughput_qps": 0.7085910703056435,
+     "littles_in_flight": 0.08081618846001101,
+     "littles_ratio": 0.08081618846001101,
+     "busy_ratio": 0.08081618846001097,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 52,
+      "slower_in": 48,
+      "sign_z": 0.4,
+      "median_speedup": 1.0102592180323007,
+      "speedup_ci95": [
+       0.9901188097433155,
+       1.031849307667763
+      ],
+      "p50_ratio": 0.9985622823811974
+     },
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 57,
+      "slower_in": 43,
+      "sign_z": 1.4,
+      "median_speedup": 1.0043096502353683,
+      "speedup_ci95": [
+       0.9955349018840729,
+       1.018233524677345
+      ],
+      "p50_ratio": 1.0236249835264872
+     },
+     "server_exec": {
+      "exec_us_p50": 1405505.5,
+      "shared_hit_blocks_p50": 1012.5,
+      "shared_read_blocks_p50": 1748.5
+     }
+    },
+    "pgtoken_freq": {
+     "label": "pgtoken freq",
+     "e2e_us": {
+      "n": 100,
+      "p50": 128508.983,
+      "p90": 155879.4736,
+      "p99": 167399.52956000002,
+      "mean": 108588.78033
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 128274.0125,
+      "p90": 155663.1349,
+      "p99": 167152.16914000004,
+      "mean": 108362.43289000001
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 229.212,
+      "p90": 260.57060000000007,
+      "p99": 314.51148,
+      "mean": 226.34743999999998
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.0019512092540811992,
+     "client_cpu_us_p50": 575.52,
+     "server_cpu_us_p50": 9767.412,
+     "wire_bytes_per_query_p50": 14400.5,
+     "wire_bytes_per_row": 138.6843,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": 152.5926956956957,
+     "throughput_qps": 0.7352274027287032,
+     "littles_in_flight": 0.0798374469275036,
+     "littles_ratio": 0.0798374469275036,
+     "busy_ratio": 0.0798374469275036,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 75,
+      "slower_in": 25,
+      "sign_z": 5.0,
+      "median_speedup": 1.054238906783654,
+      "speedup_ci95": [
+       1.0408376005262416,
+       1.0638156671110202
+      ],
+      "p50_ratio": 1.0152214378663318
+     },
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 82,
+      "slower_in": 18,
+      "sign_z": 6.4,
+      "median_speedup": 1.0724255582126085,
+      "speedup_ci95": [
+       1.0473364967126413,
+       1.0848329349723962
+      ],
+      "p50_ratio": 1.0407022635919545
+     },
+     "server_exec": {
+      "exec_us_p50": 1449616.0,
+      "shared_hit_blocks_p50": 995.0,
+      "shared_read_blocks_p50": 1746.0
+     }
+    },
+    "oracle_mem": {
+     "label": "oracle: IDs already in memory",
+     "e2e_us": {
+      "n": 100,
+      "p50": 3548.477,
+      "p90": 4168.833100000001,
+      "p99": 5799.92584,
+      "mean": 3506.26508
+     },
+     "fetch_us": {
+      "n": 100,
+      "p50": 3386.4390000000003,
+      "p90": 4028.7679000000007,
+      "p99": 5660.67623,
+      "mean": 3366.98429
+     },
+     "decode_us": {
+      "n": 100,
+      "p50": 136.0615,
+      "p90": 153.8172,
+      "p99": 173.218400000001,
+      "mean": 139.28079
+     },
+     "ann_us": {
+      "n": 0,
+      "p50": NaN,
+      "p90": NaN,
+      "p99": NaN,
+      "mean": NaN
+     },
+     "decode_share_p50": 0.03862813763276279,
+     "client_cpu_us_p50": 355.3775,
+     "server_cpu_us_p50": 3012.3140000000003,
+     "wire_bytes_per_query_p50": 0.0,
+     "wire_bytes_per_row": 0.0,
+     "rows_per_query_min": 100,
+     "body_bytes_per_row": null,
+     "throughput_qps": 0.7927735317270491,
+     "littles_in_flight": 0.0027796741506428244,
+     "littles_ratio": 0.0027796741506428244,
+     "busy_ratio": 0.002779674150642825,
+     "mismatched_rows": 0,
+     "vs_text_lz4": {
+      "n": 100,
+      "faster_in": 100,
+      "slower_in": 0,
+      "sign_z": 10.0,
+      "median_speedup": 35.34334718219269,
+      "speedup_ci95": [
+       31.434437604607247,
+       37.614283799496306
+      ],
+      "p50_ratio": 36.76649855698656
+     },
+     "vs_bytea_raw24": {
+      "n": 100,
+      "faster_in": 100,
+      "slower_in": 0,
+      "sign_z": 10.0,
+      "median_speedup": 35.621774459294464,
+      "speedup_ci95": [
+       33.21641134215763,
+       39.19302608939684
+      ],
+      "p50_ratio": 37.68929304036634
+     },
+     "server_exec": {
+      "exec_us_p50": 1382676.0,
+      "shared_hit_blocks_p50": 700.0,
+      "shared_read_blocks_p50": 1640.5
+     }
+    }
+   },
+   "disk": {
+    "device": "nvme0n1",
+    "reads": 2255562,
+    "read_mb": 32264.699904,
+    "wall_s": 1512.9781510829926,
+    "read_iops": 1490.8093671977117,
+    "read_mb_s": 21.325291367165395,
+    "reads_per_query": 2255.562
+   },
+   "phases": [
+    {
+     "arm": "text_pglz",
+     "block": 0,
+     "client": 0,
+     "t0": 3235944701438,
+     "t1": 3251674582980,
+     "busy_us": 1012121.3740000002,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 0,
+     "client": 0,
+     "t0": 3251679474187,
+     "t1": 3266795653831,
+     "busy_us": 1069197.266,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 0,
+     "client": 0,
+     "t0": 3266798392537,
+     "t1": 3282319318206,
+     "busy_us": 982602.909,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 0,
+     "client": 0,
+     "t0": 3282321972285,
+     "t1": 3297406493244,
+     "busy_us": 1019808.5170000001,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 0,
+     "client": 0,
+     "t0": 3297409130270,
+     "t1": 3313182246211,
+     "busy_us": 1055502.145,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 0,
+     "client": 0,
+     "t0": 3313184656385,
+     "t1": 3329021538510,
+     "busy_us": 1067246.49,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 0,
+     "client": 0,
+     "t0": 3329023919143,
+     "t1": 3344911684127,
+     "busy_us": 1047835.2489999998,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 0,
+     "client": 0,
+     "t0": 3344914045658,
+     "t1": 3360823512188,
+     "busy_us": 1057790.5559999999,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 0,
+     "client": 0,
+     "t0": 3360825886863,
+     "t1": 3376487211918,
+     "busy_us": 1030075.8079999998,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 0,
+     "client": 0,
+     "t0": 3376489505114,
+     "t1": 3390665681638,
+     "busy_us": 35895.298,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 1,
+     "client": 0,
+     "t0": 3390669631961,
+     "t1": 3402422651868,
+     "busy_us": 545213.375,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 1,
+     "client": 0,
+     "t0": 3402425209327,
+     "t1": 3405879474576,
+     "busy_us": 364599.3,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 1,
+     "client": 0,
+     "t0": 3405882045836,
+     "t1": 3406674832895,
+     "busy_us": 561462.385,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 1,
+     "client": 0,
+     "t0": 3406677384083,
+     "t1": 3407487341954,
+     "busy_us": 572536.2579999999,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 1,
+     "client": 0,
+     "t0": 3407489689207,
+     "t1": 3408268865931,
+     "busy_us": 542996.2270000001,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 1,
+     "client": 0,
+     "t0": 3408271181059,
+     "t1": 3409010416104,
+     "busy_us": 505273.1719999999,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 1,
+     "client": 0,
+     "t0": 3409012666239,
+     "t1": 3409809447975,
+     "busy_us": 550262.9909999999,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 1,
+     "client": 0,
+     "t0": 3409811771247,
+     "t1": 3410560544933,
+     "busy_us": 512664.4270000001,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 1,
+     "client": 0,
+     "t0": 3410562904401,
+     "t1": 3410804207865,
+     "busy_us": 26611.256999999998,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 1,
+     "client": 0,
+     "t0": 3410806385624,
+     "t1": 3411607333956,
+     "busy_us": 568731.997,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 2,
+     "client": 0,
+     "t0": 3411610291205,
+     "t1": 3427145418114,
+     "busy_us": 1418298.0089999998,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 2,
+     "client": 0,
+     "t0": 3427148028400,
+     "t1": 3439957280280,
+     "busy_us": 750066.5,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 2,
+     "client": 0,
+     "t0": 3439959966923,
+     "t1": 3452950317676,
+     "busy_us": 780982.2590000001,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 2,
+     "client": 0,
+     "t0": 3452952696695,
+     "t1": 3465393952521,
+     "busy_us": 716835.4280000001,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 2,
+     "client": 0,
+     "t0": 3465396233663,
+     "t1": 3477823942681,
+     "busy_us": 636386.296,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 2,
+     "client": 0,
+     "t0": 3477826308504,
+     "t1": 3490335058772,
+     "busy_us": 702965.9210000001,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 2,
+     "client": 0,
+     "t0": 3490337394508,
+     "t1": 3503171230849,
+     "busy_us": 644735.7649999999,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 2,
+     "client": 0,
+     "t0": 3503173512953,
+     "t1": 3515433889871,
+     "busy_us": 37750.486999999994,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 2,
+     "client": 0,
+     "t0": 3515436367840,
+     "t1": 3528813956032,
+     "busy_us": 778927.907,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 2,
+     "client": 0,
+     "t0": 3528816566468,
+     "t1": 3541641363103,
+     "busy_us": 766483.497,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 3,
+     "client": 0,
+     "t0": 3541644384699,
+     "t1": 3554495273156,
+     "busy_us": 722591.1000000001,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 3,
+     "client": 0,
+     "t0": 3554498210800,
+     "t1": 3565270766275,
+     "busy_us": 707346.3420000001,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 3,
+     "client": 0,
+     "t0": 3565273163650,
+     "t1": 3576823401407,
+     "busy_us": 724229.456,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 3,
+     "client": 0,
+     "t0": 3576826605844,
+     "t1": 3588690035846,
+     "busy_us": 677497.957,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 3,
+     "client": 0,
+     "t0": 3588692338833,
+     "t1": 3602557201540,
+     "busy_us": 694934.091,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 3,
+     "client": 0,
+     "t0": 3602559565185,
+     "t1": 3614456874474,
+     "busy_us": 662085.1900000001,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 3,
+     "client": 0,
+     "t0": 3614459218661,
+     "t1": 3625974819437,
+     "busy_us": 34645.416,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 3,
+     "client": 0,
+     "t0": 3625977275016,
+     "t1": 3637892803228,
+     "busy_us": 751781.5790000001,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 3,
+     "client": 0,
+     "t0": 3637895502745,
+     "t1": 3649107809040,
+     "busy_us": 715087.5970000001,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 3,
+     "client": 0,
+     "t0": 3649110486540,
+     "t1": 3660222580879,
+     "busy_us": 623590.086,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 4,
+     "client": 0,
+     "t0": 3660225563830,
+     "t1": 3675758525330,
+     "busy_us": 1366589.565,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 4,
+     "client": 0,
+     "t0": 3675761019390,
+     "t1": 3690550837155,
+     "busy_us": 1446041.4480000003,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 4,
+     "client": 0,
+     "t0": 3690553235838,
+     "t1": 3705254182137,
+     "busy_us": 1349864.1840000001,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 4,
+     "client": 0,
+     "t0": 3705256584743,
+     "t1": 3719814146415,
+     "busy_us": 1407522.365,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 4,
+     "client": 0,
+     "t0": 3719816570311,
+     "t1": 3733428817086,
+     "busy_us": 1291100.074,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 4,
+     "client": 0,
+     "t0": 3733431286657,
+     "t1": 3746465942219,
+     "busy_us": 33484.768000000004,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 4,
+     "client": 0,
+     "t0": 3746468269126,
+     "t1": 3760935984136,
+     "busy_us": 1391640.3610000003,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 4,
+     "client": 0,
+     "t0": 3760943728127,
+     "t1": 3778629633139,
+     "busy_us": 1361600.4300000002,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 4,
+     "client": 0,
+     "t0": 3778632562175,
+     "t1": 3792964680035,
+     "busy_us": 1295551.6620000002,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 4,
+     "client": 0,
+     "t0": 3792967572021,
+     "t1": 3808294787218,
+     "busy_us": 1472434.443,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 5,
+     "client": 0,
+     "t0": 3808298161498,
+     "t1": 3826858216624,
+     "busy_us": 1537267.876,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 5,
+     "client": 0,
+     "t0": 3826860598496,
+     "t1": 3851490809766,
+     "busy_us": 1553170.342,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 5,
+     "client": 0,
+     "t0": 3851493221401,
+     "t1": 3869548063375,
+     "busy_us": 1512950.2700000003,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 5,
+     "client": 0,
+     "t0": 3869550575847,
+     "t1": 3886282095419,
+     "busy_us": 1425576.27,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 5,
+     "client": 0,
+     "t0": 3886284482822,
+     "t1": 3902320585709,
+     "busy_us": 37255.796,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 5,
+     "client": 0,
+     "t0": 3902322977203,
+     "t1": 3918655802208,
+     "busy_us": 1415418.3660000002,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 5,
+     "client": 0,
+     "t0": 3918658650667,
+     "t1": 3935834461012,
+     "busy_us": 1453021.596,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 5,
+     "client": 0,
+     "t0": 3935837233553,
+     "t1": 3954056883890,
+     "busy_us": 1523505.4579999999,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 5,
+     "client": 0,
+     "t0": 3954059748534,
+     "t1": 3972530144671,
+     "busy_us": 1555021.04,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 5,
+     "client": 0,
+     "t0": 3972532903449,
+     "t1": 3989500812798,
+     "busy_us": 1465881.163,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 6,
+     "client": 0,
+     "t0": 3989503856684,
+     "t1": 4008085817477,
+     "busy_us": 1409038.9500000002,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 6,
+     "client": 0,
+     "t0": 4008088242947,
+     "t1": 4026081381600,
+     "busy_us": 1462246.4799999997,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 6,
+     "client": 0,
+     "t0": 4026083816571,
+     "t1": 4044234958416,
+     "busy_us": 1424107.8480000002,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 6,
+     "client": 0,
+     "t0": 4044237385023,
+     "t1": 4060873688701,
+     "busy_us": 38140.689,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 6,
+     "client": 0,
+     "t0": 4060875975937,
+     "t1": 4078263194610,
+     "busy_us": 1419638.593,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 6,
+     "client": 0,
+     "t0": 4078266015605,
+     "t1": 4097052670095,
+     "busy_us": 1462630.125,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 6,
+     "client": 0,
+     "t0": 4097055532673,
+     "t1": 4115116383791,
+     "busy_us": 1441823.853,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 6,
+     "client": 0,
+     "t0": 4115119227220,
+     "t1": 4132792147296,
+     "busy_us": 1453641.712,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 6,
+     "client": 0,
+     "t0": 4132794990045,
+     "t1": 4150137089401,
+     "busy_us": 1410533.734,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 6,
+     "client": 0,
+     "t0": 4150139671854,
+     "t1": 4168623638164,
+     "busy_us": 1438008.7989999999,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 7,
+     "client": 0,
+     "t0": 4168626650610,
+     "t1": 4185995520769,
+     "busy_us": 1459301.7680000002,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 7,
+     "client": 0,
+     "t0": 4185998024905,
+     "t1": 4201116423023,
+     "busy_us": 1328927.768,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 7,
+     "client": 0,
+     "t0": 4201119104931,
+     "t1": 4215018929553,
+     "busy_us": 37657.8,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 7,
+     "client": 0,
+     "t0": 4215021442678,
+     "t1": 4230376069326,
+     "busy_us": 1411049.648,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 7,
+     "client": 0,
+     "t0": 4230378901294,
+     "t1": 4245730834465,
+     "busy_us": 1415873.364,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 7,
+     "client": 0,
+     "t0": 4245733590906,
+     "t1": 4260828840302,
+     "busy_us": 1304113.22,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 7,
+     "client": 0,
+     "t0": 4260831637507,
+     "t1": 4276309251707,
+     "busy_us": 1435842.112,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 7,
+     "client": 0,
+     "t0": 4276312036388,
+     "t1": 4292316748572,
+     "busy_us": 1467720.309,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 7,
+     "client": 0,
+     "t0": 4292319297950,
+     "t1": 4307918269485,
+     "busy_us": 1418116.07,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 7,
+     "client": 0,
+     "t0": 4307920669366,
+     "t1": 4323848893486,
+     "busy_us": 1451549.519,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 8,
+     "client": 0,
+     "t0": 4323851942178,
+     "t1": 4340903463902,
+     "busy_us": 1261479.693,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 8,
+     "client": 0,
+     "t0": 4340905846067,
+     "t1": 4355388138470,
+     "busy_us": 35196.696,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 8,
+     "client": 0,
+     "t0": 4355390410368,
+     "t1": 4370790838380,
+     "busy_us": 1240478.555,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 8,
+     "client": 0,
+     "t0": 4370793548355,
+     "t1": 4386633215232,
+     "busy_us": 1302396.9510000001,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 8,
+     "client": 0,
+     "t0": 4386635994881,
+     "t1": 4401680639658,
+     "busy_us": 1124390.7259999998,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 8,
+     "client": 0,
+     "t0": 4401683448277,
+     "t1": 4416889527745,
+     "busy_us": 1244968.0019999999,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 8,
+     "client": 0,
+     "t0": 4416892324192,
+     "t1": 4432760320804,
+     "busy_us": 1313247.447,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 8,
+     "client": 0,
+     "t0": 4432762811390,
+     "t1": 4448887883561,
+     "busy_us": 1321811.375,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 8,
+     "client": 0,
+     "t0": 4448890369801,
+     "t1": 4464145952748,
+     "busy_us": 1217006.936,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 8,
+     "client": 0,
+     "t0": 4464148350314,
+     "t1": 4480116777730,
+     "busy_us": 1291104.929,
+     "n": 10
+    },
+    {
+     "arm": "oracle_mem",
+     "block": 9,
+     "client": 0,
+     "t0": 4480119841645,
+     "t1": 4493976633031,
+     "busy_us": 33988.301,
+     "n": 10
+    },
+    {
+     "arm": "text_pglz",
+     "block": 9,
+     "client": 0,
+     "t0": 4493978995991,
+     "t1": 4506742082273,
+     "busy_us": 1207703.693,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4",
+     "block": 9,
+     "client": 0,
+     "t0": 4506744802034,
+     "t1": 4519911923653,
+     "busy_us": 1219059.572,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_batch",
+     "block": 9,
+     "client": 0,
+     "t0": 4519914645656,
+     "t1": 4533617130229,
+     "busy_us": 1167053.498,
+     "n": 10
+    },
+    {
+     "arm": "text_lz4_forced",
+     "block": 9,
+     "client": 0,
+     "t0": 4533619842547,
+     "t1": 4547727663184,
+     "busy_us": 1303238.929,
+     "n": 10
+    },
+    {
+     "arm": "int4_array",
+     "block": 9,
+     "client": 0,
+     "t0": 4547730455891,
+     "t1": 4561753157352,
+     "busy_us": 1267558.774,
+     "n": 10
+    },
+    {
+     "arm": "bytea_raw24",
+     "block": 9,
+     "client": 0,
+     "t0": 4561755674552,
+     "t1": 4575965629233,
+     "busy_us": 1285292.6269999999,
+     "n": 10
+    },
+    {
+     "arm": "bytea_freq",
+     "block": 9,
+     "client": 0,
+     "t0": 4575968056287,
+     "t1": 4590009351663,
+     "busy_us": 1286458.1609999998,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_raw",
+     "block": 9,
+     "client": 0,
+     "t0": 4590011747828,
+     "t1": 4604114166956,
+     "busy_us": 1266114.943,
+     "n": 10
+    },
+    {
+     "arm": "pgtoken_freq",
+     "block": 9,
+     "client": 0,
+     "t0": 4604116528782,
+     "t1": 4618322797088,
+     "busy_us": 1278125.19,
+     "n": 10
+    }
+   ]
+  }
+ ]
+}
