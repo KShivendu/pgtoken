@@ -7,7 +7,7 @@ services:
     build:
       context: docker
       dockerfile: Dockerfile.server
-    image: pgtoken-paper-server:0.1.0
+    image: pgtoken-paper-server:0.1.1
     environment:
       POSTGRES_PASSWORD: postgres
     shm_size: 4g    # HNSW builds in parallel through dynamic shared memory (/dev/shm), up to maintenance_work_mem

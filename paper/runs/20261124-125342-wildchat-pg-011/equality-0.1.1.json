@@ -1,0 +1,143 @@
+{
+ "config": {
+  "rows": 20000,
+  "reps": 7,
+  "seed": 11,
+  "source": "wildchat",
+  "wildchat_cache": "/home/ubuntu/.cache/pgtoken/compress_length/wildchat_40000.json.gz",
+  "max_rows": 0,
+  "out": "paper/runs/20261124-125342-wildchat-pg-011/equality-0.1.1.json"
+ },
+ "results": {
+  "SELECT DISTINCT body (hash)": {
+   "text (pglz)": {
+    "ms_p50": 251.9633430056274,
+    "result": 110044,
+    "plan_node": "HashAggregate"
+   },
+   "text (lz4)": {
+    "ms_p50": 177.79846908524632,
+    "result": 110044,
+    "plan_node": "HashAggregate"
+   },
+   "tokens raw24": {
+    "ms_p50": 189.4936002790928,
+    "result": 110044,
+    "plan_node": "HashAggregate"
+   },
+   "tokens freq": {
+    "ms_p50": 154.5280171558261,
+    "result": 110044,
+    "plan_node": "HashAggregate"
+   }
+  },
+  "GROUP BY body (hash aggregate)": {
+   "text (pglz)": {
+    "ms_p50": 248.98351775482297,
+    "result": 110044,
+    "plan_node": "HashAggregate"
+   },
+   "text (lz4)": {
+    "ms_p50": 177.22193524241447,
+    "result": 110044,
+    "plan_node": "HashAggregate"
+   },
+   "tokens raw24": {
+    "ms_p50": 184.03500458225608,
+    "result": 110044,
+    "plan_node": "HashAggregate"
+   },
+   "tokens freq": {
+    "ms_p50": 155.52633721381426,
+    "result": 110044,
+    "plan_node": "HashAggregate"
+   }
+  },
+  "self join a.body = b.body (hash join)": {
+   "text (pglz)": {
+    "ms_p50": 594.8485829867423,
+    "result": 297207,
+    "plan_node": "Hash Join"
+   },
+   "text (lz4)": {
+    "ms_p50": 355.94303207471967,
+    "result": 297207,
+    "plan_node": "Hash Join"
+   },
+   "tokens raw24": {
+    "ms_p50": 358.2893079146743,
+    "result": 297207,
+    "plan_node": "Hash Join"
+   },
+   "tokens freq": {
+    "ms_p50": 282.38916397094727,
+    "result": 297207,
+    "plan_node": "Hash Join"
+   }
+  },
+  "WHERE body = <one value> (scan)": {
+   "text (pglz)": {
+    "ms_p50": 10.851588100194931,
+    "result": 1,
+    "plan_node": "Seq Scan"
+   },
+   "text (lz4)": {
+    "ms_p50": 10.2057377807796,
+    "result": 1,
+    "plan_node": "Seq Scan"
+   },
+   "tokens raw24": {
+    "ms_p50": 47.49300703406334,
+    "result": 1,
+    "plan_node": "Seq Scan"
+   },
+   "tokens freq": {
+    "ms_p50": 22.762615233659744,
+    "result": 1,
+    "plan_node": "Seq Scan"
+   }
+  }
+ },
+ "storage": {
+  "text (pglz)": {
+   "total_bytes": 88014848,
+   "heap_bytes": 69730304,
+   "toast_bytes": 15646720,
+   "index_bytes": 2588672,
+   "avg_value_bytes": 655.9180693306398,
+   "p50_value_bytes": 320.0
+  },
+  "text (lz4)": {
+   "total_bytes": 92692480,
+   "heap_bytes": 68681728,
+   "toast_bytes": 21372928,
+   "index_bytes": 2588672,
+   "avg_value_bytes": 690.0339948276312,
+   "p50_value_bytes": 320.0
+  },
+  "tokens raw24": {
+   "total_bytes": 79814656,
+   "heap_bytes": 50741248,
+   "toast_bytes": 26443776,
+   "index_bytes": 2588672,
+   "avg_value_bytes": 591.9043111780636,
+   "p50_value_bytes": 222.0
+  },
+  "tokens freq": {
+   "total_bytes": 45170688,
+   "heap_bytes": 37429248,
+   "toast_bytes": 5111808,
+   "index_bytes": 2588672,
+   "avg_value_bytes": 320.39808082479254,
+   "p50_value_bytes": 137.0
+  },
+  "utf8": {
+   "avg_value_bytes": 866.8580820438693,
+   "p50_value_bytes": 316.0,
+   "total_bytes": 99550849,
+   "tokens_total": 22356156
+  }
+ },
+ "rows": 114841,
+ "distinct": 110044
+}
