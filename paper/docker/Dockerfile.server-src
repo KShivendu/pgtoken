@@ -1,0 +1,27 @@
+# PostgreSQL 16 + pgvector + pgtoken built from THIS checkout, for measuring a change before it is
+# released. Same runtime image and settings as Dockerfile.server; only the extension differs.
+# Paper numbers come from Dockerfile.server (a released .deb) once the change is released.
+#
+# Build from the repo root (needs core/ and ext/; keep ext/target out of the context):
+#   docker build -f paper/docker/Dockerfile.server-src -t pgtoken-paper-server:src .
+FROM postgres:16-bookworm AS build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates build-essential pkg-config \
+      libclang-dev clang postgresql-server-dev-16 \
+ && rm -rf /var/lib/apt/lists/*
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+# Pinned to the pgrx version in ext/Cargo.toml, as in .github/workflows/release.yml.
+RUN cargo install cargo-pgrx --version =0.19.2 --locked
+RUN cargo pgrx init --pg16 /usr/lib/postgresql/16/bin/pg_config
+WORKDIR /src
+COPY core core
+COPY ext ext
+RUN cd ext && rm -rf target \
+ && cargo pgrx package --features pg16 --no-default-features \
+      --pg-config /usr/lib/postgresql/16/bin/pg_config
+
+FROM pgvector/pgvector:pg16
+COPY --from=build /src/ext/target/release/pgtoken-pg16/ /
+COPY paper/docker/postgresql.paper.conf /etc/postgresql/postgresql.paper.conf
+COPY paper/docker/10-paper-settings.sh /docker-entrypoint-initdb.d/10-paper-settings.sh

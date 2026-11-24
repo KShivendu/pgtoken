@@ -1,0 +1,17 @@
+=== dbpedia-warm start 00:08:43
+=== dbpedia-warm exit 0 00:22:24
+=== dbpedia-cold start 00:22:24
+=== restart cold with index-warm/bodies-cold design
+=== dbpedia-cold start 00:27:39
+=== restart cold: k=100 only, 100 queries (drop_caches costs ~1.5 s per query)
+=== dbpedia-cold start 00:34:26
+=== stopped dbpedia-cold after its swept 1-client config (unswept cold adds nothing at 130 ms of I/O); cold 16 clients as its own step
+=== dbpedia-cold16 start 01:07:33
+=== dbpedia-cold16 exit 0 01:27:11
+=== consumer start 01:27:11
+=== consumer exit 0 01:30:55
+=== c4-load start 01:30:55
+=== c4-load exit 0 01:39:16
+=== c4-warm start 01:39:16
+=== c4-warm exit 0 01:52:58
+=== c4-cold start 01:52:58

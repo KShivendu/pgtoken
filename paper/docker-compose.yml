@@ -1,0 +1,42 @@
+# One command reruns a paper experiment:
+#   docker compose up --build --abort-on-container-exit
+# RUN_MODE picks what paper/run.sh runs (smoke | wave1). Results land in paper/runs/.
+name: pgtoken-paper
+services:
+  server:
+    build:
+      context: docker
+      dockerfile: Dockerfile.server
+    image: pgtoken-paper-server:0.1.0
+    environment:
+      POSTGRES_PASSWORD: postgres
+    shm_size: 4g    # HNSW builds in parallel through dynamic shared memory (/dev/shm), up to maintenance_work_mem
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # TCP, not the socket: during initdb the entrypoint's temporary server listens on the
+      # socket only, so this passes only once the real server is up with pgtoken created.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres && psql -h 127.0.0.1 -U postgres -tAc \"select extname from pg_extension\" | grep -q pgtoken"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  client:
+    build:
+      context: ..
+      dockerfile: paper/docker/Dockerfile.client
+      args:
+        PGTOKEN_GIT_SHA: ${PGTOKEN_GIT_SHA:-unknown}
+    image: pgtoken-paper-client:0.1.0
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      PGTOKEN_HOST_NAME: ${PGTOKEN_HOST_NAME:-docker}
+    volumes:
+      - ${TOKEN_STORAGE_REPO:-../../token-storage}:/token-storage:ro   # a token-storage checkout
+      - ./runs:/pgtoken/paper/runs
+    command: ["bash", "paper/run.sh", "${RUN_MODE:-smoke}"]
+
+volumes:
+  pgdata:

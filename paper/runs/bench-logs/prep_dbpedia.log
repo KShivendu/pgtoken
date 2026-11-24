@@ -1,0 +1,55 @@
+  downloaded 26 shards in 463 s
+  train-00000-of-00026-3c7b99d1c7eda36e.parquet: 38419 rows kept, total 38419, 467 s
+  train-00001-of-00026-2b24035a6390fdcb.parquet: 38420 rows kept, total 76839, 470 s
+  train-00002-of-00026-b05ce48965853dad.parquet: 38426 rows kept, total 115265, 472 s
+  train-00003-of-00026-d116c3c239aa7895.parquet: 38436 rows kept, total 153701, 475 s
+  train-00004-of-00026-5c2bcfc39e1019cd.parquet: 38418 rows kept, total 192119, 478 s
+  train-00005-of-00026-b674673d537c6296.parquet: 38431 rows kept, total 230550, 481 s
+  train-00006-of-00026-56ad5cf7824f3ccd.parquet: 38415 rows kept, total 268965, 484 s
+  train-00007-of-00026-ff1a7a93f5f19199.parquet: 38430 rows kept, total 307395, 486 s
+  train-00008-of-00026-90ec96c23a661926.parquet: 38418 rows kept, total 345813, 489 s
+  train-00009-of-00026-8bcdf317ec2e082c.parquet: 38422 rows kept, total 384235, 492 s
+  train-00010-of-00026-eb06930da76c47f3.parquet: 38425 rows kept, total 422660, 494 s
+  train-00011-of-00026-2df07d31f0aa1838.parquet: 38426 rows kept, total 461086, 495 s
+  train-00012-of-00026-f2965048cabd6c86.parquet: 38416 rows kept, total 499502, 498 s
+  train-00013-of-00026-2036414050f9f044.parquet: 38419 rows kept, total 537921, 501 s
+  train-00014-of-00026-820dc150346715fc.parquet: 38416 rows kept, total 576337, 505 s
+  train-00015-of-00026-c3b25654a256c528.parquet: 38418 rows kept, total 614755, 508 s
+  train-00016-of-00026-7deff0f4bdb4c24d.parquet: 38429 rows kept, total 653184, 510 s
+  train-00017-of-00026-ab8aaded21783fd6.parquet: 38417 rows kept, total 691601, 513 s
+  train-00018-of-00026-27b906a8a01de2e0.parquet: 38421 rows kept, total 730022, 516 s
+  train-00019-of-00026-9f5371122f68f762.parquet: 38431 rows kept, total 768453, 518 s
+  train-00020-of-00026-e6ff711af402609d.parquet: 38428 rows kept, total 806881, 523 s
+  train-00021-of-00026-34a5d25f74b06b5f.parquet: 38420 rows kept, total 845301, 527 s
+  train-00022-of-00026-61a9e6318ee525b5.parquet: 38418 rows kept, total 883719, 529 s
+  train-00023-of-00026-2f7b85c21ea5f957.parquet: 38420 rows kept, total 922139, 533 s
+  train-00024-of-00026-c8000d2c489222ab.parquet: 38428 rows kept, total 960567, 535 s
+  train-00025-of-00026-769064ea76815001.parquet: 38433 rows kept, total 999000, 539 s
+{
+ "name": "dbpedia",
+ "source": "KShivendu/dbpedia-entities-openai-1M@af9b8869cc2d8debbd254d77737865bb09a2067f",
+ "dim": 1536,
+ "queries": 1000,
+ "queries_from": "1000 entities held out at random (seed 20261122)",
+ "body": "title + '\\n' + text",
+ "rows": 999000,
+ "tokens": {
+  "1": 20.0,
+  "10": 39.0,
+  "25": 58.0,
+  "50": 84.0,
+  "75": 104.0,
+  "90": 118.0,
+  "99": 147.0
+ },
+ "tokens_mean": 81.9442022022022,
+ "text_bytes_mean": 348.20854754754754,
+ "text_bytes": {
+  "25": 245.0,
+  "50": 367.0,
+  "90": 496.0
+ },
+ "built_s": 576.5762815475464,
+ "tokenizer": "hf-o200k /opt/o200k/Xenova--gpt-4o@7956d98f2a83b2751a98ea7136fdf7fe6cf54e69.tokenizer.json"
+}
+EXIT 0

@@ -1,0 +1,845 @@
+ Container pgtoken-paper-server-1  Recreate
+ Container pgtoken-paper-server-1  Recreated
+ Container pgtoken-paper-server-1  Starting
+ Container pgtoken-paper-server-1  Started
+24GB
+run dir: /pgtoken/paper/runs/20261122-013952-c4-warm
+tokenizer for the text arms: hf-o200k (no check_o200k.py result found; defaulting)
+data: allenai/c4 en train shards 0..3 (/data/c4); 1000000 rows, dim 384; o200k tokens per row p1 512, p10 512, p25 512, p50 512, p75 512, p90 512, p99 512, mean 512.0
+server: {'server_version': '16.16 (Debian 16.16-1.pgdg12+1)', 'shared_buffers': '24GB', 'work_mem': '64MB', 'maintenance_work_mem': '16GB', 'max_connections': '100', 'synchronous_commit': 'off', 'jit': 'off', 'default_toast_compression': 'pglz', 'max_parallel_workers_per_gather': '0', 'max_parallel_maintenance_workers': '7', 'effective_cache_size': '48GB', 'vector': '0.8.7', 'pgtoken': '0.1.0'}
+  vocabularies: {'o200k': 65280, 'paper_o200k_raw': 65281}; info {'o200k': (65280, 200019, 'freq', 3, 77463, '743afb3cae0eac236f9bece91973ebe3038539b557ac3dcc955bb0d9a1de42af', 309864, 200000, '5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7', 2197790, 'o200k'), 'paper_o200k_raw': (65281, 200019, 'raw', 3, None, None, None, 200000, '5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7', 2197790, 'o200k')}
+  c4_vec: reusing (1000000 rows)
+  c4_text_pglz: reusing (1000000 rows)
+  c4_text_lz4: reusing (1000000 rows)
+  c4_text_lz4_forced: reusing (1000000 rows)
+  c4_int4_array: reusing (1000000 rows)
+  c4_bytea_raw24: reusing (1000000 rows)
+  c4_bytea_freq: reusing (1000000 rows)
+  c4_pgtoken_raw: reusing (1000000 rows)
+  c4_pgtoken_freq: reusing (1000000 rows)
+  storage bytea_freq: table c4_bytea_freq, heap_bytes 994574336, toast_bytes 0, index_bytes 22487040, rows_per_page 8.2, body_bytes_per_row 886.1, toasted_values 0
+  storage bytea_raw24: table c4_bytea_raw24, heap_bytes 1638400000, toast_bytes 0, index_bytes 22487040, rows_per_page 5.0, body_bytes_per_row 1540.0, toasted_values 0
+  storage int4_array: table c4_int4_array, heap_bytes 1525678080, toast_bytes 90644480, index_bytes 22487040, rows_per_page 5.4, body_bytes_per_row 1397.6, toasted_values 33193
+  storage oracle: table c4_vec, heap_bytes 1638400000, toast_bytes 0, index_bytes 2070495232, rows_per_page 5.0, emb_bytes_per_row 1544.0, toasted_values 0
+  storage pgtoken_freq: table c4_pgtoken_freq, heap_bytes 994574336, toast_bytes 0, index_bytes 22487040, rows_per_page 8.2, body_bytes_per_row 886.1, toasted_values 0
+  storage pgtoken_raw: table c4_pgtoken_raw, heap_bytes 1638400000, toast_bytes 0, index_bytes 22487040, rows_per_page 5.0, body_bytes_per_row 1546.0, toasted_values 0
+  storage text_lz4: table c4_text_lz4, heap_bytes 1609564160, toast_bytes 566591488, index_bytes 22487040, rows_per_page 5.1, body_bytes_per_row 1876.6, toasted_values 207492
+  storage text_lz4_forced: table c4_text_lz4_forced, heap_bytes 2051538944, toast_bytes 0, index_bytes 22487040, rows_per_page 4.0, body_bytes_per_row 1877.4, toasted_values 0
+  storage text_pglz: table c4_text_pglz, heap_bytes 1446510592, toast_bytes 747298816, index_bytes 22487040, rows_per_page 5.7, body_bytes_per_row 1891.5, toasted_values 273667
+  if emb and body shared one table (text_lz4, first 20000 rows): heap_bytes 33030144, toast_bytes 42164224, rows_per_page 5.0, body_bytes_per_row 1866.0, emb_bytes_per_row 1543.8, toasted_values 19996
+  if emb and body shared one table (pgtoken_freq, first 20000 rows): heap_bytes 20447232, toast_bytes 32735232, rows_per_page 8.0, body_bytes_per_row 886.9, emb_bytes_per_row 1540.0, toasted_values 19979
+  example p25 row 0: 512 tokens, 2313 B UTF-8, stored {'text_pglz': 1694, 'text_lz4': 1818, 'text_lz4_forced': 1818, 'int4_array': 1449, 'bytea_raw24': 1540, 'bytea_freq': 897, 'pgtoken_raw': 1546, 'pgtoken_freq': 897}: 'Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. T'
+  example p50 row 0: 512 tokens, 2313 B UTF-8, stored {'text_pglz': 1694, 'text_lz4': 1818, 'text_lz4_forced': 1818, 'int4_array': 1449, 'bytea_raw24': 1540, 'bytea_freq': 897, 'pgtoken_raw': 1546, 'pgtoken_freq': 897}: 'Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. T'
+  example p90 row 0: 512 tokens, 2313 B UTF-8, stored {'text_pglz': 1694, 'text_lz4': 1818, 'text_lz4_forced': 1818, 'int4_array': 1449, 'bytea_raw24': 1540, 'bytea_freq': 897, 'pgtoken_raw': 1546, 'pgtoken_freq': 897}: 'Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. T'
+
+== k=100, clients=1: 600 queries per arm, blocks of 10, sweep on, warm
+    block 1/60 (client 0, 100 queries): e2e p50 ms  text_pglz 11.61  text_lz4 10.80  text_lz4_batch 9.03  text_lz4_forced 10.68  int4_array 7.82  bytea_raw24 6.20  bytea_freq 6.30  pgtoken_raw 6.11  pgtoken_freq 6.36  oracle_mem 5.58
+    block 2/60 (client 0, 200 queries): e2e p50 ms  text_pglz 11.52  text_lz4 11.32  text_lz4_batch 9.31  text_lz4_forced 10.87  int4_array 8.28  bytea_raw24 6.47  bytea_freq 6.61  pgtoken_raw 6.30  pgtoken_freq 6.55  oracle_mem 5.81
+    block 3/60 (client 0, 300 queries): e2e p50 ms  text_pglz 11.44  text_lz4 11.06  text_lz4_batch 9.21  text_lz4_forced 10.84  int4_array 8.08  bytea_raw24 6.36  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.49  oracle_mem 5.74
+    block 4/60 (client 0, 400 queries): e2e p50 ms  text_pglz 11.44  text_lz4 11.06  text_lz4_batch 9.26  text_lz4_forced 10.96  int4_array 8.17  bytea_raw24 6.48  bytea_freq 6.61  pgtoken_raw 6.19  pgtoken_freq 6.50  oracle_mem 5.76
+    block 5/60 (client 0, 500 queries): e2e p50 ms  text_pglz 11.54  text_lz4 11.06  text_lz4_batch 9.26  text_lz4_forced 10.98  int4_array 8.21  bytea_raw24 6.48  bytea_freq 6.61  pgtoken_raw 6.20  pgtoken_freq 6.53  oracle_mem 5.77
+    block 6/60 (client 0, 600 queries): e2e p50 ms  text_pglz 11.61  text_lz4 11.07  text_lz4_batch 9.27  text_lz4_forced 10.91  int4_array 8.18  bytea_raw24 6.54  bytea_freq 6.61  pgtoken_raw 6.21  pgtoken_freq 6.55  oracle_mem 5.81
+    block 7/60 (client 0, 700 queries): e2e p50 ms  text_pglz 11.60  text_lz4 11.00  text_lz4_batch 9.26  text_lz4_forced 10.86  int4_array 8.09  bytea_raw24 6.50  bytea_freq 6.58  pgtoken_raw 6.21  pgtoken_freq 6.52  oracle_mem 5.77
+    block 8/60 (client 0, 800 queries): e2e p50 ms  text_pglz 11.60  text_lz4 10.97  text_lz4_batch 9.24  text_lz4_forced 10.84  int4_array 8.01  bytea_raw24 6.47  bytea_freq 6.54  pgtoken_raw 6.21  pgtoken_freq 6.50  oracle_mem 5.73
+    block 9/60 (client 0, 900 queries): e2e p50 ms  text_pglz 11.62  text_lz4 10.99  text_lz4_batch 9.26  text_lz4_forced 10.86  int4_array 8.09  bytea_raw24 6.48  bytea_freq 6.58  pgtoken_raw 6.22  pgtoken_freq 6.54  oracle_mem 5.80
+    block 10/60 (client 0, 1000 queries): e2e p50 ms  text_pglz 11.63  text_lz4 10.97  text_lz4_batch 9.24  text_lz4_forced 10.84  int4_array 8.05  bytea_raw24 6.46  bytea_freq 6.54  pgtoken_raw 6.21  pgtoken_freq 6.52  oracle_mem 5.78
+    block 11/60 (client 0, 1100 queries): e2e p50 ms  text_pglz 11.63  text_lz4 10.97  text_lz4_batch 9.24  text_lz4_forced 10.84  int4_array 8.05  bytea_raw24 6.46  bytea_freq 6.54  pgtoken_raw 6.21  pgtoken_freq 6.52  oracle_mem 5.78
+    block 12/60 (client 0, 1200 queries): e2e p50 ms  text_pglz 11.61  text_lz4 10.99  text_lz4_batch 9.22  text_lz4_forced 10.84  int4_array 8.03  bytea_raw24 6.47  bytea_freq 6.57  pgtoken_raw 6.21  pgtoken_freq 6.52  oracle_mem 5.79
+    block 13/60 (client 0, 1300 queries): e2e p50 ms  text_pglz 11.54  text_lz4 10.96  text_lz4_batch 9.17  text_lz4_forced 10.86  int4_array 7.97  bytea_raw24 6.42  bytea_freq 6.48  pgtoken_raw 6.20  pgtoken_freq 6.48  oracle_mem 5.73
+    block 14/60 (client 0, 1400 queries): e2e p50 ms  text_pglz 11.52  text_lz4 10.95  text_lz4_batch 9.16  text_lz4_forced 10.88  int4_array 7.97  bytea_raw24 6.42  bytea_freq 6.46  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.73
+    block 15/60 (client 0, 1500 queries): e2e p50 ms  text_pglz 11.54  text_lz4 10.95  text_lz4_batch 9.17  text_lz4_forced 10.87  int4_array 7.97  bytea_raw24 6.44  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.74
+    block 16/60 (client 0, 1600 queries): e2e p50 ms  text_pglz 11.57  text_lz4 10.96  text_lz4_batch 9.18  text_lz4_forced 10.87  int4_array 7.99  bytea_raw24 6.44  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.48  oracle_mem 5.75
+    block 17/60 (client 0, 1700 queries): e2e p50 ms  text_pglz 11.56  text_lz4 10.95  text_lz4_batch 9.17  text_lz4_forced 10.86  int4_array 7.97  bytea_raw24 6.42  bytea_freq 6.47  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.74
+    block 18/60 (client 0, 1800 queries): e2e p50 ms  text_pglz 11.57  text_lz4 10.94  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.01  bytea_raw24 6.44  bytea_freq 6.51  pgtoken_raw 6.20  pgtoken_freq 6.48  oracle_mem 5.74
+    block 19/60 (client 0, 1900 queries): e2e p50 ms  text_pglz 11.56  text_lz4 10.91  text_lz4_batch 9.17  text_lz4_forced 10.84  int4_array 7.97  bytea_raw24 6.42  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.73
+    block 20/60 (client 0, 2000 queries): e2e p50 ms  text_pglz 11.56  text_lz4 10.91  text_lz4_batch 9.16  text_lz4_forced 10.84  int4_array 7.97  bytea_raw24 6.40  bytea_freq 6.47  pgtoken_raw 6.19  pgtoken_freq 6.46  oracle_mem 5.72
+    block 21/60 (client 0, 2100 queries): e2e p50 ms  text_pglz 11.59  text_lz4 10.91  text_lz4_batch 9.17  text_lz4_forced 10.84  int4_array 7.99  bytea_raw24 6.42  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.74
+    block 22/60 (client 0, 2200 queries): e2e p50 ms  text_pglz 11.54  text_lz4 10.94  text_lz4_batch 9.17  text_lz4_forced 10.84  int4_array 7.99  bytea_raw24 6.42  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.74
+    block 23/60 (client 0, 2300 queries): e2e p50 ms  text_pglz 11.52  text_lz4 10.94  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 7.98  bytea_raw24 6.42  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.74
+    block 24/60 (client 0, 2400 queries): e2e p50 ms  text_pglz 11.51  text_lz4 10.93  text_lz4_batch 9.17  text_lz4_forced 10.87  int4_array 7.98  bytea_raw24 6.42  bytea_freq 6.47  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.74
+    block 25/60 (client 0, 2500 queries): e2e p50 ms  text_pglz 11.52  text_lz4 10.94  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.00  bytea_raw24 6.44  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.48  oracle_mem 5.75
+    block 26/60 (client 0, 2600 queries): e2e p50 ms  text_pglz 11.54  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.01  bytea_raw24 6.44  bytea_freq 6.50  pgtoken_raw 6.19  pgtoken_freq 6.49  oracle_mem 5.76
+    block 27/60 (client 0, 2700 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.01  bytea_raw24 6.44  bytea_freq 6.50  pgtoken_raw 6.19  pgtoken_freq 6.49  oracle_mem 5.76
+    block 28/60 (client 0, 2800 queries): e2e p50 ms  text_pglz 11.56  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.01  bytea_raw24 6.44  bytea_freq 6.50  pgtoken_raw 6.20  pgtoken_freq 6.49  oracle_mem 5.76
+    block 29/60 (client 0, 2900 queries): e2e p50 ms  text_pglz 11.60  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.01  bytea_raw24 6.45  bytea_freq 6.50  pgtoken_raw 6.20  pgtoken_freq 6.49  oracle_mem 5.78
+    block 30/60 (client 0, 3000 queries): e2e p50 ms  text_pglz 11.60  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.84  int4_array 8.01  bytea_raw24 6.44  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.48  oracle_mem 5.77
+    block 31/60 (client 0, 3100 queries): e2e p50 ms  text_pglz 11.60  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.84  int4_array 8.01  bytea_raw24 6.44  bytea_freq 6.49  pgtoken_raw 6.19  pgtoken_freq 6.48  oracle_mem 5.77
+    block 32/60 (client 0, 3200 queries): e2e p50 ms  text_pglz 11.59  text_lz4 10.97  text_lz4_batch 9.18  text_lz4_forced 10.84  int4_array 8.01  bytea_raw24 6.44  bytea_freq 6.50  pgtoken_raw 6.20  pgtoken_freq 6.49  oracle_mem 5.78
+    block 33/60 (client 0, 3300 queries): e2e p50 ms  text_pglz 11.56  text_lz4 10.96  text_lz4_batch 9.19  text_lz4_forced 10.87  int4_array 8.02  bytea_raw24 6.44  bytea_freq 6.50  pgtoken_raw 6.19  pgtoken_freq 6.49  oracle_mem 5.79
+    block 34/60 (client 0, 3400 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.96  text_lz4_batch 9.19  text_lz4_forced 10.88  int4_array 8.02  bytea_raw24 6.44  bytea_freq 6.50  pgtoken_raw 6.19  pgtoken_freq 6.49  oracle_mem 5.79
+    block 35/60 (client 0, 3500 queries): e2e p50 ms  text_pglz 11.56  text_lz4 10.96  text_lz4_batch 9.19  text_lz4_forced 10.88  int4_array 8.02  bytea_raw24 6.45  bytea_freq 6.51  pgtoken_raw 6.19  pgtoken_freq 6.49  oracle_mem 5.79
+    block 36/60 (client 0, 3600 queries): e2e p50 ms  text_pglz 11.59  text_lz4 10.96  text_lz4_batch 9.21  text_lz4_forced 10.89  int4_array 8.04  bytea_raw24 6.46  bytea_freq 6.52  pgtoken_raw 6.19  pgtoken_freq 6.49  oracle_mem 5.80
+    block 37/60 (client 0, 3700 queries): e2e p50 ms  text_pglz 11.58  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.88  int4_array 8.02  bytea_raw24 6.45  bytea_freq 6.51  pgtoken_raw 6.19  pgtoken_freq 6.48  oracle_mem 5.79
+    block 38/60 (client 0, 3800 queries): e2e p50 ms  text_pglz 11.59  text_lz4 10.96  text_lz4_batch 9.19  text_lz4_forced 10.88  int4_array 8.02  bytea_raw24 6.46  bytea_freq 6.52  pgtoken_raw 6.19  pgtoken_freq 6.48  oracle_mem 5.79
+    block 39/60 (client 0, 3900 queries): e2e p50 ms  text_pglz 11.59  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.02  bytea_raw24 6.45  bytea_freq 6.52  pgtoken_raw 6.19  pgtoken_freq 6.48  oracle_mem 5.79
+    block 40/60 (client 0, 4000 queries): e2e p50 ms  text_pglz 11.56  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 8.02  bytea_raw24 6.44  bytea_freq 6.50  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.77
+    block 41/60 (client 0, 4100 queries): e2e p50 ms  text_pglz 11.58  text_lz4 10.94  text_lz4_batch 9.18  text_lz4_forced 10.84  int4_array 8.01  bytea_raw24 6.43  bytea_freq 6.49  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.76
+    block 42/60 (client 0, 4200 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.84  int4_array 8.01  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.47  oracle_mem 5.76
+    block 43/60 (client 0, 4300 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 8.01  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.76
+    block 44/60 (client 0, 4400 queries): e2e p50 ms  text_pglz 11.53  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.01  bytea_raw24 6.44  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.46  oracle_mem 5.77
+    block 45/60 (client 0, 4500 queries): e2e p50 ms  text_pglz 11.53  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.01  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.46  oracle_mem 5.76
+    block 46/60 (client 0, 4600 queries): e2e p50 ms  text_pglz 11.54  text_lz4 10.94  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.02  bytea_raw24 6.44  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.46  oracle_mem 5.76
+    block 47/60 (client 0, 4700 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.92  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.01  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.46  oracle_mem 5.76
+    block 48/60 (client 0, 4800 queries): e2e p50 ms  text_pglz 11.54  text_lz4 10.91  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 8.01  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.46  oracle_mem 5.76
+    block 49/60 (client 0, 4900 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.91  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 8.01  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.46  oracle_mem 5.76
+    block 50/60 (client 0, 5000 queries): e2e p50 ms  text_pglz 11.54  text_lz4 10.91  text_lz4_batch 9.18  text_lz4_forced 10.84  int4_array 8.01  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.46  oracle_mem 5.76
+    block 51/60 (client 0, 5100 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.92  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 8.02  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.47  oracle_mem 5.77
+    block 52/60 (client 0, 5200 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.95  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 8.02  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.78
+    block 53/60 (client 0, 5300 queries): e2e p50 ms  text_pglz 11.53  text_lz4 10.94  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 8.02  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.47  oracle_mem 5.77
+    block 54/60 (client 0, 5400 queries): e2e p50 ms  text_pglz 11.52  text_lz4 10.91  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.02  bytea_raw24 6.41  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.47  oracle_mem 5.76
+    block 55/60 (client 0, 5500 queries): e2e p50 ms  text_pglz 11.53  text_lz4 10.91  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.02  bytea_raw24 6.42  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.47  oracle_mem 5.76
+    block 56/60 (client 0, 5600 queries): e2e p50 ms  text_pglz 11.53  text_lz4 10.92  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.02  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.47  oracle_mem 5.77
+    block 57/60 (client 0, 5700 queries): e2e p50 ms  text_pglz 11.54  text_lz4 10.93  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.02  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.78
+    block 58/60 (client 0, 5800 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.93  text_lz4_batch 9.18  text_lz4_forced 10.86  int4_array 8.02  bytea_raw24 6.43  bytea_freq 6.49  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.78
+    block 59/60 (client 0, 5900 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.91  text_lz4_batch 9.18  text_lz4_forced 10.85  int4_array 8.02  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.19  pgtoken_freq 6.47  oracle_mem 5.78
+    block 60/60 (client 0, 6000 queries): e2e p50 ms  text_pglz 11.55  text_lz4 10.91  text_lz4_batch 9.17  text_lz4_forced 10.84  int4_array 8.02  bytea_raw24 6.43  bytea_freq 6.48  pgtoken_raw 6.18  pgtoken_freq 6.47  oracle_mem 5.78
+
+k=100, 1 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep on, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                       11.55   12.47   13.20      6.66       4.92    42%    5.12     1891    2444    0.94x      0.56x      50   0.58  0.58    5.44    6.29
+  text (lz4)                        10.91   11.85   12.61      6.38       4.51    42%    5.10     1877    2444    1.00x      0.59x      51   0.57  0.57    5.00    5.97
+  text (lz4), batch tokenize         9.17   10.03   10.57      6.35       2.82    31%    5.11     1877    2444    1.19x      0.70x      56   0.52  0.52    6.57    5.98
+  text (lz4, forced)                10.84   11.75   12.52      6.28       4.48    42%    5.11     1877    2444    1.01x      0.60x      52   0.56  0.56    4.96    5.89
+  int4[]                             8.02    8.86    9.52      7.84       0.17     2%    5.02     1398    4116    1.36x      0.80x      61   0.49  0.49    0.87    7.49
+  bytea raw24                        6.43    7.31    7.87      6.03       0.38     6%    5.03     1540    1536    1.70x      1.00x      68   0.44  0.44    0.74    5.68
+  bytea freq (client codec, no ext.)     6.48    7.35    7.97      5.96       0.53     8%    5.00      886     882    1.69x      0.99x      68   0.45  0.45    0.83    5.60
+  pgtoken raw (raw24)                6.18    7.04    7.65      6.04       0.14     2%    5.01     1546    1542    1.77x      1.04x      70   0.43  0.43    0.50    5.69
+  pgtoken freq                       6.47    7.31    7.87      5.94       0.52     8%    5.00      886     882    1.69x      0.99x      68   0.45  0.45    0.83    5.60
+  oracle: IDs already in memory      5.78    6.61    7.22      5.47       0.30     5%    4.83        0       0    1.89x      1.11x      73   0.42  0.42    0.46    5.11
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 600/600 queries, median per-query speedup 1.69x [1.68, 1.69], ratio of p50s 1.69x
+  pgtoken freq vs bytea raw24: faster in 231/600 queries, median per-query speedup 0.99x [0.99, 0.99], ratio of p50s 0.99x
+  disk nvme0n1: 32 reads, 2 MB in 141 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 8.18 ms/0 reads, text_lz4 5.35 ms/0 reads, text_lz4_batch 4.99 ms/0 reads, text_lz4_forced 5.44 ms/0 reads, int4_array 5.33 ms/0 reads, bytea_raw24 5.25 ms/0 reads, bytea_freq 5.41 ms/0 reads, pgtoken_raw 5.28 ms/0 reads, pgtoken_freq 5.10 ms/0 reads, oracle_mem 4.43 ms/0 reads
+
+== k=100, clients=1: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/60 (client 0, 100 queries): e2e p50 ms  text_pglz 10.90  text_lz4 9.69  text_lz4_batch 8.36  text_lz4_forced 9.49  int4_array 7.32  bytea_raw24 5.51  bytea_freq 5.39  pgtoken_raw 5.11  pgtoken_freq 5.33  oracle_mem 4.61
+    block 2/60 (client 0, 200 queries): e2e p50 ms  text_pglz 10.73  text_lz4 10.19  text_lz4_batch 8.66  text_lz4_forced 9.79  int4_array 7.48  bytea_raw24 5.74  bytea_freq 5.70  pgtoken_raw 5.46  pgtoken_freq 5.70  oracle_mem 4.92
+    block 3/60 (client 0, 300 queries): e2e p50 ms  text_pglz 10.57  text_lz4 10.13  text_lz4_batch 8.61  text_lz4_forced 9.93  int4_array 7.46  bytea_raw24 5.70  bytea_freq 5.68  pgtoken_raw 5.34  pgtoken_freq 5.73  oracle_mem 5.01
+    block 4/60 (client 0, 400 queries): e2e p50 ms  text_pglz 10.51  text_lz4 10.09  text_lz4_batch 8.61  text_lz4_forced 10.03  int4_array 7.48  bytea_raw24 5.71  bytea_freq 5.72  pgtoken_raw 5.54  pgtoken_freq 5.86  oracle_mem 5.09
+    block 5/60 (client 0, 500 queries): e2e p50 ms  text_pglz 10.56  text_lz4 10.03  text_lz4_batch 8.62  text_lz4_forced 10.03  int4_array 7.53  bytea_raw24 5.74  bytea_freq 5.79  pgtoken_raw 5.56  pgtoken_freq 5.75  oracle_mem 5.04
+    block 6/60 (client 0, 600 queries): e2e p50 ms  text_pglz 10.62  text_lz4 10.02  text_lz4_batch 8.72  text_lz4_forced 10.02  int4_array 7.55  bytea_raw24 5.92  bytea_freq 5.83  pgtoken_raw 5.55  pgtoken_freq 5.93  oracle_mem 5.14
+    block 7/60 (client 0, 700 queries): e2e p50 ms  text_pglz 10.58  text_lz4 10.04  text_lz4_batch 8.72  text_lz4_forced 9.97  int4_array 7.49  bytea_raw24 5.79  bytea_freq 5.83  pgtoken_raw 5.54  pgtoken_freq 5.77  oracle_mem 5.02
+    block 8/60 (client 0, 800 queries): e2e p50 ms  text_pglz 10.56  text_lz4 10.02  text_lz4_batch 8.62  text_lz4_forced 9.90  int4_array 7.48  bytea_raw24 5.74  bytea_freq 5.87  pgtoken_raw 5.54  pgtoken_freq 5.73  oracle_mem 5.01
+    block 9/60 (client 0, 900 queries): e2e p50 ms  text_pglz 10.60  text_lz4 10.03  text_lz4_batch 8.66  text_lz4_forced 9.90  int4_array 7.47  bytea_raw24 5.74  bytea_freq 5.81  pgtoken_raw 5.50  pgtoken_freq 5.83  oracle_mem 5.07
+    block 10/60 (client 0, 1000 queries): e2e p50 ms  text_pglz 10.59  text_lz4 9.99  text_lz4_batch 8.62  text_lz4_forced 9.90  int4_array 7.45  bytea_raw24 5.71  bytea_freq 5.83  pgtoken_raw 5.50  pgtoken_freq 5.77  oracle_mem 5.11
+    block 11/60 (client 0, 1100 queries): e2e p50 ms  text_pglz 10.60  text_lz4 9.97  text_lz4_batch 8.61  text_lz4_forced 9.90  int4_array 7.45  bytea_raw24 5.70  bytea_freq 5.82  pgtoken_raw 5.49  pgtoken_freq 5.75  oracle_mem 5.08
+    block 12/60 (client 0, 1200 queries): e2e p50 ms  text_pglz 10.58  text_lz4 10.03  text_lz4_batch 8.59  text_lz4_forced 9.86  int4_array 7.39  bytea_raw24 5.71  bytea_freq 5.74  pgtoken_raw 5.41  pgtoken_freq 5.73  oracle_mem 5.04
+    block 13/60 (client 0, 1300 queries): e2e p50 ms  text_pglz 10.56  text_lz4 10.01  text_lz4_batch 8.59  text_lz4_forced 9.90  int4_array 7.38  bytea_raw24 5.66  bytea_freq 5.69  pgtoken_raw 5.35  pgtoken_freq 5.68  oracle_mem 5.01
+    block 14/60 (client 0, 1400 queries): e2e p50 ms  text_pglz 10.53  text_lz4 9.98  text_lz4_batch 8.57  text_lz4_forced 9.93  int4_array 7.38  bytea_raw24 5.68  bytea_freq 5.68  pgtoken_raw 5.35  pgtoken_freq 5.66  oracle_mem 4.99
+    block 15/60 (client 0, 1500 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.95  text_lz4_batch 8.53  text_lz4_forced 9.91  int4_array 7.39  bytea_raw24 5.65  bytea_freq 5.67  pgtoken_raw 5.29  pgtoken_freq 5.64  oracle_mem 4.97
+    block 16/60 (client 0, 1600 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.95  text_lz4_batch 8.52  text_lz4_forced 9.90  int4_array 7.40  bytea_raw24 5.67  bytea_freq 5.67  pgtoken_raw 5.29  pgtoken_freq 5.64  oracle_mem 4.96
+    block 17/60 (client 0, 1700 queries): e2e p50 ms  text_pglz 10.48  text_lz4 9.94  text_lz4_batch 8.52  text_lz4_forced 9.89  int4_array 7.38  bytea_raw24 5.65  bytea_freq 5.69  pgtoken_raw 5.28  pgtoken_freq 5.61  oracle_mem 4.95
+    block 18/60 (client 0, 1800 queries): e2e p50 ms  text_pglz 10.46  text_lz4 9.94  text_lz4_batch 8.50  text_lz4_forced 9.88  int4_array 7.40  bytea_raw24 5.67  bytea_freq 5.69  pgtoken_raw 5.30  pgtoken_freq 5.64  oracle_mem 4.94
+    block 19/60 (client 0, 1900 queries): e2e p50 ms  text_pglz 10.48  text_lz4 9.94  text_lz4_batch 8.47  text_lz4_forced 9.87  int4_array 7.38  bytea_raw24 5.65  bytea_freq 5.67  pgtoken_raw 5.29  pgtoken_freq 5.64  oracle_mem 4.93
+    block 20/60 (client 0, 2000 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.93  text_lz4_batch 8.47  text_lz4_forced 9.87  int4_array 7.38  bytea_raw24 5.65  bytea_freq 5.67  pgtoken_raw 5.28  pgtoken_freq 5.64  oracle_mem 4.95
+    block 21/60 (client 0, 2100 queries): e2e p50 ms  text_pglz 10.51  text_lz4 9.94  text_lz4_batch 8.50  text_lz4_forced 9.87  int4_array 7.38  bytea_raw24 5.65  bytea_freq 5.69  pgtoken_raw 5.30  pgtoken_freq 5.65  oracle_mem 4.95
+    block 22/60 (client 0, 2200 queries): e2e p50 ms  text_pglz 10.50  text_lz4 9.95  text_lz4_batch 8.51  text_lz4_forced 9.87  int4_array 7.38  bytea_raw24 5.65  bytea_freq 5.69  pgtoken_raw 5.31  pgtoken_freq 5.65  oracle_mem 4.95
+    block 23/60 (client 0, 2300 queries): e2e p50 ms  text_pglz 10.50  text_lz4 9.95  text_lz4_batch 8.53  text_lz4_forced 9.89  int4_array 7.38  bytea_raw24 5.65  bytea_freq 5.69  pgtoken_raw 5.29  pgtoken_freq 5.64  oracle_mem 4.96
+    block 24/60 (client 0, 2400 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.95  text_lz4_batch 8.54  text_lz4_forced 9.90  int4_array 7.40  bytea_raw24 5.65  bytea_freq 5.69  pgtoken_raw 5.31  pgtoken_freq 5.64  oracle_mem 4.96
+    block 25/60 (client 0, 2500 queries): e2e p50 ms  text_pglz 10.50  text_lz4 9.95  text_lz4_batch 8.56  text_lz4_forced 9.91  int4_array 7.43  bytea_raw24 5.65  bytea_freq 5.69  pgtoken_raw 5.32  pgtoken_freq 5.61  oracle_mem 4.96
+    block 26/60 (client 0, 2600 queries): e2e p50 ms  text_pglz 10.50  text_lz4 9.95  text_lz4_batch 8.58  text_lz4_forced 9.91  int4_array 7.44  bytea_raw24 5.68  bytea_freq 5.71  pgtoken_raw 5.34  pgtoken_freq 5.62  oracle_mem 4.97
+    block 27/60 (client 0, 2700 queries): e2e p50 ms  text_pglz 10.52  text_lz4 9.95  text_lz4_batch 8.58  text_lz4_forced 9.91  int4_array 7.44  bytea_raw24 5.68  bytea_freq 5.72  pgtoken_raw 5.35  pgtoken_freq 5.63  oracle_mem 4.97
+    block 28/60 (client 0, 2800 queries): e2e p50 ms  text_pglz 10.53  text_lz4 9.95  text_lz4_batch 8.58  text_lz4_forced 9.90  int4_array 7.44  bytea_raw24 5.69  bytea_freq 5.72  pgtoken_raw 5.36  pgtoken_freq 5.64  oracle_mem 4.97
+    block 29/60 (client 0, 2900 queries): e2e p50 ms  text_pglz 10.54  text_lz4 9.95  text_lz4_batch 8.58  text_lz4_forced 9.91  int4_array 7.45  bytea_raw24 5.69  bytea_freq 5.72  pgtoken_raw 5.36  pgtoken_freq 5.65  oracle_mem 4.98
+    block 30/60 (client 0, 3000 queries): e2e p50 ms  text_pglz 10.55  text_lz4 9.95  text_lz4_batch 8.56  text_lz4_forced 9.90  int4_array 7.44  bytea_raw24 5.69  bytea_freq 5.72  pgtoken_raw 5.35  pgtoken_freq 5.64  oracle_mem 4.99
+    block 31/60 (client 0, 3100 queries): e2e p50 ms  text_pglz 10.56  text_lz4 9.95  text_lz4_batch 8.56  text_lz4_forced 9.89  int4_array 7.44  bytea_raw24 5.69  bytea_freq 5.72  pgtoken_raw 5.35  pgtoken_freq 5.65  oracle_mem 4.99
+    block 32/60 (client 0, 3200 queries): e2e p50 ms  text_pglz 10.55  text_lz4 9.97  text_lz4_batch 8.56  text_lz4_forced 9.89  int4_array 7.45  bytea_raw24 5.69  bytea_freq 5.73  pgtoken_raw 5.37  pgtoken_freq 5.65  oracle_mem 4.99
+    block 33/60 (client 0, 3300 queries): e2e p50 ms  text_pglz 10.53  text_lz4 9.98  text_lz4_batch 8.58  text_lz4_forced 9.89  int4_array 7.43  bytea_raw24 5.69  bytea_freq 5.72  pgtoken_raw 5.35  pgtoken_freq 5.64  oracle_mem 4.99
+    block 34/60 (client 0, 3400 queries): e2e p50 ms  text_pglz 10.53  text_lz4 9.98  text_lz4_batch 8.58  text_lz4_forced 9.90  int4_array 7.44  bytea_raw24 5.69  bytea_freq 5.72  pgtoken_raw 5.35  pgtoken_freq 5.64  oracle_mem 4.99
+    block 35/60 (client 0, 3500 queries): e2e p50 ms  text_pglz 10.54  text_lz4 9.99  text_lz4_batch 8.59  text_lz4_forced 9.90  int4_array 7.44  bytea_raw24 5.69  bytea_freq 5.72  pgtoken_raw 5.36  pgtoken_freq 5.64  oracle_mem 4.99
+    block 36/60 (client 0, 3600 queries): e2e p50 ms  text_pglz 10.53  text_lz4 9.98  text_lz4_batch 8.57  text_lz4_forced 9.89  int4_array 7.43  bytea_raw24 5.71  bytea_freq 5.75  pgtoken_raw 5.37  pgtoken_freq 5.65  oracle_mem 5.00
+    block 37/60 (client 0, 3700 queries): e2e p50 ms  text_pglz 10.53  text_lz4 9.96  text_lz4_batch 8.55  text_lz4_forced 9.88  int4_array 7.42  bytea_raw24 5.70  bytea_freq 5.75  pgtoken_raw 5.37  pgtoken_freq 5.63  oracle_mem 4.99
+    block 38/60 (client 0, 3800 queries): e2e p50 ms  text_pglz 10.53  text_lz4 9.95  text_lz4_batch 8.53  text_lz4_forced 9.87  int4_array 7.41  bytea_raw24 5.71  bytea_freq 5.74  pgtoken_raw 5.37  pgtoken_freq 5.64  oracle_mem 4.99
+    block 39/60 (client 0, 3900 queries): e2e p50 ms  text_pglz 10.52  text_lz4 9.95  text_lz4_batch 8.51  text_lz4_forced 9.87  int4_array 7.39  bytea_raw24 5.69  bytea_freq 5.72  pgtoken_raw 5.36  pgtoken_freq 5.64  oracle_mem 4.99
+    block 40/60 (client 0, 4000 queries): e2e p50 ms  text_pglz 10.52  text_lz4 9.94  text_lz4_batch 8.49  text_lz4_forced 9.86  int4_array 7.39  bytea_raw24 5.68  bytea_freq 5.72  pgtoken_raw 5.35  pgtoken_freq 5.64  oracle_mem 4.99
+    block 41/60 (client 0, 4100 queries): e2e p50 ms  text_pglz 10.52  text_lz4 9.94  text_lz4_batch 8.51  text_lz4_forced 9.85  int4_array 7.39  bytea_raw24 5.67  bytea_freq 5.71  pgtoken_raw 5.35  pgtoken_freq 5.64  oracle_mem 4.99
+    block 42/60 (client 0, 4200 queries): e2e p50 ms  text_pglz 10.51  text_lz4 9.95  text_lz4_batch 8.49  text_lz4_forced 9.84  int4_array 7.39  bytea_raw24 5.66  bytea_freq 5.71  pgtoken_raw 5.35  pgtoken_freq 5.64  oracle_mem 4.99
+    block 43/60 (client 0, 4300 queries): e2e p50 ms  text_pglz 10.50  text_lz4 9.94  text_lz4_batch 8.51  text_lz4_forced 9.85  int4_array 7.39  bytea_raw24 5.66  bytea_freq 5.70  pgtoken_raw 5.35  pgtoken_freq 5.63  oracle_mem 4.98
+    block 44/60 (client 0, 4400 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.94  text_lz4_batch 8.50  text_lz4_forced 9.86  int4_array 7.39  bytea_raw24 5.66  bytea_freq 5.70  pgtoken_raw 5.35  pgtoken_freq 5.63  oracle_mem 4.97
+    block 45/60 (client 0, 4500 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.93  text_lz4_batch 8.50  text_lz4_forced 9.86  int4_array 7.39  bytea_raw24 5.66  bytea_freq 5.69  pgtoken_raw 5.35  pgtoken_freq 5.62  oracle_mem 4.97
+    block 46/60 (client 0, 4600 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.91  text_lz4_batch 8.50  text_lz4_forced 9.86  int4_array 7.38  bytea_raw24 5.67  bytea_freq 5.69  pgtoken_raw 5.34  pgtoken_freq 5.62  oracle_mem 4.96
+    block 47/60 (client 0, 4700 queries): e2e p50 ms  text_pglz 10.50  text_lz4 9.92  text_lz4_batch 8.50  text_lz4_forced 9.85  int4_array 7.38  bytea_raw24 5.66  bytea_freq 5.69  pgtoken_raw 5.33  pgtoken_freq 5.62  oracle_mem 4.95
+    block 48/60 (client 0, 4800 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.91  text_lz4_batch 8.49  text_lz4_forced 9.85  int4_array 7.38  bytea_raw24 5.66  bytea_freq 5.69  pgtoken_raw 5.34  pgtoken_freq 5.62  oracle_mem 4.95
+    block 49/60 (client 0, 4900 queries): e2e p50 ms  text_pglz 10.48  text_lz4 9.91  text_lz4_batch 8.49  text_lz4_forced 9.84  int4_array 7.37  bytea_raw24 5.65  bytea_freq 5.68  pgtoken_raw 5.33  pgtoken_freq 5.62  oracle_mem 4.95
+    block 50/60 (client 0, 5000 queries): e2e p50 ms  text_pglz 10.47  text_lz4 9.90  text_lz4_batch 8.48  text_lz4_forced 9.83  int4_array 7.36  bytea_raw24 5.65  bytea_freq 5.67  pgtoken_raw 5.33  pgtoken_freq 5.63  oracle_mem 4.97
+    block 51/60 (client 0, 5100 queries): e2e p50 ms  text_pglz 10.49  text_lz4 9.90  text_lz4_batch 8.48  text_lz4_forced 9.83  int4_array 7.35  bytea_raw24 5.65  bytea_freq 5.66  pgtoken_raw 5.34  pgtoken_freq 5.63  oracle_mem 4.96
+    block 52/60 (client 0, 5200 queries): e2e p50 ms  text_pglz 10.47  text_lz4 9.92  text_lz4_batch 8.49  text_lz4_forced 9.83  int4_array 7.36  bytea_raw24 5.65  bytea_freq 5.69  pgtoken_raw 5.34  pgtoken_freq 5.63  oracle_mem 4.96
+    block 53/60 (client 0, 5300 queries): e2e p50 ms  text_pglz 10.45  text_lz4 9.92  text_lz4_batch 8.49  text_lz4_forced 9.83  int4_array 7.35  bytea_raw24 5.65  bytea_freq 5.66  pgtoken_raw 5.33  pgtoken_freq 5.62  oracle_mem 4.94
+    block 54/60 (client 0, 5400 queries): e2e p50 ms  text_pglz 10.45  text_lz4 9.91  text_lz4_batch 8.48  text_lz4_forced 9.84  int4_array 7.34  bytea_raw24 5.65  bytea_freq 5.66  pgtoken_raw 5.32  pgtoken_freq 5.62  oracle_mem 4.95
+    block 55/60 (client 0, 5500 queries): e2e p50 ms  text_pglz 10.45  text_lz4 9.91  text_lz4_batch 8.48  text_lz4_forced 9.85  int4_array 7.34  bytea_raw24 5.65  bytea_freq 5.66  pgtoken_raw 5.32  pgtoken_freq 5.62  oracle_mem 4.95
+    block 56/60 (client 0, 5600 queries): e2e p50 ms  text_pglz 10.45  text_lz4 9.90  text_lz4_batch 8.48  text_lz4_forced 9.84  int4_array 7.34  bytea_raw24 5.65  bytea_freq 5.66  pgtoken_raw 5.32  pgtoken_freq 5.61  oracle_mem 4.95
+    block 57/60 (client 0, 5700 queries): e2e p50 ms  text_pglz 10.45  text_lz4 9.90  text_lz4_batch 8.48  text_lz4_forced 9.85  int4_array 7.34  bytea_raw24 5.65  bytea_freq 5.68  pgtoken_raw 5.32  pgtoken_freq 5.62  oracle_mem 4.95
+    block 58/60 (client 0, 5800 queries): e2e p50 ms  text_pglz 10.46  text_lz4 9.90  text_lz4_batch 8.49  text_lz4_forced 9.85  int4_array 7.34  bytea_raw24 5.65  bytea_freq 5.69  pgtoken_raw 5.33  pgtoken_freq 5.62  oracle_mem 4.95
+    block 59/60 (client 0, 5900 queries): e2e p50 ms  text_pglz 10.46  text_lz4 9.90  text_lz4_batch 8.47  text_lz4_forced 9.84  int4_array 7.34  bytea_raw24 5.65  bytea_freq 5.67  pgtoken_raw 5.32  pgtoken_freq 5.62  oracle_mem 4.95
+    block 60/60 (client 0, 6000 queries): e2e p50 ms  text_pglz 10.46  text_lz4 9.90  text_lz4_batch 8.46  text_lz4_forced 9.84  int4_array 7.33  bytea_raw24 5.65  bytea_freq 5.66  pgtoken_raw 5.32  pgtoken_freq 5.62  oracle_mem 4.96
+
+k=100, 1 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                       10.46   11.37   12.29      5.94       4.53    43%    4.46     1891    2444    0.94x      0.54x      66   0.69  0.69    5.02    5.57
+  text (lz4)                         9.90   10.76   11.67      5.76       4.06    42%    4.59     1877    2444    1.00x      0.57x      68   0.68  0.68    4.53    5.39
+  text (lz4), batch tokenize         8.46    9.27    9.94      5.74       2.73    32%    4.58     1877    2444    1.17x      0.67x      75   0.64  0.64    6.05    5.36
+  text (lz4, forced)                 9.84   10.70   11.58      5.67       4.09    42%    4.60     1877    2444    1.01x      0.58x      68   0.67  0.67    4.54    5.33
+  int4[]                             7.33    8.14    8.78      7.15       0.17     2%    4.50     1398    4116    1.34x      0.77x      83   0.61  0.61    0.83    6.86
+  bytea raw24                        5.65    6.46    7.13      5.29       0.35     6%    4.45     1540    1536    1.74x      1.00x      97   0.55  0.55    0.68    4.97
+  bytea freq (client codec, no ext.)     5.66    6.47    7.10      5.19       0.47     8%    4.39      886     882    1.74x      1.00x      97   0.56  0.56    0.74    4.88
+  pgtoken raw (raw24)                5.32    6.12    6.75      5.18       0.13     2%    4.32     1546    1542    1.85x      1.06x     101   0.54  0.54    0.46    4.89
+  pgtoken freq                       5.62    6.44    7.08      5.14       0.47     8%    4.37      886     882    1.75x      1.02x      98   0.56  0.56    0.74    4.81
+  oracle: IDs already in memory      4.96    5.75    6.31      4.67       0.28     6%    4.21        0       0    1.99x      1.15x     106   0.53  0.53    0.43    4.33
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 600/600 queries, median per-query speedup 1.75x [1.74, 1.77], ratio of p50s 1.76x
+  pgtoken freq vs bytea raw24: faster in 356/600 queries, median per-query speedup 1.02x [1.01, 1.02], ratio of p50s 1.00x
+  disk nvme0n1: 35 reads, 1 MB in 103 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 8.36 ms/0 reads, text_lz4 5.61 ms/0 reads, text_lz4_batch 4.99 ms/0 reads, text_lz4_forced 5.35 ms/0 reads, int4_array 5.31 ms/0 reads, bytea_raw24 5.26 ms/0 reads, bytea_freq 5.32 ms/0 reads, pgtoken_raw 5.33 ms/0 reads, pgtoken_freq 5.34 ms/0 reads, oracle_mem 4.62 ms/0 reads
+
+== k=100, clients=4: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/15 (client 0, 100 queries): e2e p50 ms  text_pglz 13.34  text_lz4 10.29  text_lz4_batch 9.32  text_lz4_forced 10.94  int4_array 8.02  bytea_raw24 6.20  bytea_freq 6.22  pgtoken_raw 5.79  pgtoken_freq 6.09  oracle_mem 5.19
+    block 2/15 (client 0, 200 queries): e2e p50 ms  text_pglz 11.73  text_lz4 10.72  text_lz4_batch 9.36  text_lz4_forced 10.59  int4_array 7.61  bytea_raw24 6.15  bytea_freq 6.02  pgtoken_raw 5.68  pgtoken_freq 5.98  oracle_mem 5.30
+    block 3/15 (client 0, 300 queries): e2e p50 ms  text_pglz 11.49  text_lz4 10.75  text_lz4_batch 9.62  text_lz4_forced 10.79  int4_array 7.67  bytea_raw24 6.22  bytea_freq 6.08  pgtoken_raw 5.73  pgtoken_freq 6.01  oracle_mem 5.30
+    block 4/15 (client 0, 400 queries): e2e p50 ms  text_pglz 11.11  text_lz4 10.45  text_lz4_batch 9.53  text_lz4_forced 10.86  int4_array 7.73  bytea_raw24 6.08  bytea_freq 6.02  pgtoken_raw 5.67  pgtoken_freq 5.98  oracle_mem 5.22
+    block 5/15 (client 0, 500 queries): e2e p50 ms  text_pglz 11.29  text_lz4 10.64  text_lz4_batch 9.44  text_lz4_forced 10.70  int4_array 7.76  bytea_raw24 6.05  bytea_freq 6.02  pgtoken_raw 5.63  pgtoken_freq 5.97  oracle_mem 5.25
+    block 6/15 (client 0, 600 queries): e2e p50 ms  text_pglz 11.33  text_lz4 10.63  text_lz4_batch 9.49  text_lz4_forced 10.66  int4_array 7.88  bytea_raw24 6.18  bytea_freq 6.09  pgtoken_raw 5.70  pgtoken_freq 5.99  oracle_mem 5.27
+    block 7/15 (client 0, 700 queries): e2e p50 ms  text_pglz 11.51  text_lz4 10.79  text_lz4_batch 9.59  text_lz4_forced 10.72  int4_array 7.96  bytea_raw24 6.28  bytea_freq 6.14  pgtoken_raw 5.73  pgtoken_freq 6.04  oracle_mem 5.36
+    block 8/15 (client 0, 800 queries): e2e p50 ms  text_pglz 11.33  text_lz4 10.63  text_lz4_batch 9.56  text_lz4_forced 10.66  int4_array 7.88  bytea_raw24 6.15  bytea_freq 6.09  pgtoken_raw 5.70  pgtoken_freq 5.98  oracle_mem 5.25
+    block 9/15 (client 0, 900 queries): e2e p50 ms  text_pglz 11.29  text_lz4 10.57  text_lz4_batch 9.49  text_lz4_forced 10.68  int4_array 7.85  bytea_raw24 6.15  bytea_freq 6.09  pgtoken_raw 5.70  pgtoken_freq 6.00  oracle_mem 5.25
+    block 10/15 (client 0, 1000 queries): e2e p50 ms  text_pglz 11.29  text_lz4 10.55  text_lz4_batch 9.44  text_lz4_forced 10.58  int4_array 7.85  bytea_raw24 6.12  bytea_freq 6.06  pgtoken_raw 5.66  pgtoken_freq 5.98  oracle_mem 5.29
+    block 11/15 (client 0, 1100 queries): e2e p50 ms  text_pglz 11.30  text_lz4 10.47  text_lz4_batch 9.44  text_lz4_forced 10.58  int4_array 7.85  bytea_raw24 6.14  bytea_freq 6.07  pgtoken_raw 5.70  pgtoken_freq 5.98  oracle_mem 5.29
+    block 12/15 (client 0, 1200 queries): e2e p50 ms  text_pglz 11.35  text_lz4 10.55  text_lz4_batch 9.40  text_lz4_forced 10.62  int4_array 7.85  bytea_raw24 6.12  bytea_freq 6.07  pgtoken_raw 5.70  pgtoken_freq 5.98  oracle_mem 5.28
+    block 13/15 (client 0, 1300 queries): e2e p50 ms  text_pglz 11.28  text_lz4 10.45  text_lz4_batch 9.40  text_lz4_forced 10.66  int4_array 7.85  bytea_raw24 6.12  bytea_freq 6.07  pgtoken_raw 5.70  pgtoken_freq 5.98  oracle_mem 5.28
+    block 14/15 (client 0, 1400 queries): e2e p50 ms  text_pglz 11.22  text_lz4 10.42  text_lz4_batch 9.34  text_lz4_forced 10.64  int4_array 7.85  bytea_raw24 6.11  bytea_freq 6.05  pgtoken_raw 5.68  pgtoken_freq 5.97  oracle_mem 5.25
+    block 15/15 (client 0, 1500 queries): e2e p50 ms  text_pglz 11.21  text_lz4 10.42  text_lz4_batch 9.38  text_lz4_forced 10.61  int4_array 7.85  bytea_raw24 6.11  bytea_freq 6.07  pgtoken_raw 5.70  pgtoken_freq 5.98  oracle_mem 5.25
+
+k=100, 4 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                       11.08   12.62   13.78      6.36       4.64    42%     nan     1891    2444    0.94x      0.55x     337   0.94  0.94    5.15    6.01
+  text (lz4)                        10.45   11.81   13.31      6.15       4.14    41%     nan     1877    2444    1.00x      0.58x     356   0.94  0.94    4.61    5.78
+  text (lz4), batch tokenize         9.44   10.68   11.98      6.23       3.03    33%     nan     1877    2444    1.11x      0.65x     396   0.95  0.95    6.55    5.88
+  text (lz4, forced)                10.63   11.89   13.05      6.15       4.43    42%     nan     1877    2444    0.98x      0.57x     351   0.94  0.94    4.90    5.81
+  int4[]                             7.81    8.68    9.26      7.60       0.17     2%     nan     1398    4116    1.33x      0.78x     485   0.96  0.96    0.87    7.30
+  bytea raw24                        6.07    6.86    7.56      5.64       0.35     6%     nan     1540    1536    1.72x      1.00x     623   0.95  0.95    0.68    5.35
+  bytea freq (client codec, no ext.)     5.99    6.83    7.43      5.45       0.48     8%     nan      886     882    1.73x      1.01x     627   0.95  0.95    0.75    5.19
+  pgtoken raw (raw24)                5.64    6.47    6.97      5.51       0.13     2%     nan     1546    1542    1.84x      1.07x     667   0.95  0.95    0.45    5.26
+  pgtoken freq                       5.93    6.69    7.40      5.40       0.48     8%     nan      886     882    1.76x      1.02x     637   0.95  0.95    0.74    5.12
+  oracle: IDs already in memory      5.23    5.98    6.57      4.88       0.29     6%     nan        0       0    2.00x      1.16x     720   0.95  0.95    0.43    4.57
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 600/600 queries, median per-query speedup 1.76x [1.74, 1.77], ratio of p50s 1.76x
+  pgtoken freq vs bytea raw24: faster in 443/600 queries, median per-query speedup 1.02x [1.02, 1.02], ratio of p50s 1.02x
+  disk nvme0n1: 4 reads, 0 MB in 20 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 8.07 ms/0 reads, text_lz4 5.42 ms/0 reads, text_lz4_batch 4.87 ms/0 reads, text_lz4_forced 5.15 ms/0 reads, int4_array 5.06 ms/0 reads, bytea_raw24 5.07 ms/0 reads, bytea_freq 5.07 ms/0 reads, pgtoken_raw 5.09 ms/0 reads, pgtoken_freq 4.96 ms/0 reads, oracle_mem 4.12 ms/0 reads
+
+== k=100, clients=8: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/8 (client 0, 100 queries): e2e p50 ms  text_pglz 13.59  text_lz4 11.44  text_lz4_batch 11.79  text_lz4_forced 10.86  int4_array 7.80  bytea_raw24 5.93  bytea_freq 5.87  pgtoken_raw 5.61  pgtoken_freq 5.89  oracle_mem 4.97
+    block 2/8 (client 0, 200 queries): e2e p50 ms  text_pglz 11.59  text_lz4 11.28  text_lz4_batch 11.64  text_lz4_forced 11.26  int4_array 7.96  bytea_raw24 6.11  bytea_freq 6.00  pgtoken_raw 5.62  pgtoken_freq 5.85  oracle_mem 4.97
+    block 3/8 (client 0, 300 queries): e2e p50 ms  text_pglz 11.59  text_lz4 11.12  text_lz4_batch 11.65  text_lz4_forced 11.36  int4_array 8.07  bytea_raw24 6.18  bytea_freq 6.10  pgtoken_raw 5.68  pgtoken_freq 5.89  oracle_mem 5.18
+    block 4/8 (client 0, 400 queries): e2e p50 ms  text_pglz 11.82  text_lz4 11.12  text_lz4_batch 11.31  text_lz4_forced 11.46  int4_array 8.07  bytea_raw24 6.15  bytea_freq 6.05  pgtoken_raw 5.67  pgtoken_freq 5.89  oracle_mem 5.20
+    block 5/8 (client 0, 500 queries): e2e p50 ms  text_pglz 12.18  text_lz4 11.06  text_lz4_batch 11.18  text_lz4_forced 11.46  int4_array 8.07  bytea_raw24 6.12  bytea_freq 6.02  pgtoken_raw 5.67  pgtoken_freq 5.90  oracle_mem 5.18
+    block 6/8 (client 0, 600 queries): e2e p50 ms  text_pglz 12.18  text_lz4 11.07  text_lz4_batch 11.10  text_lz4_forced 11.60  int4_array 8.12  bytea_raw24 6.27  bytea_freq 6.10  pgtoken_raw 5.69  pgtoken_freq 5.95  oracle_mem 5.21
+    block 7/8 (client 0, 700 queries): e2e p50 ms  text_pglz 12.36  text_lz4 11.12  text_lz4_batch 11.10  text_lz4_forced 11.75  int4_array 8.10  bytea_raw24 6.20  bytea_freq 6.21  pgtoken_raw 5.70  pgtoken_freq 5.98  oracle_mem 5.21
+    block 8/8 (client 0, 750 queries): e2e p50 ms  text_pglz 12.28  text_lz4 11.14  text_lz4_batch 11.02  text_lz4_forced 11.72  int4_array 8.11  bytea_raw24 6.20  bytea_freq 6.21  pgtoken_raw 5.75  pgtoken_freq 6.04  oracle_mem 5.29
+
+k=100, 8 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                       12.10   13.63   15.41      6.82       5.24    43%     nan     1891    2444    0.94x      0.52x     606   0.93  0.93    5.81    6.53
+  text (lz4)                        11.39   12.92   14.25      6.54       4.76    42%     nan     1877    2444    1.00x      0.55x     642   0.92  0.92    5.30    6.24
+  text (lz4), batch tokenize        10.94   12.90   15.91      6.81       4.12    37%     nan     1877    2444    1.04x      0.57x     664   0.93  0.93    7.55    6.30
+  text (lz4, forced)                11.51   13.09   14.49      6.45       4.93    44%     nan     1877    2444    0.99x      0.55x     639   0.93  0.93    5.48    6.18
+  int4[]                             8.17    9.13    9.89      7.91       0.29     4%     nan     1398    4116    1.38x      0.76x     913   0.94  0.94    1.00    7.67
+  bytea raw24                        6.24    7.15    7.84      5.72       0.55     8%     nan     1540    1536    1.81x      1.00x    1184   0.93  0.93    0.91    5.56
+  bytea freq (client codec, no ext.)     6.24    7.18    8.02      5.58       0.68    11%     nan      886     882    1.81x      1.01x    1172   0.93  0.93    0.97    5.40
+  pgtoken raw (raw24)                5.82    6.62    7.24      5.65       0.19     3%     nan     1546    1542    1.94x      1.07x    1264   0.93  0.93    0.55    5.46
+  pgtoken freq                       6.15    7.07    7.72      5.49       0.67    11%     nan      886     882    1.84x      1.01x    1199   0.93  0.93    0.96    5.33
+  oracle: IDs already in memory      5.32    6.20    9.76      4.95       0.44     8%     nan        0       0    2.14x      1.18x    1300   0.89  0.89    0.59    4.66
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 600/600 queries, median per-query speedup 1.84x [1.82, 1.85], ratio of p50s 1.85x
+  pgtoken freq vs bytea raw24: faster in 375/600 queries, median per-query speedup 1.01x [1.01, 1.02], ratio of p50s 1.01x
+  disk nvme0n1: 0 reads, 0 MB in 13 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.99 ms/0 reads, text_lz4 5.22 ms/0 reads, text_lz4_batch 4.74 ms/0 reads, text_lz4_forced 5.08 ms/0 reads, int4_array 5.16 ms/0 reads, bytea_raw24 5.42 ms/0 reads, bytea_freq 5.28 ms/0 reads, pgtoken_raw 5.34 ms/0 reads, pgtoken_freq 5.16 ms/0 reads, oracle_mem 4.33 ms/0 reads
+
+== k=100, clients=16: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/4 (client 0, 100 queries): e2e p50 ms  text_pglz 17.45  text_lz4 15.28  text_lz4_batch 18.19  text_lz4_forced 15.48  int4_array 13.37  bytea_raw24 12.59  bytea_freq 12.46  pgtoken_raw 11.44  pgtoken_freq 11.79  oracle_mem 8.68
+    block 2/4 (client 0, 200 queries): e2e p50 ms  text_pglz 15.46  text_lz4 15.28  text_lz4_batch 18.32  text_lz4_forced 15.38  int4_array 15.05  bytea_raw24 11.78  bytea_freq 11.80  pgtoken_raw 11.29  pgtoken_freq 11.14  oracle_mem 9.26
+    block 3/4 (client 0, 300 queries): e2e p50 ms  text_pglz 16.87  text_lz4 16.01  text_lz4_batch 18.87  text_lz4_forced 15.89  int4_array 15.60  bytea_raw24 11.90  bytea_freq 11.48  pgtoken_raw 11.46  pgtoken_freq 11.54  oracle_mem 9.54
+    block 4/4 (client 0, 380 queries): e2e p50 ms  text_pglz 17.34  text_lz4 15.91  text_lz4_batch 18.87  text_lz4_forced 15.89  int4_array 15.00  bytea_raw24 11.80  bytea_freq 11.88  pgtoken_raw 11.46  pgtoken_freq 11.34  oracle_mem 9.54
+
+k=100, 16 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                       16.85   23.49   31.67      9.61       6.66    42%     nan     1891    2444    0.95x      0.64x     805   0.89  0.89    6.72    7.25
+  text (lz4)                        15.93   21.94   30.21      8.82       6.41    43%     nan     1877    2444    1.00x      0.68x     836   0.88  0.88    6.37    6.76
+  text (lz4), batch tokenize        17.60   26.40   34.98     10.23       6.62    39%     nan     1877    2444    0.90x      0.62x     723   0.85  0.85    7.93    6.73
+  text (lz4, forced)                16.30   22.57   29.91      8.53       7.01    45%     nan     1877    2444    0.99x      0.67x     821   0.88  0.88    6.70    6.65
+  int4[]                            15.32   20.46   28.11     15.04       0.30     2%     nan     1398    4116    1.07x      0.75x     925   0.87  0.87    1.06    7.84
+  bytea raw24                       11.28   15.41   21.59     10.73       0.58     5%     nan     1540    1536    1.46x      1.00x    1249   0.88  0.88    0.97    5.74
+  bytea freq (client codec, no ext.)    11.01   14.82   18.85     10.24       0.76     7%     nan      886     882    1.48x      1.02x    1276   0.88  0.88    1.06    5.61
+  pgtoken raw (raw24)               11.05   14.95   20.58     10.85       0.19     2%     nan     1546    1542    1.51x      1.03x    1281   0.88  0.88    0.58    5.72
+  pgtoken freq                      11.20   15.49   20.06     10.47       0.76     7%     nan      886     882    1.50x      1.01x    1244   0.88  0.88    1.06    5.62
+  oracle: IDs already in memory      9.53   13.02   18.30      9.07       0.46     5%     nan        0       0    1.73x      1.20x    1436   0.86  0.86    0.61    4.86
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 535/600 queries, median per-query speedup 1.50x [1.43, 1.55], ratio of p50s 1.42x
+  pgtoken freq vs bytea raw24: faster in 313/600 queries, median per-query speedup 1.01x [0.99, 1.04], ratio of p50s 1.01x
+  disk nvme0n1: 0 reads, 0 MB in 13 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 8.01 ms/0 reads, text_lz4 5.22 ms/0 reads, text_lz4_batch 4.67 ms/0 reads, text_lz4_forced 5.04 ms/0 reads, int4_array 4.93 ms/0 reads, bytea_raw24 5.13 ms/0 reads, bytea_freq 5.21 ms/0 reads, pgtoken_raw 5.22 ms/0 reads, pgtoken_freq 5.07 ms/0 reads, oracle_mem 4.38 ms/0 reads
+
+== k=10, clients=1: 600 queries per arm, blocks of 10, sweep on, warm
+    block 1/60 (client 0, 100 queries): e2e p50 ms  text_pglz 6.02  text_lz4 5.78  text_lz4_batch 5.88  text_lz4_forced 5.77  int4_array 5.52  bytea_raw24 5.47  bytea_freq 5.46  pgtoken_raw 5.34  pgtoken_freq 5.41  oracle_mem 5.24
+    block 2/60 (client 0, 200 queries): e2e p50 ms  text_pglz 6.07  text_lz4 6.14  text_lz4_batch 6.08  text_lz4_forced 6.06  int4_array 5.88  bytea_raw24 5.71  bytea_freq 5.66  pgtoken_raw 5.55  pgtoken_freq 5.71  oracle_mem 5.53
+    block 3/60 (client 0, 300 queries): e2e p50 ms  text_pglz 6.05  text_lz4 6.02  text_lz4_batch 5.98  text_lz4_forced 5.95  int4_array 5.74  bytea_raw24 5.55  bytea_freq 5.50  pgtoken_raw 5.42  pgtoken_freq 5.58  oracle_mem 5.41
+    block 4/60 (client 0, 400 queries): e2e p50 ms  text_pglz 6.05  text_lz4 6.07  text_lz4_batch 6.07  text_lz4_forced 6.09  int4_array 5.87  bytea_raw24 5.51  bytea_freq 5.51  pgtoken_raw 5.45  pgtoken_freq 5.65  oracle_mem 5.43
+    block 5/60 (client 0, 500 queries): e2e p50 ms  text_pglz 6.07  text_lz4 6.10  text_lz4_batch 6.09  text_lz4_forced 6.07  int4_array 5.88  bytea_raw24 5.51  bytea_freq 5.53  pgtoken_raw 5.46  pgtoken_freq 5.65  oracle_mem 5.46
+    block 6/60 (client 0, 600 queries): e2e p50 ms  text_pglz 6.15  text_lz4 6.07  text_lz4_batch 6.06  text_lz4_forced 6.01  int4_array 5.85  bytea_raw24 5.63  bytea_freq 5.68  pgtoken_raw 5.46  pgtoken_freq 5.65  oracle_mem 5.43
+    block 7/60 (client 0, 700 queries): e2e p50 ms  text_pglz 6.14  text_lz4 6.02  text_lz4_batch 6.03  text_lz4_forced 5.93  int4_array 5.80  bytea_raw24 5.60  bytea_freq 5.54  pgtoken_raw 5.45  pgtoken_freq 5.56  oracle_mem 5.42
+    block 8/60 (client 0, 800 queries): e2e p50 ms  text_pglz 6.13  text_lz4 5.97  text_lz4_batch 5.98  text_lz4_forced 5.88  int4_array 5.72  bytea_raw24 5.54  bytea_freq 5.51  pgtoken_raw 5.44  pgtoken_freq 5.54  oracle_mem 5.39
+    block 9/60 (client 0, 900 queries): e2e p50 ms  text_pglz 6.14  text_lz4 6.01  text_lz4_batch 5.99  text_lz4_forced 5.93  int4_array 5.82  bytea_raw24 5.57  bytea_freq 5.53  pgtoken_raw 5.45  pgtoken_freq 5.56  oracle_mem 5.42
+    block 10/60 (client 0, 1000 queries): e2e p50 ms  text_pglz 6.14  text_lz4 5.99  text_lz4_batch 5.99  text_lz4_forced 5.93  int4_array 5.82  bytea_raw24 5.54  bytea_freq 5.52  pgtoken_raw 5.45  pgtoken_freq 5.56  oracle_mem 5.43
+    block 11/60 (client 0, 1100 queries): e2e p50 ms  text_pglz 6.14  text_lz4 5.99  text_lz4_batch 5.99  text_lz4_forced 5.93  int4_array 5.82  bytea_raw24 5.53  bytea_freq 5.52  pgtoken_raw 5.45  pgtoken_freq 5.56  oracle_mem 5.43
+    block 12/60 (client 0, 1200 queries): e2e p50 ms  text_pglz 6.14  text_lz4 6.01  text_lz4_batch 5.99  text_lz4_forced 5.94  int4_array 5.82  bytea_raw24 5.54  bytea_freq 5.53  pgtoken_raw 5.46  pgtoken_freq 5.57  oracle_mem 5.43
+    block 13/60 (client 0, 1300 queries): e2e p50 ms  text_pglz 6.08  text_lz4 5.96  text_lz4_batch 5.97  text_lz4_forced 5.92  int4_array 5.76  bytea_raw24 5.50  bytea_freq 5.50  pgtoken_raw 5.44  pgtoken_freq 5.54  oracle_mem 5.39
+    block 14/60 (client 0, 1400 queries): e2e p50 ms  text_pglz 6.06  text_lz4 5.96  text_lz4_batch 5.97  text_lz4_forced 5.92  int4_array 5.74  bytea_raw24 5.50  bytea_freq 5.50  pgtoken_raw 5.43  pgtoken_freq 5.54  oracle_mem 5.39
+    block 15/60 (client 0, 1500 queries): e2e p50 ms  text_pglz 6.08  text_lz4 5.96  text_lz4_batch 5.97  text_lz4_forced 5.92  int4_array 5.74  bytea_raw24 5.50  bytea_freq 5.50  pgtoken_raw 5.43  pgtoken_freq 5.54  oracle_mem 5.39
+    block 16/60 (client 0, 1600 queries): e2e p50 ms  text_pglz 6.09  text_lz4 5.96  text_lz4_batch 5.98  text_lz4_forced 5.92  int4_array 5.74  bytea_raw24 5.52  bytea_freq 5.50  pgtoken_raw 5.44  pgtoken_freq 5.55  oracle_mem 5.40
+    block 17/60 (client 0, 1700 queries): e2e p50 ms  text_pglz 6.08  text_lz4 5.94  text_lz4_batch 5.95  text_lz4_forced 5.91  int4_array 5.72  bytea_raw24 5.49  bytea_freq 5.50  pgtoken_raw 5.43  pgtoken_freq 5.54  oracle_mem 5.39
+    block 18/60 (client 0, 1800 queries): e2e p50 ms  text_pglz 6.06  text_lz4 5.93  text_lz4_batch 5.94  text_lz4_forced 5.89  int4_array 5.70  bytea_raw24 5.46  bytea_freq 5.48  pgtoken_raw 5.43  pgtoken_freq 5.53  oracle_mem 5.38
+    block 19/60 (client 0, 1900 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.89  text_lz4_batch 5.92  text_lz4_forced 5.88  int4_array 5.67  bytea_raw24 5.44  bytea_freq 5.46  pgtoken_raw 5.41  pgtoken_freq 5.50  oracle_mem 5.33
+    block 20/60 (client 0, 2000 queries): e2e p50 ms  text_pglz 6.04  text_lz4 5.87  text_lz4_batch 5.88  text_lz4_forced 5.87  int4_array 5.61  bytea_raw24 5.38  bytea_freq 5.44  pgtoken_raw 5.38  pgtoken_freq 5.47  oracle_mem 5.31
+    block 21/60 (client 0, 2100 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.88  text_lz4_batch 5.88  text_lz4_forced 5.88  int4_array 5.61  bytea_raw24 5.39  bytea_freq 5.45  pgtoken_raw 5.39  pgtoken_freq 5.50  oracle_mem 5.32
+    block 22/60 (client 0, 2200 queries): e2e p50 ms  text_pglz 6.04  text_lz4 5.88  text_lz4_batch 5.88  text_lz4_forced 5.88  int4_array 5.61  bytea_raw24 5.39  bytea_freq 5.45  pgtoken_raw 5.39  pgtoken_freq 5.50  oracle_mem 5.32
+    block 23/60 (client 0, 2300 queries): e2e p50 ms  text_pglz 6.04  text_lz4 5.88  text_lz4_batch 5.90  text_lz4_forced 5.88  int4_array 5.61  bytea_raw24 5.40  bytea_freq 5.45  pgtoken_raw 5.39  pgtoken_freq 5.50  oracle_mem 5.32
+    block 24/60 (client 0, 2400 queries): e2e p50 ms  text_pglz 6.03  text_lz4 5.88  text_lz4_batch 5.88  text_lz4_forced 5.89  int4_array 5.64  bytea_raw24 5.42  bytea_freq 5.45  pgtoken_raw 5.38  pgtoken_freq 5.50  oracle_mem 5.32
+    block 25/60 (client 0, 2500 queries): e2e p50 ms  text_pglz 6.04  text_lz4 5.89  text_lz4_batch 5.91  text_lz4_forced 5.89  int4_array 5.65  bytea_raw24 5.44  bytea_freq 5.47  pgtoken_raw 5.41  pgtoken_freq 5.50  oracle_mem 5.34
+    block 26/60 (client 0, 2600 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.90  text_lz4_batch 5.91  text_lz4_forced 5.90  int4_array 5.66  bytea_raw24 5.47  bytea_freq 5.48  pgtoken_raw 5.41  pgtoken_freq 5.51  oracle_mem 5.36
+    block 27/60 (client 0, 2700 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.90  text_lz4_batch 5.93  text_lz4_forced 5.90  int4_array 5.66  bytea_raw24 5.47  bytea_freq 5.48  pgtoken_raw 5.41  pgtoken_freq 5.51  oracle_mem 5.36
+    block 28/60 (client 0, 2800 queries): e2e p50 ms  text_pglz 6.06  text_lz4 5.90  text_lz4_batch 5.94  text_lz4_forced 5.91  int4_array 5.67  bytea_raw24 5.48  bytea_freq 5.48  pgtoken_raw 5.42  pgtoken_freq 5.51  oracle_mem 5.36
+    block 29/60 (client 0, 2900 queries): e2e p50 ms  text_pglz 6.06  text_lz4 5.90  text_lz4_batch 5.93  text_lz4_forced 5.90  int4_array 5.66  bytea_raw24 5.49  bytea_freq 5.48  pgtoken_raw 5.41  pgtoken_freq 5.53  oracle_mem 5.37
+    block 30/60 (client 0, 3000 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.90  text_lz4_batch 5.91  text_lz4_forced 5.89  int4_array 5.65  bytea_raw24 5.47  bytea_freq 5.48  pgtoken_raw 5.41  pgtoken_freq 5.51  oracle_mem 5.37
+    block 31/60 (client 0, 3100 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.89  text_lz4_batch 5.91  text_lz4_forced 5.89  int4_array 5.65  bytea_raw24 5.46  bytea_freq 5.48  pgtoken_raw 5.41  pgtoken_freq 5.51  oracle_mem 5.36
+    block 32/60 (client 0, 3200 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.90  text_lz4_batch 5.91  text_lz4_forced 5.89  int4_array 5.64  bytea_raw24 5.45  bytea_freq 5.47  pgtoken_raw 5.40  pgtoken_freq 5.50  oracle_mem 5.36
+    block 33/60 (client 0, 3300 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.90  text_lz4_batch 5.90  text_lz4_forced 5.88  int4_array 5.62  bytea_raw24 5.44  bytea_freq 5.45  pgtoken_raw 5.40  pgtoken_freq 5.51  oracle_mem 5.36
+    block 34/60 (client 0, 3400 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.90  text_lz4_batch 5.90  text_lz4_forced 5.88  int4_array 5.62  bytea_raw24 5.44  bytea_freq 5.45  pgtoken_raw 5.40  pgtoken_freq 5.51  oracle_mem 5.36
+    block 35/60 (client 0, 3500 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.90  text_lz4_batch 5.90  text_lz4_forced 5.88  int4_array 5.62  bytea_raw24 5.45  bytea_freq 5.45  pgtoken_raw 5.40  pgtoken_freq 5.51  oracle_mem 5.36
+    block 36/60 (client 0, 3600 queries): e2e p50 ms  text_pglz 6.05  text_lz4 5.90  text_lz4_batch 5.90  text_lz4_forced 5.88  int4_array 5.61  bytea_raw24 5.44  bytea_freq 5.45  pgtoken_raw 5.39  pgtoken_freq 5.50  oracle_mem 5.34
+    block 37/60 (client 0, 3700 queries): e2e p50 ms  text_pglz 6.04  text_lz4 5.88  text_lz4_batch 5.88  text_lz4_forced 5.87  int4_array 5.61  bytea_raw24 5.44  bytea_freq 5.44  pgtoken_raw 5.36  pgtoken_freq 5.49  oracle_mem 5.32
+    block 38/60 (client 0, 3800 queries): e2e p50 ms  text_pglz 6.04  text_lz4 5.88  text_lz4_batch 5.88  text_lz4_forced 5.87  int4_array 5.61  bytea_raw24 5.44  bytea_freq 5.43  pgtoken_raw 5.36  pgtoken_freq 5.49  oracle_mem 5.32
+    block 39/60 (client 0, 3900 queries): e2e p50 ms  text_pglz 6.04  text_lz4 5.87  text_lz4_batch 5.87  text_lz4_forced 5.86  int4_array 5.60  bytea_raw24 5.42  bytea_freq 5.41  pgtoken_raw 5.34  pgtoken_freq 5.48  oracle_mem 5.31
+    block 40/60 (client 0, 4000 queries): e2e p50 ms  text_pglz 6.03  text_lz4 5.87  text_lz4_batch 5.86  text_lz4_forced 5.86  int4_array 5.59  bytea_raw24 5.40  bytea_freq 5.40  pgtoken_raw 5.33  pgtoken_freq 5.46  oracle_mem 5.30
+    block 41/60 (client 0, 4100 queries): e2e p50 ms  text_pglz 6.02  text_lz4 5.87  text_lz4_batch 5.86  text_lz4_forced 5.86  int4_array 5.59  bytea_raw24 5.39  bytea_freq 5.40  pgtoken_raw 5.33  pgtoken_freq 5.44  oracle_mem 5.29
+    block 42/60 (client 0, 4200 queries): e2e p50 ms  text_pglz 6.02  text_lz4 5.87  text_lz4_batch 5.85  text_lz4_forced 5.85  int4_array 5.58  bytea_raw24 5.38  bytea_freq 5.39  pgtoken_raw 5.32  pgtoken_freq 5.43  oracle_mem 5.28
+    block 43/60 (client 0, 4300 queries): e2e p50 ms  text_pglz 6.02  text_lz4 5.87  text_lz4_batch 5.85  text_lz4_forced 5.85  int4_array 5.58  bytea_raw24 5.38  bytea_freq 5.39  pgtoken_raw 5.32  pgtoken_freq 5.43  oracle_mem 5.28
+    block 44/60 (client 0, 4400 queries): e2e p50 ms  text_pglz 6.01  text_lz4 5.86  text_lz4_batch 5.84  text_lz4_forced 5.85  int4_array 5.58  bytea_raw24 5.37  bytea_freq 5.38  pgtoken_raw 5.31  pgtoken_freq 5.43  oracle_mem 5.27
+    block 45/60 (client 0, 4500 queries): e2e p50 ms  text_pglz 6.01  text_lz4 5.85  text_lz4_batch 5.84  text_lz4_forced 5.85  int4_array 5.57  bytea_raw24 5.36  bytea_freq 5.38  pgtoken_raw 5.31  pgtoken_freq 5.43  oracle_mem 5.27
+    block 46/60 (client 0, 4600 queries): e2e p50 ms  text_pglz 6.00  text_lz4 5.85  text_lz4_batch 5.84  text_lz4_forced 5.84  int4_array 5.56  bytea_raw24 5.36  bytea_freq 5.38  pgtoken_raw 5.30  pgtoken_freq 5.42  oracle_mem 5.27
+    block 47/60 (client 0, 4700 queries): e2e p50 ms  text_pglz 6.00  text_lz4 5.84  text_lz4_batch 5.83  text_lz4_forced 5.84  int4_array 5.56  bytea_raw24 5.36  bytea_freq 5.38  pgtoken_raw 5.29  pgtoken_freq 5.40  oracle_mem 5.27
+    block 48/60 (client 0, 4800 queries): e2e p50 ms  text_pglz 6.00  text_lz4 5.84  text_lz4_batch 5.83  text_lz4_forced 5.85  int4_array 5.57  bytea_raw24 5.37  bytea_freq 5.38  pgtoken_raw 5.30  pgtoken_freq 5.40  oracle_mem 5.27
+    block 49/60 (client 0, 4900 queries): e2e p50 ms  text_pglz 6.00  text_lz4 5.83  text_lz4_batch 5.83  text_lz4_forced 5.84  int4_array 5.56  bytea_raw24 5.36  bytea_freq 5.37  pgtoken_raw 5.29  pgtoken_freq 5.40  oracle_mem 5.27
+    block 50/60 (client 0, 5000 queries): e2e p50 ms  text_pglz 6.00  text_lz4 5.82  text_lz4_batch 5.83  text_lz4_forced 5.84  int4_array 5.56  bytea_raw24 5.36  bytea_freq 5.36  pgtoken_raw 5.28  pgtoken_freq 5.39  oracle_mem 5.27
+    block 51/60 (client 0, 5100 queries): e2e p50 ms  text_pglz 6.00  text_lz4 5.82  text_lz4_batch 5.83  text_lz4_forced 5.83  int4_array 5.56  bytea_raw24 5.36  bytea_freq 5.36  pgtoken_raw 5.28  pgtoken_freq 5.39  oracle_mem 5.26
+    block 52/60 (client 0, 5200 queries): e2e p50 ms  text_pglz 5.99  text_lz4 5.83  text_lz4_batch 5.83  text_lz4_forced 5.83  int4_array 5.56  bytea_raw24 5.36  bytea_freq 5.35  pgtoken_raw 5.27  pgtoken_freq 5.38  oracle_mem 5.26
+    block 53/60 (client 0, 5300 queries): e2e p50 ms  text_pglz 5.96  text_lz4 5.82  text_lz4_batch 5.82  text_lz4_forced 5.83  int4_array 5.55  bytea_raw24 5.35  bytea_freq 5.34  pgtoken_raw 5.26  pgtoken_freq 5.37  oracle_mem 5.25
+    block 54/60 (client 0, 5400 queries): e2e p50 ms  text_pglz 5.96  text_lz4 5.82  text_lz4_batch 5.80  text_lz4_forced 5.83  int4_array 5.54  bytea_raw24 5.34  bytea_freq 5.33  pgtoken_raw 5.26  pgtoken_freq 5.37  oracle_mem 5.23
+    block 55/60 (client 0, 5500 queries): e2e p50 ms  text_pglz 5.96  text_lz4 5.82  text_lz4_batch 5.80  text_lz4_forced 5.83  int4_array 5.54  bytea_raw24 5.34  bytea_freq 5.33  pgtoken_raw 5.26  pgtoken_freq 5.37  oracle_mem 5.22
+    block 56/60 (client 0, 5600 queries): e2e p50 ms  text_pglz 5.96  text_lz4 5.82  text_lz4_batch 5.80  text_lz4_forced 5.81  int4_array 5.53  bytea_raw24 5.34  bytea_freq 5.32  pgtoken_raw 5.26  pgtoken_freq 5.37  oracle_mem 5.22
+    block 57/60 (client 0, 5700 queries): e2e p50 ms  text_pglz 5.96  text_lz4 5.82  text_lz4_batch 5.80  text_lz4_forced 5.81  int4_array 5.53  bytea_raw24 5.34  bytea_freq 5.32  pgtoken_raw 5.26  pgtoken_freq 5.37  oracle_mem 5.22
+    block 58/60 (client 0, 5800 queries): e2e p50 ms  text_pglz 5.96  text_lz4 5.82  text_lz4_batch 5.80  text_lz4_forced 5.81  int4_array 5.53  bytea_raw24 5.34  bytea_freq 5.32  pgtoken_raw 5.26  pgtoken_freq 5.37  oracle_mem 5.22
+    block 59/60 (client 0, 5900 queries): e2e p50 ms  text_pglz 5.95  text_lz4 5.80  text_lz4_batch 5.79  text_lz4_forced 5.80  int4_array 5.52  bytea_raw24 5.32  bytea_freq 5.31  pgtoken_raw 5.25  pgtoken_freq 5.36  oracle_mem 5.20
+    block 60/60 (client 0, 6000 queries): e2e p50 ms  text_pglz 5.95  text_lz4 5.79  text_lz4_batch 5.79  text_lz4_forced 5.80  int4_array 5.51  bytea_raw24 5.32  bytea_freq 5.31  pgtoken_raw 5.24  pgtoken_freq 5.35  oracle_mem 5.20
+
+k=10, 1 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep on, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        5.95    6.83    7.45      5.30       0.68    11%    4.73     1891    2445    0.97x      0.90x      73   0.44  0.44    0.86    5.10
+  text (lz4)                         5.79    6.61    7.29      5.26       0.50     9%    4.72     1877    2445    1.00x      0.92x      74   0.43  0.43    0.68    5.07
+  text (lz4), batch tokenize         5.79    6.66    7.24      5.25       0.54     9%    4.72     1877    2445    1.00x      0.92x      73   0.43  0.43    1.16    5.03
+  text (lz4, forced)                 5.80    6.67    7.23      5.24       0.50     9%    4.74     1877    2445    1.00x      0.92x      73   0.43  0.43    0.69    5.06
+  int4[]                             5.51    6.40    7.10      5.47       0.04     1%    4.68     1398    4116    1.05x      0.97x      75   0.42  0.42    0.24    5.24
+  bytea raw24                        5.32    6.22    6.83      5.21       0.11     2%    4.70     1540    1536    1.09x      1.00x      76   0.41  0.41    0.27    5.01
+  bytea freq (client codec, no ext.)     5.31    6.22    6.77      5.22       0.09     2%    4.67      886     882    1.09x      1.00x      77   0.41  0.41    0.24    5.01
+  pgtoken raw (raw24)                5.24    6.14    6.71      5.22       0.03     1%    4.65     1546    1542    1.10x      1.02x      77   0.41  0.41    0.19    5.01
+  pgtoken freq                       5.35    6.20    6.80      5.25       0.09     2%    4.69      886     882    1.08x      1.00x      76   0.41  0.41    0.25    5.04
+  oracle: IDs already in memory      5.20    6.09    6.68      5.14       0.06     1%    4.68        0       0    1.11x      1.03x      78   0.41  0.41    0.19    4.92
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 596/600 queries, median per-query speedup 1.08x [1.08, 1.09], ratio of p50s 1.08x
+  pgtoken freq vs bytea raw24: faster in 292/600 queries, median per-query speedup 1.00x [1.00, 1.00], ratio of p50s 0.99x
+  disk nvme0n1: 0 reads, 0 MB in 111 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.23 ms/0 reads, text_lz4 4.54 ms/0 reads, text_lz4_batch 4.28 ms/0 reads, text_lz4_forced 4.23 ms/0 reads, int4_array 4.26 ms/0 reads, bytea_raw24 4.20 ms/0 reads, bytea_freq 4.11 ms/0 reads, pgtoken_raw 4.25 ms/0 reads, pgtoken_freq 4.42 ms/0 reads, oracle_mem 4.18 ms/0 reads
+
+== k=10, clients=1: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/60 (client 0, 100 queries): e2e p50 ms  text_pglz 5.36  text_lz4 4.88  text_lz4_batch 4.82  text_lz4_forced 4.57  int4_array 4.54  bytea_raw24 4.44  bytea_freq 4.15  pgtoken_raw 3.95  pgtoken_freq 4.08  oracle_mem 4.06
+    block 2/60 (client 0, 200 queries): e2e p50 ms  text_pglz 5.21  text_lz4 5.39  text_lz4_batch 5.07  text_lz4_forced 4.85  int4_array 4.74  bytea_raw24 4.49  bytea_freq 4.44  pgtoken_raw 4.25  pgtoken_freq 4.28  oracle_mem 4.23
+    block 3/60 (client 0, 300 queries): e2e p50 ms  text_pglz 5.00  text_lz4 5.05  text_lz4_batch 5.14  text_lz4_forced 4.85  int4_array 4.73  bytea_raw24 4.30  bytea_freq 4.15  pgtoken_raw 4.11  pgtoken_freq 4.27  oracle_mem 4.08
+    block 4/60 (client 0, 400 queries): e2e p50 ms  text_pglz 4.99  text_lz4 4.91  text_lz4_batch 5.14  text_lz4_forced 5.01  int4_array 4.73  bytea_raw24 4.37  bytea_freq 4.29  pgtoken_raw 4.25  pgtoken_freq 4.27  oracle_mem 4.13
+    block 5/60 (client 0, 500 queries): e2e p50 ms  text_pglz 5.00  text_lz4 4.92  text_lz4_batch 5.11  text_lz4_forced 5.03  int4_array 4.80  bytea_raw24 4.42  bytea_freq 4.40  pgtoken_raw 4.37  pgtoken_freq 4.30  oracle_mem 4.19
+    block 6/60 (client 0, 600 queries): e2e p50 ms  text_pglz 4.99  text_lz4 4.95  text_lz4_batch 5.12  text_lz4_forced 4.93  int4_array 4.80  bytea_raw24 4.54  bytea_freq 4.44  pgtoken_raw 4.39  pgtoken_freq 4.30  oracle_mem 4.22
+    block 7/60 (client 0, 700 queries): e2e p50 ms  text_pglz 4.96  text_lz4 4.89  text_lz4_batch 4.99  text_lz4_forced 4.88  int4_array 4.74  bytea_raw24 4.48  bytea_freq 4.49  pgtoken_raw 4.37  pgtoken_freq 4.27  oracle_mem 4.17
+    block 8/60 (client 0, 800 queries): e2e p50 ms  text_pglz 4.99  text_lz4 4.94  text_lz4_batch 4.98  text_lz4_forced 4.82  int4_array 4.72  bytea_raw24 4.42  bytea_freq 4.44  pgtoken_raw 4.42  pgtoken_freq 4.27  oracle_mem 4.17
+    block 9/60 (client 0, 900 queries): e2e p50 ms  text_pglz 5.00  text_lz4 4.98  text_lz4_batch 4.99  text_lz4_forced 4.85  int4_array 4.74  bytea_raw24 4.47  bytea_freq 4.44  pgtoken_raw 4.43  pgtoken_freq 4.32  oracle_mem 4.23
+    block 10/60 (client 0, 1000 queries): e2e p50 ms  text_pglz 5.00  text_lz4 4.95  text_lz4_batch 4.98  text_lz4_forced 4.82  int4_array 4.70  bytea_raw24 4.44  bytea_freq 4.42  pgtoken_raw 4.41  pgtoken_freq 4.30  oracle_mem 4.28
+    block 11/60 (client 0, 1100 queries): e2e p50 ms  text_pglz 5.03  text_lz4 4.94  text_lz4_batch 4.97  text_lz4_forced 4.80  int4_array 4.69  bytea_raw24 4.43  bytea_freq 4.40  pgtoken_raw 4.37  pgtoken_freq 4.31  oracle_mem 4.28
+    block 12/60 (client 0, 1200 queries): e2e p50 ms  text_pglz 5.00  text_lz4 4.97  text_lz4_batch 4.98  text_lz4_forced 4.81  int4_array 4.65  bytea_raw24 4.44  bytea_freq 4.38  pgtoken_raw 4.34  pgtoken_freq 4.28  oracle_mem 4.25
+    block 13/60 (client 0, 1300 queries): e2e p50 ms  text_pglz 4.97  text_lz4 4.93  text_lz4_batch 4.98  text_lz4_forced 4.80  int4_array 4.61  bytea_raw24 4.36  bytea_freq 4.29  pgtoken_raw 4.28  pgtoken_freq 4.26  oracle_mem 4.20
+    block 14/60 (client 0, 1400 queries): e2e p50 ms  text_pglz 4.96  text_lz4 4.93  text_lz4_batch 4.98  text_lz4_forced 4.82  int4_array 4.61  bytea_raw24 4.35  bytea_freq 4.27  pgtoken_raw 4.27  pgtoken_freq 4.23  oracle_mem 4.18
+    block 15/60 (client 0, 1500 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.91  text_lz4_batch 4.98  text_lz4_forced 4.80  int4_array 4.62  bytea_raw24 4.35  bytea_freq 4.21  pgtoken_raw 4.28  pgtoken_freq 4.24  oracle_mem 4.16
+    block 16/60 (client 0, 1600 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.88  text_lz4_batch 4.97  text_lz4_forced 4.80  int4_array 4.61  bytea_raw24 4.36  bytea_freq 4.24  pgtoken_raw 4.27  pgtoken_freq 4.23  oracle_mem 4.16
+    block 17/60 (client 0, 1700 queries): e2e p50 ms  text_pglz 4.90  text_lz4 4.86  text_lz4_batch 4.95  text_lz4_forced 4.79  int4_array 4.60  bytea_raw24 4.35  bytea_freq 4.26  pgtoken_raw 4.27  pgtoken_freq 4.20  oracle_mem 4.12
+    block 18/60 (client 0, 1800 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.85  text_lz4_batch 4.93  text_lz4_forced 4.78  int4_array 4.59  bytea_raw24 4.34  bytea_freq 4.30  pgtoken_raw 4.28  pgtoken_freq 4.22  oracle_mem 4.16
+    block 19/60 (client 0, 1900 queries): e2e p50 ms  text_pglz 4.91  text_lz4 4.83  text_lz4_batch 4.91  text_lz4_forced 4.78  int4_array 4.59  bytea_raw24 4.35  bytea_freq 4.34  pgtoken_raw 4.28  pgtoken_freq 4.25  oracle_mem 4.15
+    block 20/60 (client 0, 2000 queries): e2e p50 ms  text_pglz 4.91  text_lz4 4.82  text_lz4_batch 4.88  text_lz4_forced 4.77  int4_array 4.57  bytea_raw24 4.33  bytea_freq 4.29  pgtoken_raw 4.26  pgtoken_freq 4.24  oracle_mem 4.16
+    block 21/60 (client 0, 2100 queries): e2e p50 ms  text_pglz 4.93  text_lz4 4.84  text_lz4_batch 4.91  text_lz4_forced 4.77  int4_array 4.58  bytea_raw24 4.34  bytea_freq 4.34  pgtoken_raw 4.27  pgtoken_freq 4.24  oracle_mem 4.16
+    block 22/60 (client 0, 2200 queries): e2e p50 ms  text_pglz 4.93  text_lz4 4.88  text_lz4_batch 4.88  text_lz4_forced 4.76  int4_array 4.57  bytea_raw24 4.34  bytea_freq 4.34  pgtoken_raw 4.24  pgtoken_freq 4.24  oracle_mem 4.15
+    block 23/60 (client 0, 2300 queries): e2e p50 ms  text_pglz 4.93  text_lz4 4.86  text_lz4_batch 4.91  text_lz4_forced 4.77  int4_array 4.56  bytea_raw24 4.31  bytea_freq 4.32  pgtoken_raw 4.23  pgtoken_freq 4.23  oracle_mem 4.16
+    block 24/60 (client 0, 2400 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.85  text_lz4_batch 4.91  text_lz4_forced 4.78  int4_array 4.57  bytea_raw24 4.28  bytea_freq 4.31  pgtoken_raw 4.23  pgtoken_freq 4.23  oracle_mem 4.15
+    block 25/60 (client 0, 2500 queries): e2e p50 ms  text_pglz 4.91  text_lz4 4.85  text_lz4_batch 4.92  text_lz4_forced 4.78  int4_array 4.58  bytea_raw24 4.33  bytea_freq 4.34  pgtoken_raw 4.24  pgtoken_freq 4.23  oracle_mem 4.16
+    block 26/60 (client 0, 2600 queries): e2e p50 ms  text_pglz 4.95  text_lz4 4.89  text_lz4_batch 4.93  text_lz4_forced 4.79  int4_array 4.58  bytea_raw24 4.35  bytea_freq 4.36  pgtoken_raw 4.27  pgtoken_freq 4.26  oracle_mem 4.17
+    block 27/60 (client 0, 2700 queries): e2e p50 ms  text_pglz 4.96  text_lz4 4.89  text_lz4_batch 4.94  text_lz4_forced 4.79  int4_array 4.58  bytea_raw24 4.35  bytea_freq 4.38  pgtoken_raw 4.29  pgtoken_freq 4.27  oracle_mem 4.19
+    block 28/60 (client 0, 2800 queries): e2e p50 ms  text_pglz 4.96  text_lz4 4.90  text_lz4_batch 4.94  text_lz4_forced 4.80  int4_array 4.59  bytea_raw24 4.36  bytea_freq 4.40  pgtoken_raw 4.35  pgtoken_freq 4.27  oracle_mem 4.21
+    block 29/60 (client 0, 2900 queries): e2e p50 ms  text_pglz 4.97  text_lz4 4.89  text_lz4_batch 4.94  text_lz4_forced 4.80  int4_array 4.60  bytea_raw24 4.35  bytea_freq 4.38  pgtoken_raw 4.35  pgtoken_freq 4.30  oracle_mem 4.22
+    block 30/60 (client 0, 3000 queries): e2e p50 ms  text_pglz 4.96  text_lz4 4.88  text_lz4_batch 4.93  text_lz4_forced 4.79  int4_array 4.60  bytea_raw24 4.35  bytea_freq 4.38  pgtoken_raw 4.35  pgtoken_freq 4.30  oracle_mem 4.23
+    block 31/60 (client 0, 3100 queries): e2e p50 ms  text_pglz 4.99  text_lz4 4.89  text_lz4_batch 4.94  text_lz4_forced 4.80  int4_array 4.60  bytea_raw24 4.35  bytea_freq 4.38  pgtoken_raw 4.35  pgtoken_freq 4.30  oracle_mem 4.23
+    block 32/60 (client 0, 3200 queries): e2e p50 ms  text_pglz 4.99  text_lz4 4.93  text_lz4_batch 4.95  text_lz4_forced 4.80  int4_array 4.61  bytea_raw24 4.36  bytea_freq 4.40  pgtoken_raw 4.35  pgtoken_freq 4.30  oracle_mem 4.24
+    block 33/60 (client 0, 3300 queries): e2e p50 ms  text_pglz 4.98  text_lz4 4.92  text_lz4_batch 4.95  text_lz4_forced 4.82  int4_array 4.63  bytea_raw24 4.38  bytea_freq 4.40  pgtoken_raw 4.38  pgtoken_freq 4.31  oracle_mem 4.24
+    block 34/60 (client 0, 3400 queries): e2e p50 ms  text_pglz 4.98  text_lz4 4.89  text_lz4_batch 4.95  text_lz4_forced 4.86  int4_array 4.61  bytea_raw24 4.37  bytea_freq 4.40  pgtoken_raw 4.36  pgtoken_freq 4.30  oracle_mem 4.23
+    block 35/60 (client 0, 3500 queries): e2e p50 ms  text_pglz 4.96  text_lz4 4.89  text_lz4_batch 4.94  text_lz4_forced 4.84  int4_array 4.62  bytea_raw24 4.37  bytea_freq 4.40  pgtoken_raw 4.35  pgtoken_freq 4.29  oracle_mem 4.22
+    block 36/60 (client 0, 3600 queries): e2e p50 ms  text_pglz 4.95  text_lz4 4.88  text_lz4_batch 4.94  text_lz4_forced 4.82  int4_array 4.61  bytea_raw24 4.40  bytea_freq 4.41  pgtoken_raw 4.35  pgtoken_freq 4.28  oracle_mem 4.22
+    block 37/60 (client 0, 3700 queries): e2e p50 ms  text_pglz 4.93  text_lz4 4.85  text_lz4_batch 4.93  text_lz4_forced 4.81  int4_array 4.59  bytea_raw24 4.37  bytea_freq 4.41  pgtoken_raw 4.33  pgtoken_freq 4.27  oracle_mem 4.19
+    block 38/60 (client 0, 3800 queries): e2e p50 ms  text_pglz 4.93  text_lz4 4.84  text_lz4_batch 4.93  text_lz4_forced 4.82  int4_array 4.60  bytea_raw24 4.37  bytea_freq 4.41  pgtoken_raw 4.34  pgtoken_freq 4.27  oracle_mem 4.18
+    block 39/60 (client 0, 3900 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.82  text_lz4_batch 4.91  text_lz4_forced 4.80  int4_array 4.59  bytea_raw24 4.35  bytea_freq 4.41  pgtoken_raw 4.30  pgtoken_freq 4.27  oracle_mem 4.18
+    block 40/60 (client 0, 4000 queries): e2e p50 ms  text_pglz 4.93  text_lz4 4.82  text_lz4_batch 4.91  text_lz4_forced 4.80  int4_array 4.58  bytea_raw24 4.35  bytea_freq 4.41  pgtoken_raw 4.30  pgtoken_freq 4.29  oracle_mem 4.19
+    block 41/60 (client 0, 4100 queries): e2e p50 ms  text_pglz 4.95  text_lz4 4.83  text_lz4_batch 4.91  text_lz4_forced 4.80  int4_array 4.59  bytea_raw24 4.36  bytea_freq 4.40  pgtoken_raw 4.29  pgtoken_freq 4.29  oracle_mem 4.19
+    block 42/60 (client 0, 4200 queries): e2e p50 ms  text_pglz 4.94  text_lz4 4.85  text_lz4_batch 4.92  text_lz4_forced 4.81  int4_array 4.59  bytea_raw24 4.36  bytea_freq 4.40  pgtoken_raw 4.29  pgtoken_freq 4.29  oracle_mem 4.18
+    block 43/60 (client 0, 4300 queries): e2e p50 ms  text_pglz 4.93  text_lz4 4.85  text_lz4_batch 4.93  text_lz4_forced 4.82  int4_array 4.58  bytea_raw24 4.35  bytea_freq 4.38  pgtoken_raw 4.28  pgtoken_freq 4.27  oracle_mem 4.18
+    block 44/60 (client 0, 4400 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.84  text_lz4_batch 4.92  text_lz4_forced 4.84  int4_array 4.58  bytea_raw24 4.35  bytea_freq 4.38  pgtoken_raw 4.28  pgtoken_freq 4.27  oracle_mem 4.17
+    block 45/60 (client 0, 4500 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.83  text_lz4_batch 4.91  text_lz4_forced 4.83  int4_array 4.59  bytea_raw24 4.35  bytea_freq 4.38  pgtoken_raw 4.28  pgtoken_freq 4.27  oracle_mem 4.17
+    block 46/60 (client 0, 4600 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.83  text_lz4_batch 4.91  text_lz4_forced 4.82  int4_array 4.58  bytea_raw24 4.35  bytea_freq 4.37  pgtoken_raw 4.28  pgtoken_freq 4.27  oracle_mem 4.16
+    block 47/60 (client 0, 4700 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.82  text_lz4_batch 4.88  text_lz4_forced 4.80  int4_array 4.57  bytea_raw24 4.35  bytea_freq 4.38  pgtoken_raw 4.27  pgtoken_freq 4.27  oracle_mem 4.16
+    block 48/60 (client 0, 4800 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.81  text_lz4_batch 4.88  text_lz4_forced 4.80  int4_array 4.57  bytea_raw24 4.35  bytea_freq 4.37  pgtoken_raw 4.28  pgtoken_freq 4.27  oracle_mem 4.16
+    block 49/60 (client 0, 4900 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.81  text_lz4_batch 4.88  text_lz4_forced 4.80  int4_array 4.56  bytea_raw24 4.34  bytea_freq 4.37  pgtoken_raw 4.28  pgtoken_freq 4.27  oracle_mem 4.16
+    block 50/60 (client 0, 5000 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.81  text_lz4_batch 4.87  text_lz4_forced 4.79  int4_array 4.55  bytea_raw24 4.33  bytea_freq 4.36  pgtoken_raw 4.27  pgtoken_freq 4.27  oracle_mem 4.17
+    block 51/60 (client 0, 5100 queries): e2e p50 ms  text_pglz 4.93  text_lz4 4.81  text_lz4_batch 4.87  text_lz4_forced 4.79  int4_array 4.55  bytea_raw24 4.34  bytea_freq 4.36  pgtoken_raw 4.27  pgtoken_freq 4.27  oracle_mem 4.16
+    block 52/60 (client 0, 5200 queries): e2e p50 ms  text_pglz 4.92  text_lz4 4.82  text_lz4_batch 4.87  text_lz4_forced 4.78  int4_array 4.56  bytea_raw24 4.33  bytea_freq 4.35  pgtoken_raw 4.28  pgtoken_freq 4.27  oracle_mem 4.16
+    block 53/60 (client 0, 5300 queries): e2e p50 ms  text_pglz 4.90  text_lz4 4.81  text_lz4_batch 4.88  text_lz4_forced 4.78  int4_array 4.54  bytea_raw24 4.33  bytea_freq 4.33  pgtoken_raw 4.27  pgtoken_freq 4.27  oracle_mem 4.14
+    block 54/60 (client 0, 5400 queries): e2e p50 ms  text_pglz 4.89  text_lz4 4.80  text_lz4_batch 4.88  text_lz4_forced 4.79  int4_array 4.54  bytea_raw24 4.31  bytea_freq 4.32  pgtoken_raw 4.25  pgtoken_freq 4.26  oracle_mem 4.13
+    block 55/60 (client 0, 5500 queries): e2e p50 ms  text_pglz 4.90  text_lz4 4.80  text_lz4_batch 4.87  text_lz4_forced 4.79  int4_array 4.54  bytea_raw24 4.31  bytea_freq 4.32  pgtoken_raw 4.25  pgtoken_freq 4.26  oracle_mem 4.13
+    block 56/60 (client 0, 5600 queries): e2e p50 ms  text_pglz 4.91  text_lz4 4.80  text_lz4_batch 4.86  text_lz4_forced 4.78  int4_array 4.54  bytea_raw24 4.33  bytea_freq 4.32  pgtoken_raw 4.26  pgtoken_freq 4.27  oracle_mem 4.13
+    block 57/60 (client 0, 5700 queries): e2e p50 ms  text_pglz 4.91  text_lz4 4.80  text_lz4_batch 4.86  text_lz4_forced 4.78  int4_array 4.53  bytea_raw24 4.33  bytea_freq 4.32  pgtoken_raw 4.26  pgtoken_freq 4.27  oracle_mem 4.14
+    block 58/60 (client 0, 5800 queries): e2e p50 ms  text_pglz 4.91  text_lz4 4.80  text_lz4_batch 4.85  text_lz4_forced 4.78  int4_array 4.53  bytea_raw24 4.32  bytea_freq 4.32  pgtoken_raw 4.27  pgtoken_freq 4.27  oracle_mem 4.13
+    block 59/60 (client 0, 5900 queries): e2e p50 ms  text_pglz 4.90  text_lz4 4.79  text_lz4_batch 4.85  text_lz4_forced 4.78  int4_array 4.52  bytea_raw24 4.31  bytea_freq 4.30  pgtoken_raw 4.26  pgtoken_freq 4.27  oracle_mem 4.13
+    block 60/60 (client 0, 6000 queries): e2e p50 ms  text_pglz 4.90  text_lz4 4.79  text_lz4_batch 4.85  text_lz4_forced 4.78  int4_array 4.51  bytea_raw24 4.31  bytea_freq 4.30  pgtoken_raw 4.25  pgtoken_freq 4.27  oracle_mem 4.14
+
+k=10, 1 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        4.90    5.80    6.58      4.26       0.62    12%    3.86     1891    2445    0.96x      0.89x     111   0.55  0.55    0.78    4.13
+  text (lz4)                         4.79    5.67    6.38      4.31       0.47    10%    3.91     1877    2445    1.00x      0.89x     112   0.54  0.54    0.62    4.16
+  text (lz4), batch tokenize         4.85    5.61    6.28      4.33       0.50    10%    3.95     1877    2445    1.01x      0.90x     112   0.54  0.54    1.03    4.16
+  text (lz4, forced)                 4.78    5.66    6.32      4.30       0.46    10%    3.93     1877    2445    1.01x      0.90x     112   0.54  0.54    0.61    4.14
+  int4[]                             4.51    5.29    6.00      4.48       0.03     1%    3.88     1398    4116    1.07x      0.95x     117   0.53  0.53    0.20    4.29
+  bytea raw24                        4.31    5.14    5.86      4.21       0.09     2%    3.85     1540    1536    1.12x      1.00x     119   0.52  0.52    0.22    4.07
+  bytea freq (client codec, no ext.)     4.30    5.10    5.83      4.21       0.08     2%    3.84      886     882    1.12x      1.02x     120   0.52  0.52    0.21    4.06
+  pgtoken raw (raw24)                4.25    5.04    5.76      4.22       0.03     1%    3.83     1546    1542    1.13x      1.02x     121   0.52  0.52    0.15    4.07
+  pgtoken freq                       4.27    5.10    5.74      4.18       0.08     2%    3.82      886     882    1.13x      1.02x     121   0.52  0.52    0.20    4.03
+  oracle: IDs already in memory      4.14    5.03    5.65      4.08       0.05     1%    3.80        0       0    1.16x      1.06x     123   0.52  0.52    0.15    3.96
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 531/600 queries, median per-query speedup 1.13x [1.12, 1.14], ratio of p50s 1.12x
+  pgtoken freq vs bytea raw24: faster in 383/600 queries, median per-query speedup 1.02x [1.01, 1.03], ratio of p50s 1.01x
+  disk nvme0n1: 0 reads, 0 MB in 72 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.22 ms/0 reads, text_lz4 4.52 ms/0 reads, text_lz4_batch 4.42 ms/0 reads, text_lz4_forced 4.45 ms/0 reads, int4_array 4.38 ms/0 reads, bytea_raw24 4.46 ms/0 reads, bytea_freq 4.54 ms/0 reads, pgtoken_raw 4.49 ms/0 reads, pgtoken_freq 4.28 ms/0 reads, oracle_mem 4.12 ms/0 reads
+
+== k=10, clients=4: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/15 (client 0, 100 queries): e2e p50 ms  text_pglz 6.41  text_lz4 5.55  text_lz4_batch 5.63  text_lz4_forced 5.39  int4_array 5.12  bytea_raw24 4.75  bytea_freq 4.74  pgtoken_raw 4.65  pgtoken_freq 4.86  oracle_mem 4.65
+    block 2/15 (client 0, 200 queries): e2e p50 ms  text_pglz 5.52  text_lz4 5.76  text_lz4_batch 5.46  text_lz4_forced 5.26  int4_array 4.87  bytea_raw24 4.64  bytea_freq 4.61  pgtoken_raw 4.55  pgtoken_freq 4.66  oracle_mem 4.48
+    block 3/15 (client 0, 300 queries): e2e p50 ms  text_pglz 5.32  text_lz4 5.34  text_lz4_batch 5.47  text_lz4_forced 5.24  int4_array 4.93  bytea_raw24 4.70  bytea_freq 4.69  pgtoken_raw 4.55  pgtoken_freq 4.68  oracle_mem 4.48
+    block 4/15 (client 0, 400 queries): e2e p50 ms  text_pglz 5.29  text_lz4 5.26  text_lz4_batch 5.39  text_lz4_forced 5.43  int4_array 5.04  bytea_raw24 4.74  bytea_freq 4.86  pgtoken_raw 4.63  pgtoken_freq 4.74  oracle_mem 4.58
+    block 5/15 (client 0, 500 queries): e2e p50 ms  text_pglz 5.35  text_lz4 5.16  text_lz4_batch 5.19  text_lz4_forced 5.29  int4_array 5.01  bytea_raw24 4.71  bytea_freq 4.68  pgtoken_raw 4.57  pgtoken_freq 4.72  oracle_mem 4.48
+    block 6/15 (client 0, 600 queries): e2e p50 ms  text_pglz 5.36  text_lz4 5.12  text_lz4_batch 5.15  text_lz4_forced 5.18  int4_array 4.95  bytea_raw24 4.76  bytea_freq 4.69  pgtoken_raw 4.58  pgtoken_freq 4.72  oracle_mem 4.49
+    block 7/15 (client 0, 700 queries): e2e p50 ms  text_pglz 5.36  text_lz4 5.14  text_lz4_batch 5.17  text_lz4_forced 5.18  int4_array 4.95  bytea_raw24 4.78  bytea_freq 4.82  pgtoken_raw 4.68  pgtoken_freq 4.74  oracle_mem 4.50
+    block 8/15 (client 0, 800 queries): e2e p50 ms  text_pglz 5.33  text_lz4 5.08  text_lz4_batch 5.14  text_lz4_forced 5.07  int4_array 4.87  bytea_raw24 4.70  bytea_freq 4.68  pgtoken_raw 4.58  pgtoken_freq 4.68  oracle_mem 4.48
+    block 9/15 (client 0, 900 queries): e2e p50 ms  text_pglz 5.33  text_lz4 5.05  text_lz4_batch 5.12  text_lz4_forced 5.01  int4_array 4.84  bytea_raw24 4.65  bytea_freq 4.64  pgtoken_raw 4.55  pgtoken_freq 4.68  oracle_mem 4.48
+    block 10/15 (client 0, 1000 queries): e2e p50 ms  text_pglz 5.32  text_lz4 5.04  text_lz4_batch 5.08  text_lz4_forced 5.01  int4_array 4.83  bytea_raw24 4.65  bytea_freq 4.62  pgtoken_raw 4.53  pgtoken_freq 4.66  oracle_mem 4.48
+    block 11/15 (client 0, 1100 queries): e2e p50 ms  text_pglz 5.35  text_lz4 5.06  text_lz4_batch 5.12  text_lz4_forced 5.00  int4_array 4.80  bytea_raw24 4.64  bytea_freq 4.60  pgtoken_raw 4.51  pgtoken_freq 4.64  oracle_mem 4.47
+    block 12/15 (client 0, 1200 queries): e2e p50 ms  text_pglz 5.34  text_lz4 5.10  text_lz4_batch 5.13  text_lz4_forced 4.99  int4_array 4.78  bytea_raw24 4.60  bytea_freq 4.60  pgtoken_raw 4.52  pgtoken_freq 4.64  oracle_mem 4.47
+    block 13/15 (client 0, 1300 queries): e2e p50 ms  text_pglz 5.35  text_lz4 5.12  text_lz4_batch 5.15  text_lz4_forced 5.02  int4_array 4.80  bytea_raw24 4.63  bytea_freq 4.62  pgtoken_raw 4.57  pgtoken_freq 4.67  oracle_mem 4.49
+    block 14/15 (client 0, 1400 queries): e2e p50 ms  text_pglz 5.34  text_lz4 5.12  text_lz4_batch 5.15  text_lz4_forced 5.10  int4_array 4.81  bytea_raw24 4.63  bytea_freq 4.63  pgtoken_raw 4.57  pgtoken_freq 4.67  oracle_mem 4.52
+    block 15/15 (client 0, 1500 queries): e2e p50 ms  text_pglz 5.36  text_lz4 5.14  text_lz4_batch 5.15  text_lz4_forced 5.15  int4_array 4.85  bytea_raw24 4.65  bytea_freq 4.67  pgtoken_raw 4.61  pgtoken_freq 4.69  oracle_mem 4.55
+
+k=10, 4 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        5.34    6.08    6.70      4.74       0.61    11%     nan     1891    2445    0.96x      0.88x     710   0.95  0.95    0.78    4.49
+  text (lz4)                         5.17    5.95    6.60      4.67       0.45     9%     nan     1877    2445    1.00x      0.91x     725   0.95  0.95    0.60    4.47
+  text (lz4), batch tokenize         5.20    6.02    6.60      4.68       0.53    10%     nan     1877    2445    0.99x      0.89x     722   0.95  0.95    1.27    4.45
+  text (lz4, forced)                 5.19    5.91    6.54      4.67       0.46     9%     nan     1877    2445    1.00x      0.90x     724   0.94  0.94    0.62    4.44
+  int4[]                             4.85    5.61    6.19      4.82       0.03     1%     nan     1398    4116    1.06x      0.96x     768   0.94  0.94    0.22    4.57
+  bytea raw24                        4.63    5.39    5.93      4.54       0.09     2%     nan     1540    1536    1.10x      1.00x     805   0.95  0.95    0.22    4.34
+  bytea freq (client codec, no ext.)     4.64    5.40    5.95      4.54       0.08     2%     nan      886     882    1.10x      1.00x     805   0.95  0.95    0.21    4.31
+  pgtoken raw (raw24)                4.56    5.34    5.86      4.53       0.02     1%     nan     1546    1542    1.13x      1.02x     820   0.94  0.94    0.16    4.31
+  pgtoken freq                       4.65    5.38    5.97      4.56       0.08     2%     nan      886     882    1.10x      1.01x     810   0.95  0.95    0.21    4.30
+  oracle: IDs already in memory      4.54    5.28    5.89      4.48       0.05     1%     nan        0       0    1.12x      1.03x     823   0.95  0.95    0.17    4.24
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 586/600 queries, median per-query speedup 1.10x [1.10, 1.11], ratio of p50s 1.11x
+  pgtoken freq vs bytea raw24: faster in 356/600 queries, median per-query speedup 1.01x [1.01, 1.01], ratio of p50s 1.00x
+  disk nvme0n1: 0 reads, 0 MB in 13 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.31 ms/0 reads, text_lz4 4.68 ms/0 reads, text_lz4_batch 4.45 ms/0 reads, text_lz4_forced 4.49 ms/0 reads, int4_array 4.37 ms/0 reads, bytea_raw24 4.29 ms/0 reads, bytea_freq 4.39 ms/0 reads, pgtoken_raw 4.39 ms/0 reads, pgtoken_freq 4.28 ms/0 reads, oracle_mem 4.13 ms/0 reads
+
+== k=10, clients=8: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/8 (client 0, 100 queries): e2e p50 ms  text_pglz 6.60  text_lz4 5.85  text_lz4_batch 5.78  text_lz4_forced 5.71  int4_array 5.20  bytea_raw24 4.90  bytea_freq 4.89  pgtoken_raw 4.83  pgtoken_freq 4.82  oracle_mem 5.05
+    block 2/8 (client 0, 200 queries): e2e p50 ms  text_pglz 6.22  text_lz4 5.89  text_lz4_batch 5.75  text_lz4_forced 5.71  int4_array 5.18  bytea_raw24 4.85  bytea_freq 4.89  pgtoken_raw 4.83  pgtoken_freq 4.88  oracle_mem 4.84
+    block 3/8 (client 0, 300 queries): e2e p50 ms  text_pglz 5.74  text_lz4 5.62  text_lz4_batch 5.72  text_lz4_forced 5.71  int4_array 5.07  bytea_raw24 4.81  bytea_freq 4.89  pgtoken_raw 4.82  pgtoken_freq 4.88  oracle_mem 4.80
+    block 4/8 (client 0, 400 queries): e2e p50 ms  text_pglz 5.73  text_lz4 5.57  text_lz4_batch 5.69  text_lz4_forced 5.61  int4_array 5.00  bytea_raw24 4.80  bytea_freq 4.87  pgtoken_raw 4.77  pgtoken_freq 4.82  oracle_mem 4.76
+    block 5/8 (client 0, 500 queries): e2e p50 ms  text_pglz 5.74  text_lz4 5.56  text_lz4_batch 5.58  text_lz4_forced 5.61  int4_array 4.99  bytea_raw24 4.80  bytea_freq 4.86  pgtoken_raw 4.69  pgtoken_freq 4.81  oracle_mem 4.70
+    block 6/8 (client 0, 600 queries): e2e p50 ms  text_pglz 5.73  text_lz4 5.54  text_lz4_batch 5.56  text_lz4_forced 5.58  int4_array 4.99  bytea_raw24 4.81  bytea_freq 4.86  pgtoken_raw 4.68  pgtoken_freq 4.80  oracle_mem 4.70
+    block 7/8 (client 0, 700 queries): e2e p50 ms  text_pglz 5.71  text_lz4 5.47  text_lz4_batch 5.55  text_lz4_forced 5.52  int4_array 4.91  bytea_raw24 4.80  bytea_freq 4.87  pgtoken_raw 4.69  pgtoken_freq 4.76  oracle_mem 4.67
+    block 8/8 (client 0, 750 queries): e2e p50 ms  text_pglz 5.73  text_lz4 5.45  text_lz4_batch 5.55  text_lz4_forced 5.50  int4_array 4.90  bytea_raw24 4.80  bytea_freq 4.86  pgtoken_raw 4.71  pgtoken_freq 4.78  oracle_mem 4.67
+
+k=10, 8 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        5.62    6.50    7.33      4.89       0.72    13%     nan     1891    2445    0.96x      0.86x    1316   0.94  0.94    0.89    4.69
+  text (lz4)                         5.45    6.31    9.30      4.85       0.60    11%     nan     1877    2445    1.00x      0.89x    1325   0.92  0.92    0.79    4.63
+  text (lz4), batch tokenize         5.52    6.45    7.13      4.89       0.62    11%     nan     1877    2445    0.99x      0.88x    1314   0.92  0.92    1.47    4.68
+  text (lz4, forced)                 5.46    6.32    6.92      4.83       0.61    11%     nan     1877    2445    1.00x      0.88x    1342   0.93  0.93    0.80    4.64
+  int4[]                             4.94    5.75    6.37      4.89       0.05     1%     nan     1398    4116    1.09x      0.97x    1493   0.94  0.94    0.24    4.73
+  bytea raw24                        4.79    5.63    6.23      4.68       0.12     2%     nan     1540    1536    1.12x      1.00x    1536   0.94  0.94    0.27    4.52
+  bytea freq (client codec, no ext.)     4.82    5.61    6.33      4.72       0.11     2%     nan      886     882    1.12x      1.00x    1528   0.93  0.93    0.26    4.49
+  pgtoken raw (raw24)                4.69    5.52    6.66      4.65       0.03     1%     nan     1546    1542    1.16x      1.03x    1541   0.92  0.92    0.18    4.48
+  pgtoken freq                       4.78    5.57    6.43      4.68       0.11     2%     nan      886     882    1.14x      1.01x    1515   0.92  0.92    0.25    4.46
+  oracle: IDs already in memory      4.59    5.35    5.88      4.52       0.07     1%     nan        0       0    1.18x      1.05x    1596   0.93  0.93    0.19    4.34
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 590/600 queries, median per-query speedup 1.14x [1.13, 1.14], ratio of p50s 1.14x
+  pgtoken freq vs bytea raw24: faster in 346/600 queries, median per-query speedup 1.01x [1.00, 1.02], ratio of p50s 1.00x
+  disk nvme0n1: 0 reads, 0 MB in 9 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.34 ms/0 reads, text_lz4 4.59 ms/0 reads, text_lz4_batch 4.37 ms/0 reads, text_lz4_forced 4.32 ms/0 reads, int4_array 4.23 ms/0 reads, bytea_raw24 4.22 ms/0 reads, bytea_freq 4.28 ms/0 reads, pgtoken_raw 4.34 ms/0 reads, pgtoken_freq 4.39 ms/0 reads, oracle_mem 4.04 ms/0 reads
+
+== k=10, clients=16: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/4 (client 0, 100 queries): e2e p50 ms  text_pglz 12.60  text_lz4 6.25  text_lz4_batch 9.00  text_lz4_forced 11.47  int4_array 9.03  bytea_raw24 9.23  bytea_freq 10.42  pgtoken_raw 9.49  pgtoken_freq 9.40  oracle_mem 9.48
+    block 2/4 (client 0, 200 queries): e2e p50 ms  text_pglz 9.92  text_lz4 9.27  text_lz4_batch 9.15  text_lz4_forced 9.86  int4_array 9.34  bytea_raw24 9.34  bytea_freq 9.92  pgtoken_raw 8.92  pgtoken_freq 9.30  oracle_mem 9.48
+    block 3/4 (client 0, 300 queries): e2e p50 ms  text_pglz 9.92  text_lz4 9.38  text_lz4_batch 9.39  text_lz4_forced 9.91  int4_array 9.59  bytea_raw24 9.13  bytea_freq 9.60  pgtoken_raw 9.39  pgtoken_freq 9.08  oracle_mem 9.15
+    block 4/4 (client 0, 380 queries): e2e p50 ms  text_pglz 9.77  text_lz4 8.86  text_lz4_batch 9.64  text_lz4_forced 9.91  int4_array 10.01  bytea_raw24 9.13  bytea_freq 9.43  pgtoken_raw 9.41  pgtoken_freq 8.95  oracle_mem 9.02
+
+k=10, 16 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        9.76   14.30   20.47      9.05       0.65     7%     nan     1891    2445    1.00x      0.91x    1412   0.89  0.89    0.84    5.00
+  text (lz4)                         9.91   13.79   19.11      9.13       0.63     7%     nan     1877    2445    1.00x      0.91x    1393   0.86  0.86    0.83    4.92
+  text (lz4), batch tokenize         9.76   13.82   18.95      9.08       0.69     7%     nan     1877    2445    0.98x      0.91x    1376   0.87  0.87    1.62    4.94
+  text (lz4, forced)                 9.75   13.19   18.05      8.96       0.69     8%     nan     1877    2445    1.01x      0.91x    1442   0.87  0.87    0.88    4.81
+  int4[]                             9.36   13.40   17.68      9.31       0.05     1%     nan     1398    4116    1.07x      0.95x    1446   0.86  0.86    0.25    4.89
+  bytea raw24                        9.03   12.55   16.28      8.89       0.13     1%     nan     1540    1536    1.10x      1.00x    1528   0.86  0.86    0.28    4.64
+  bytea freq (client codec, no ext.)     8.91   12.51   17.96      8.78       0.12     1%     nan      886     882    1.12x      1.02x    1525   0.85  0.85    0.27    4.62
+  pgtoken raw (raw24)                8.84   12.50   16.28      8.80       0.03     0%     nan     1546    1542    1.14x      1.02x    1490   0.83  0.83    0.18    4.64
+  pgtoken freq                       8.81   12.47   17.16      8.69       0.12     1%     nan      886     882    1.11x      1.01x    1528   0.85  0.85    0.27    4.61
+  oracle: IDs already in memory      8.74   12.26   16.95      8.67       0.07     1%     nan        0       0    1.12x      1.03x    1561   0.85  0.85    0.20    4.54
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 377/600 queries, median per-query speedup 1.11x [1.09, 1.15], ratio of p50s 1.13x
+  pgtoken freq vs bytea raw24: faster in 308/600 queries, median per-query speedup 1.01x [0.98, 1.04], ratio of p50s 1.03x
+  disk nvme0n1: 0 reads, 0 MB in 10 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.19 ms/0 reads, text_lz4 4.51 ms/0 reads, text_lz4_batch 4.20 ms/0 reads, text_lz4_forced 4.24 ms/0 reads, int4_array 4.23 ms/0 reads, bytea_raw24 4.25 ms/0 reads, bytea_freq 4.23 ms/0 reads, pgtoken_raw 4.29 ms/0 reads, pgtoken_freq 4.35 ms/0 reads, oracle_mem 4.30 ms/0 reads
+
+== k=50, clients=1: 600 queries per arm, blocks of 10, sweep on, warm
+    block 1/60 (client 0, 100 queries): e2e p50 ms  text_pglz 8.82  text_lz4 8.09  text_lz4_batch 7.26  text_lz4_forced 8.04  int4_array 6.61  bytea_raw24 5.87  bytea_freq 5.87  pgtoken_raw 5.65  pgtoken_freq 5.86  oracle_mem 5.40
+    block 2/60 (client 0, 200 queries): e2e p50 ms  text_pglz 8.90  text_lz4 8.60  text_lz4_batch 7.63  text_lz4_forced 8.26  int4_array 6.86  bytea_raw24 6.12  bytea_freq 6.18  pgtoken_raw 6.03  pgtoken_freq 6.11  oracle_mem 5.79
+    block 3/60 (client 0, 300 queries): e2e p50 ms  text_pglz 8.72  text_lz4 8.50  text_lz4_batch 7.56  text_lz4_forced 8.28  int4_array 6.73  bytea_raw24 6.01  bytea_freq 6.09  pgtoken_raw 5.90  pgtoken_freq 6.05  oracle_mem 5.65
+    block 4/60 (client 0, 400 queries): e2e p50 ms  text_pglz 8.62  text_lz4 8.45  text_lz4_batch 7.55  text_lz4_forced 8.44  int4_array 6.83  bytea_raw24 6.04  bytea_freq 6.09  pgtoken_raw 5.81  pgtoken_freq 6.10  oracle_mem 5.57
+    block 5/60 (client 0, 500 queries): e2e p50 ms  text_pglz 8.75  text_lz4 8.45  text_lz4_batch 7.53  text_lz4_forced 8.39  int4_array 6.85  bytea_raw24 6.04  bytea_freq 6.07  pgtoken_raw 5.86  pgtoken_freq 6.10  oracle_mem 5.65
+    block 6/60 (client 0, 600 queries): e2e p50 ms  text_pglz 8.85  text_lz4 8.51  text_lz4_batch 7.53  text_lz4_forced 8.36  int4_array 6.93  bytea_raw24 6.07  bytea_freq 6.09  pgtoken_raw 5.90  pgtoken_freq 6.10  oracle_mem 5.67
+    block 7/60 (client 0, 700 queries): e2e p50 ms  text_pglz 8.85  text_lz4 8.44  text_lz4_batch 7.52  text_lz4_forced 8.29  int4_array 6.79  bytea_raw24 6.01  bytea_freq 6.09  pgtoken_raw 5.87  pgtoken_freq 6.10  oracle_mem 5.58
+    block 8/60 (client 0, 800 queries): e2e p50 ms  text_pglz 8.81  text_lz4 8.38  text_lz4_batch 7.49  text_lz4_forced 8.24  int4_array 6.78  bytea_raw24 6.00  bytea_freq 6.05  pgtoken_raw 5.83  pgtoken_freq 6.10  oracle_mem 5.54
+    block 9/60 (client 0, 900 queries): e2e p50 ms  text_pglz 8.85  text_lz4 8.41  text_lz4_batch 7.50  text_lz4_forced 8.28  int4_array 6.79  bytea_raw24 6.01  bytea_freq 6.06  pgtoken_raw 5.89  pgtoken_freq 6.11  oracle_mem 5.61
+    block 10/60 (client 0, 1000 queries): e2e p50 ms  text_pglz 8.82  text_lz4 8.38  text_lz4_batch 7.49  text_lz4_forced 8.24  int4_array 6.78  bytea_raw24 5.98  bytea_freq 6.05  pgtoken_raw 5.83  pgtoken_freq 6.10  oracle_mem 5.62
+    block 11/60 (client 0, 1100 queries): e2e p50 ms  text_pglz 8.82  text_lz4 8.37  text_lz4_batch 7.48  text_lz4_forced 8.23  int4_array 6.78  bytea_raw24 5.96  bytea_freq 6.05  pgtoken_raw 5.82  pgtoken_freq 6.10  oracle_mem 5.61
+    block 12/60 (client 0, 1200 queries): e2e p50 ms  text_pglz 8.77  text_lz4 8.38  text_lz4_batch 7.49  text_lz4_forced 8.23  int4_array 6.76  bytea_raw24 5.98  bytea_freq 6.05  pgtoken_raw 5.83  pgtoken_freq 6.09  oracle_mem 5.62
+    block 13/60 (client 0, 1300 queries): e2e p50 ms  text_pglz 8.74  text_lz4 8.36  text_lz4_batch 7.46  text_lz4_forced 8.25  int4_array 6.69  bytea_raw24 5.95  bytea_freq 6.03  pgtoken_raw 5.81  pgtoken_freq 6.03  oracle_mem 5.59
+    block 14/60 (client 0, 1400 queries): e2e p50 ms  text_pglz 8.72  text_lz4 8.35  text_lz4_batch 7.46  text_lz4_forced 8.27  int4_array 6.70  bytea_raw24 5.95  bytea_freq 6.02  pgtoken_raw 5.80  pgtoken_freq 6.03  oracle_mem 5.59
+    block 15/60 (client 0, 1500 queries): e2e p50 ms  text_pglz 8.73  text_lz4 8.32  text_lz4_batch 7.46  text_lz4_forced 8.26  int4_array 6.75  bytea_raw24 5.95  bytea_freq 6.02  pgtoken_raw 5.80  pgtoken_freq 6.04  oracle_mem 5.59
+    block 16/60 (client 0, 1600 queries): e2e p50 ms  text_pglz 8.74  text_lz4 8.34  text_lz4_batch 7.46  text_lz4_forced 8.27  int4_array 6.75  bytea_raw24 5.95  bytea_freq 6.03  pgtoken_raw 5.81  pgtoken_freq 6.05  oracle_mem 5.60
+    block 17/60 (client 0, 1700 queries): e2e p50 ms  text_pglz 8.73  text_lz4 8.31  text_lz4_batch 7.46  text_lz4_forced 8.27  int4_array 6.70  bytea_raw24 5.95  bytea_freq 6.02  pgtoken_raw 5.80  pgtoken_freq 6.04  oracle_mem 5.59
+    block 18/60 (client 0, 1800 queries): e2e p50 ms  text_pglz 8.74  text_lz4 8.31  text_lz4_batch 7.46  text_lz4_forced 8.27  int4_array 6.75  bytea_raw24 5.95  bytea_freq 6.04  pgtoken_raw 5.81  pgtoken_freq 6.04  oracle_mem 5.61
+    block 19/60 (client 0, 1900 queries): e2e p50 ms  text_pglz 8.73  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.25  int4_array 6.70  bytea_raw24 5.95  bytea_freq 6.02  pgtoken_raw 5.80  pgtoken_freq 6.04  oracle_mem 5.59
+    block 20/60 (client 0, 2000 queries): e2e p50 ms  text_pglz 8.71  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.25  int4_array 6.70  bytea_raw24 5.95  bytea_freq 6.00  pgtoken_raw 5.79  pgtoken_freq 6.02  oracle_mem 5.58
+    block 21/60 (client 0, 2100 queries): e2e p50 ms  text_pglz 8.73  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.26  int4_array 6.70  bytea_raw24 5.95  bytea_freq 6.02  pgtoken_raw 5.80  pgtoken_freq 6.03  oracle_mem 5.58
+    block 22/60 (client 0, 2200 queries): e2e p50 ms  text_pglz 8.71  text_lz4 8.31  text_lz4_batch 7.43  text_lz4_forced 8.25  int4_array 6.70  bytea_raw24 5.95  bytea_freq 6.01  pgtoken_raw 5.80  pgtoken_freq 6.03  oracle_mem 5.58
+    block 23/60 (client 0, 2300 queries): e2e p50 ms  text_pglz 8.69  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.27  int4_array 6.70  bytea_raw24 5.95  bytea_freq 6.00  pgtoken_raw 5.80  pgtoken_freq 6.02  oracle_mem 5.57
+    block 24/60 (client 0, 2400 queries): e2e p50 ms  text_pglz 8.68  text_lz4 8.29  text_lz4_batch 7.44  text_lz4_forced 8.29  int4_array 6.70  bytea_raw24 5.95  bytea_freq 5.99  pgtoken_raw 5.79  pgtoken_freq 6.01  oracle_mem 5.57
+    block 25/60 (client 0, 2500 queries): e2e p50 ms  text_pglz 8.69  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.30  int4_array 6.75  bytea_raw24 5.96  bytea_freq 6.01  pgtoken_raw 5.81  pgtoken_freq 6.03  oracle_mem 5.58
+    block 26/60 (client 0, 2600 queries): e2e p50 ms  text_pglz 8.70  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.31  int4_array 6.75  bytea_raw24 5.97  bytea_freq 6.01  pgtoken_raw 5.81  pgtoken_freq 6.04  oracle_mem 5.59
+    block 27/60 (client 0, 2700 queries): e2e p50 ms  text_pglz 8.71  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.31  int4_array 6.75  bytea_raw24 5.97  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.04  oracle_mem 5.60
+    block 28/60 (client 0, 2800 queries): e2e p50 ms  text_pglz 8.71  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.31  int4_array 6.75  bytea_raw24 5.97  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.04  oracle_mem 5.60
+    block 29/60 (client 0, 2900 queries): e2e p50 ms  text_pglz 8.71  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.30  int4_array 6.75  bytea_raw24 5.97  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.03  oracle_mem 5.60
+    block 30/60 (client 0, 3000 queries): e2e p50 ms  text_pglz 8.70  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.29  int4_array 6.74  bytea_raw24 5.97  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.03  oracle_mem 5.59
+    block 31/60 (client 0, 3100 queries): e2e p50 ms  text_pglz 8.70  text_lz4 8.30  text_lz4_batch 7.46  text_lz4_forced 8.30  int4_array 6.74  bytea_raw24 5.97  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.03  oracle_mem 5.59
+    block 32/60 (client 0, 3200 queries): e2e p50 ms  text_pglz 8.71  text_lz4 8.32  text_lz4_batch 7.46  text_lz4_forced 8.30  int4_array 6.75  bytea_raw24 5.97  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.04  oracle_mem 5.60
+    block 33/60 (client 0, 3300 queries): e2e p50 ms  text_pglz 8.70  text_lz4 8.31  text_lz4_batch 7.46  text_lz4_forced 8.31  int4_array 6.74  bytea_raw24 5.98  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.04  oracle_mem 5.59
+    block 34/60 (client 0, 3400 queries): e2e p50 ms  text_pglz 8.70  text_lz4 8.31  text_lz4_batch 7.46  text_lz4_forced 8.31  int4_array 6.74  bytea_raw24 5.98  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.04  oracle_mem 5.59
+    block 35/60 (client 0, 3500 queries): e2e p50 ms  text_pglz 8.71  text_lz4 8.31  text_lz4_batch 7.46  text_lz4_forced 8.31  int4_array 6.74  bytea_raw24 5.98  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.04  oracle_mem 5.60
+    block 36/60 (client 0, 3600 queries): e2e p50 ms  text_pglz 8.71  text_lz4 8.32  text_lz4_batch 7.46  text_lz4_forced 8.30  int4_array 6.70  bytea_raw24 5.98  bytea_freq 6.02  pgtoken_raw 5.81  pgtoken_freq 6.05  oracle_mem 5.60
+    block 37/60 (client 0, 3700 queries): e2e p50 ms  text_pglz 8.70  text_lz4 8.30  text_lz4_batch 7.44  text_lz4_forced 8.28  int4_array 6.69  bytea_raw24 5.97  bytea_freq 6.01  pgtoken_raw 5.79  pgtoken_freq 6.02  oracle_mem 5.58
+    block 38/60 (client 0, 3800 queries): e2e p50 ms  text_pglz 8.70  text_lz4 8.30  text_lz4_batch 7.43  text_lz4_forced 8.27  int4_array 6.69  bytea_raw24 5.96  bytea_freq 6.00  pgtoken_raw 5.79  pgtoken_freq 6.01  oracle_mem 5.57
+    block 39/60 (client 0, 3900 queries): e2e p50 ms  text_pglz 8.70  text_lz4 8.29  text_lz4_batch 7.42  text_lz4_forced 8.26  int4_array 6.68  bytea_raw24 5.95  bytea_freq 5.97  pgtoken_raw 5.78  pgtoken_freq 6.00  oracle_mem 5.56
+    block 40/60 (client 0, 4000 queries): e2e p50 ms  text_pglz 8.69  text_lz4 8.29  text_lz4_batch 7.41  text_lz4_forced 8.25  int4_array 6.68  bytea_raw24 5.95  bytea_freq 5.97  pgtoken_raw 5.78  pgtoken_freq 5.99  oracle_mem 5.55
+    block 41/60 (client 0, 4100 queries): e2e p50 ms  text_pglz 8.68  text_lz4 8.28  text_lz4_batch 7.41  text_lz4_forced 8.24  int4_array 6.68  bytea_raw24 5.94  bytea_freq 5.95  pgtoken_raw 5.77  pgtoken_freq 5.98  oracle_mem 5.53
+    block 42/60 (client 0, 4200 queries): e2e p50 ms  text_pglz 8.68  text_lz4 8.29  text_lz4_batch 7.40  text_lz4_forced 8.22  int4_array 6.67  bytea_raw24 5.94  bytea_freq 5.94  pgtoken_raw 5.77  pgtoken_freq 5.96  oracle_mem 5.53
+    block 43/60 (client 0, 4300 queries): e2e p50 ms  text_pglz 8.67  text_lz4 8.28  text_lz4_batch 7.40  text_lz4_forced 8.22  int4_array 6.67  bytea_raw24 5.93  bytea_freq 5.93  pgtoken_raw 5.76  pgtoken_freq 5.95  oracle_mem 5.52
+    block 44/60 (client 0, 4400 queries): e2e p50 ms  text_pglz 8.66  text_lz4 8.27  text_lz4_batch 7.40  text_lz4_forced 8.22  int4_array 6.66  bytea_raw24 5.91  bytea_freq 5.92  pgtoken_raw 5.75  pgtoken_freq 5.95  oracle_mem 5.51
+    block 45/60 (client 0, 4500 queries): e2e p50 ms  text_pglz 8.65  text_lz4 8.27  text_lz4_batch 7.40  text_lz4_forced 8.22  int4_array 6.66  bytea_raw24 5.90  bytea_freq 5.92  pgtoken_raw 5.74  pgtoken_freq 5.95  oracle_mem 5.51
+    block 46/60 (client 0, 4600 queries): e2e p50 ms  text_pglz 8.65  text_lz4 8.26  text_lz4_batch 7.39  text_lz4_forced 8.22  int4_array 6.66  bytea_raw24 5.89  bytea_freq 5.90  pgtoken_raw 5.72  pgtoken_freq 5.94  oracle_mem 5.50
+    block 47/60 (client 0, 4700 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.24  text_lz4_batch 7.38  text_lz4_forced 8.21  int4_array 6.66  bytea_raw24 5.89  bytea_freq 5.89  pgtoken_raw 5.72  pgtoken_freq 5.94  oracle_mem 5.50
+    block 48/60 (client 0, 4800 queries): e2e p50 ms  text_pglz 8.64  text_lz4 8.24  text_lz4_batch 7.37  text_lz4_forced 8.20  int4_array 6.66  bytea_raw24 5.88  bytea_freq 5.89  pgtoken_raw 5.72  pgtoken_freq 5.93  oracle_mem 5.49
+    block 49/60 (client 0, 4900 queries): e2e p50 ms  text_pglz 8.65  text_lz4 8.24  text_lz4_batch 7.37  text_lz4_forced 8.20  int4_array 6.66  bytea_raw24 5.88  bytea_freq 5.88  pgtoken_raw 5.71  pgtoken_freq 5.93  oracle_mem 5.49
+    block 50/60 (client 0, 5000 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.23  text_lz4_batch 7.37  text_lz4_forced 8.20  int4_array 6.64  bytea_raw24 5.87  bytea_freq 5.88  pgtoken_raw 5.70  pgtoken_freq 5.90  oracle_mem 5.49
+    block 51/60 (client 0, 5100 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.22  text_lz4_batch 7.36  text_lz4_forced 8.18  int4_array 6.63  bytea_raw24 5.86  bytea_freq 5.87  pgtoken_raw 5.69  pgtoken_freq 5.90  oracle_mem 5.48
+    block 52/60 (client 0, 5200 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.24  text_lz4_batch 7.36  text_lz4_forced 8.17  int4_array 6.63  bytea_raw24 5.85  bytea_freq 5.88  pgtoken_raw 5.70  pgtoken_freq 5.90  oracle_mem 5.49
+    block 53/60 (client 0, 5300 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.23  text_lz4_batch 7.37  text_lz4_forced 8.17  int4_array 6.63  bytea_raw24 5.85  bytea_freq 5.88  pgtoken_raw 5.70  pgtoken_freq 5.90  oracle_mem 5.49
+    block 54/60 (client 0, 5400 queries): e2e p50 ms  text_pglz 8.62  text_lz4 8.22  text_lz4_batch 7.37  text_lz4_forced 8.19  int4_array 6.63  bytea_raw24 5.85  bytea_freq 5.87  pgtoken_raw 5.69  pgtoken_freq 5.90  oracle_mem 5.49
+    block 55/60 (client 0, 5500 queries): e2e p50 ms  text_pglz 8.62  text_lz4 8.22  text_lz4_batch 7.37  text_lz4_forced 8.19  int4_array 6.63  bytea_raw24 5.85  bytea_freq 5.87  pgtoken_raw 5.69  pgtoken_freq 5.90  oracle_mem 5.49
+    block 56/60 (client 0, 5600 queries): e2e p50 ms  text_pglz 8.62  text_lz4 8.23  text_lz4_batch 7.37  text_lz4_forced 8.19  int4_array 6.63  bytea_raw24 5.85  bytea_freq 5.87  pgtoken_raw 5.68  pgtoken_freq 5.89  oracle_mem 5.48
+    block 57/60 (client 0, 5700 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.23  text_lz4_batch 7.37  text_lz4_forced 8.19  int4_array 6.64  bytea_raw24 5.86  bytea_freq 5.88  pgtoken_raw 5.69  pgtoken_freq 5.90  oracle_mem 5.48
+    block 58/60 (client 0, 5800 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.23  text_lz4_batch 7.37  text_lz4_forced 8.19  int4_array 6.65  bytea_raw24 5.86  bytea_freq 5.88  pgtoken_raw 5.69  pgtoken_freq 5.90  oracle_mem 5.49
+    block 59/60 (client 0, 5900 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.23  text_lz4_batch 7.37  text_lz4_forced 8.19  int4_array 6.65  bytea_raw24 5.85  bytea_freq 5.88  pgtoken_raw 5.69  pgtoken_freq 5.90  oracle_mem 5.49
+    block 60/60 (client 0, 6000 queries): e2e p50 ms  text_pglz 8.63  text_lz4 8.22  text_lz4_batch 7.37  text_lz4_forced 8.19  int4_array 6.65  bytea_raw24 5.85  bytea_freq 5.88  pgtoken_raw 5.69  pgtoken_freq 5.90  oracle_mem 5.49
+
+k=50, 1 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep on, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        8.63    9.54   10.23      5.96       2.68    30%    4.91     1891    2445    0.95x      0.68x      60   0.52  0.52    3.02    5.65
+  text (lz4)                         8.22    9.09    9.80      5.83       2.36    29%    4.90     1877    2445    1.00x      0.71x      61   0.51  0.51    2.69    5.52
+  text (lz4), batch tokenize         7.37    8.24    8.79      5.77       1.60    22%    4.91     1877    2445    1.11x      0.79x      64   0.48  0.48    3.81    5.46
+  text (lz4, forced)                 8.19    9.12    9.72      5.78       2.34    29%    4.90     1877    2445    1.01x      0.72x      61   0.50  0.50    2.67    5.46
+  int4[]                             6.65    7.49    8.17      6.54       0.10     2%    4.87     1398    4116    1.23x      0.88x      68   0.46  0.46    0.54    6.26
+  bytea raw24                        5.85    6.69    7.43      5.63       0.23     4%    4.84     1540    1536    1.41x      1.00x      73   0.43  0.43    0.49    5.34
+  bytea freq (client codec, no ext.)     5.88    6.76    7.31      5.58       0.31     5%    4.82      886     882    1.40x      0.99x      73   0.43  0.43    0.54    5.29
+  pgtoken raw (raw24)                5.69    6.56    7.14      5.61       0.08     1%    4.82     1546    1542    1.45x      1.03x      73   0.42  0.42    0.34    5.33
+  pgtoken freq                       5.90    6.74    7.35      5.60       0.31     5%    4.81      886     882    1.39x      0.99x      72   0.43  0.43    0.53    5.30
+  oracle: IDs already in memory      5.49    6.30    6.94      5.31       0.17     3%    4.74        0       0    1.50x      1.07x      75   0.42  0.42    0.31    5.00
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 600/600 queries, median per-query speedup 1.39x [1.39, 1.40], ratio of p50s 1.39x
+  pgtoken freq vs bytea raw24: faster in 221/600 queries, median per-query speedup 0.99x [0.99, 0.99], ratio of p50s 0.99x
+  disk nvme0n1: 0 reads, 0 MB in 125 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.62 ms/0 reads, text_lz4 5.00 ms/0 reads, text_lz4_batch 4.53 ms/0 reads, text_lz4_forced 4.66 ms/0 reads, int4_array 4.61 ms/0 reads, bytea_raw24 4.58 ms/0 reads, bytea_freq 4.51 ms/0 reads, pgtoken_raw 4.57 ms/0 reads, pgtoken_freq 4.54 ms/0 reads, oracle_mem 4.15 ms/0 reads
+
+== k=50, clients=1: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/60 (client 0, 100 queries): e2e p50 ms  text_pglz 8.10  text_lz4 7.16  text_lz4_batch 6.57  text_lz4_forced 7.09  int4_array 6.03  bytea_raw24 5.33  bytea_freq 5.37  pgtoken_raw 5.07  pgtoken_freq 5.34  oracle_mem 4.84
+    block 2/60 (client 0, 200 queries): e2e p50 ms  text_pglz 7.78  text_lz4 7.52  text_lz4_batch 6.84  text_lz4_forced 7.43  int4_array 6.14  bytea_raw24 5.33  bytea_freq 5.34  pgtoken_raw 5.13  pgtoken_freq 5.31  oracle_mem 4.97
+    block 3/60 (client 0, 300 queries): e2e p50 ms  text_pglz 7.72  text_lz4 7.30  text_lz4_batch 6.80  text_lz4_forced 7.35  int4_array 6.02  bytea_raw24 5.12  bytea_freq 5.17  pgtoken_raw 5.03  pgtoken_freq 5.17  oracle_mem 4.69
+    block 4/60 (client 0, 400 queries): e2e p50 ms  text_pglz 7.67  text_lz4 7.22  text_lz4_batch 6.76  text_lz4_forced 7.48  int4_array 6.00  bytea_raw24 5.10  bytea_freq 5.12  pgtoken_raw 4.82  pgtoken_freq 5.03  oracle_mem 4.60
+    block 5/60 (client 0, 500 queries): e2e p50 ms  text_pglz 7.71  text_lz4 7.25  text_lz4_batch 6.74  text_lz4_forced 7.48  int4_array 6.02  bytea_raw24 5.06  bytea_freq 4.89  pgtoken_raw 4.76  pgtoken_freq 4.91  oracle_mem 4.63
+    block 6/60 (client 0, 600 queries): e2e p50 ms  text_pglz 7.70  text_lz4 7.16  text_lz4_batch 6.67  text_lz4_forced 7.31  int4_array 5.97  bytea_raw24 5.10  bytea_freq 5.07  pgtoken_raw 4.82  pgtoken_freq 4.99  oracle_mem 4.58
+    block 7/60 (client 0, 700 queries): e2e p50 ms  text_pglz 7.64  text_lz4 7.01  text_lz4_batch 6.60  text_lz4_forced 7.15  int4_array 5.91  bytea_raw24 5.07  bytea_freq 5.09  pgtoken_raw 4.71  pgtoken_freq 4.87  oracle_mem 4.50
+    block 8/60 (client 0, 800 queries): e2e p50 ms  text_pglz 7.59  text_lz4 7.02  text_lz4_batch 6.57  text_lz4_forced 7.12  int4_array 5.84  bytea_raw24 5.08  bytea_freq 5.14  pgtoken_raw 4.81  pgtoken_freq 4.87  oracle_mem 4.51
+    block 9/60 (client 0, 900 queries): e2e p50 ms  text_pglz 7.64  text_lz4 7.12  text_lz4_batch 6.57  text_lz4_forced 7.13  int4_array 5.82  bytea_raw24 5.01  bytea_freq 5.06  pgtoken_raw 4.79  pgtoken_freq 4.99  oracle_mem 4.58
+    block 10/60 (client 0, 1000 queries): e2e p50 ms  text_pglz 7.64  text_lz4 7.05  text_lz4_batch 6.55  text_lz4_forced 7.11  int4_array 5.79  bytea_raw24 5.00  bytea_freq 5.02  pgtoken_raw 4.72  pgtoken_freq 4.96  oracle_mem 4.62
+    block 11/60 (client 0, 1100 queries): e2e p50 ms  text_pglz 7.67  text_lz4 7.03  text_lz4_batch 6.53  text_lz4_forced 7.09  int4_array 5.76  bytea_raw24 4.99  bytea_freq 5.00  pgtoken_raw 4.71  pgtoken_freq 4.89  oracle_mem 4.58
+    block 12/60 (client 0, 1200 queries): e2e p50 ms  text_pglz 7.62  text_lz4 7.14  text_lz4_batch 6.54  text_lz4_forced 7.10  int4_array 5.79  bytea_raw24 4.98  bytea_freq 4.98  pgtoken_raw 4.63  pgtoken_freq 4.86  oracle_mem 4.54
+    block 13/60 (client 0, 1300 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.03  text_lz4_batch 6.54  text_lz4_forced 7.08  int4_array 5.73  bytea_raw24 4.90  bytea_freq 4.90  pgtoken_raw 4.60  pgtoken_freq 4.81  oracle_mem 4.50
+    block 14/60 (client 0, 1400 queries): e2e p50 ms  text_pglz 7.55  text_lz4 7.04  text_lz4_batch 6.54  text_lz4_forced 7.11  int4_array 5.73  bytea_raw24 4.87  bytea_freq 4.89  pgtoken_raw 4.60  pgtoken_freq 4.77  oracle_mem 4.44
+    block 15/60 (client 0, 1500 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.07  text_lz4_batch 6.55  text_lz4_forced 7.09  int4_array 5.74  bytea_raw24 4.84  bytea_freq 4.87  pgtoken_raw 4.61  pgtoken_freq 4.78  oracle_mem 4.43
+    block 16/60 (client 0, 1600 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.07  text_lz4_batch 6.55  text_lz4_forced 7.10  int4_array 5.74  bytea_raw24 4.85  bytea_freq 4.87  pgtoken_raw 4.61  pgtoken_freq 4.78  oracle_mem 4.43
+    block 17/60 (client 0, 1700 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.05  text_lz4_batch 6.52  text_lz4_forced 7.09  int4_array 5.74  bytea_raw24 4.84  bytea_freq 4.88  pgtoken_raw 4.61  pgtoken_freq 4.77  oracle_mem 4.43
+    block 18/60 (client 0, 1800 queries): e2e p50 ms  text_pglz 7.60  text_lz4 7.09  text_lz4_batch 6.55  text_lz4_forced 7.11  int4_array 5.75  bytea_raw24 4.87  bytea_freq 4.89  pgtoken_raw 4.63  pgtoken_freq 4.81  oracle_mem 4.43
+    block 19/60 (client 0, 1900 queries): e2e p50 ms  text_pglz 7.59  text_lz4 7.09  text_lz4_batch 6.53  text_lz4_forced 7.09  int4_array 5.74  bytea_raw24 4.86  bytea_freq 4.88  pgtoken_raw 4.62  pgtoken_freq 4.84  oracle_mem 4.45
+    block 20/60 (client 0, 2000 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.05  text_lz4_batch 6.51  text_lz4_forced 7.07  int4_array 5.74  bytea_raw24 4.84  bytea_freq 4.87  pgtoken_raw 4.61  pgtoken_freq 4.83  oracle_mem 4.45
+    block 21/60 (client 0, 2100 queries): e2e p50 ms  text_pglz 7.61  text_lz4 7.08  text_lz4_batch 6.50  text_lz4_forced 7.06  int4_array 5.74  bytea_raw24 4.84  bytea_freq 4.88  pgtoken_raw 4.62  pgtoken_freq 4.84  oracle_mem 4.44
+    block 22/60 (client 0, 2200 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.12  text_lz4_batch 6.49  text_lz4_forced 7.04  int4_array 5.73  bytea_raw24 4.81  bytea_freq 4.86  pgtoken_raw 4.61  pgtoken_freq 4.83  oracle_mem 4.43
+    block 23/60 (client 0, 2300 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.12  text_lz4_batch 6.50  text_lz4_forced 7.03  int4_array 5.73  bytea_raw24 4.80  bytea_freq 4.83  pgtoken_raw 4.61  pgtoken_freq 4.81  oracle_mem 4.41
+    block 24/60 (client 0, 2400 queries): e2e p50 ms  text_pglz 7.55  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.06  int4_array 5.73  bytea_raw24 4.80  bytea_freq 4.83  pgtoken_raw 4.62  pgtoken_freq 4.82  oracle_mem 4.41
+    block 25/60 (client 0, 2500 queries): e2e p50 ms  text_pglz 7.55  text_lz4 7.11  text_lz4_batch 6.49  text_lz4_forced 7.07  int4_array 5.74  bytea_raw24 4.81  bytea_freq 4.85  pgtoken_raw 4.62  pgtoken_freq 4.83  oracle_mem 4.43
+    block 26/60 (client 0, 2600 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.12  text_lz4_batch 6.50  text_lz4_forced 7.09  int4_array 5.74  bytea_raw24 4.85  bytea_freq 4.87  pgtoken_raw 4.63  pgtoken_freq 4.84  oracle_mem 4.44
+    block 27/60 (client 0, 2700 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.09  int4_array 5.74  bytea_raw24 4.84  bytea_freq 4.89  pgtoken_raw 4.65  pgtoken_freq 4.87  oracle_mem 4.45
+    block 28/60 (client 0, 2800 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.12  text_lz4_batch 6.50  text_lz4_forced 7.08  int4_array 5.74  bytea_raw24 4.84  bytea_freq 4.89  pgtoken_raw 4.66  pgtoken_freq 4.87  oracle_mem 4.44
+    block 29/60 (client 0, 2900 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.11  text_lz4_batch 6.48  text_lz4_forced 7.06  int4_array 5.74  bytea_raw24 4.81  bytea_freq 4.88  pgtoken_raw 4.66  pgtoken_freq 4.87  oracle_mem 4.44
+    block 30/60 (client 0, 3000 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.10  text_lz4_batch 6.47  text_lz4_forced 7.06  int4_array 5.73  bytea_raw24 4.80  bytea_freq 4.87  pgtoken_raw 4.64  pgtoken_freq 4.84  oracle_mem 4.44
+    block 31/60 (client 0, 3100 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.10  text_lz4_batch 6.47  text_lz4_forced 7.06  int4_array 5.73  bytea_raw24 4.80  bytea_freq 4.87  pgtoken_raw 4.64  pgtoken_freq 4.84  oracle_mem 4.46
+    block 32/60 (client 0, 3200 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.13  text_lz4_batch 6.47  text_lz4_forced 7.07  int4_array 5.74  bytea_raw24 4.80  bytea_freq 4.88  pgtoken_raw 4.65  pgtoken_freq 4.87  oracle_mem 4.50
+    block 33/60 (client 0, 3300 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.14  text_lz4_batch 6.49  text_lz4_forced 7.08  int4_array 5.74  bytea_raw24 4.81  bytea_freq 4.89  pgtoken_raw 4.66  pgtoken_freq 4.88  oracle_mem 4.51
+    block 34/60 (client 0, 3400 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.09  int4_array 5.74  bytea_raw24 4.84  bytea_freq 4.89  pgtoken_raw 4.66  pgtoken_freq 4.88  oracle_mem 4.51
+    block 35/60 (client 0, 3500 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.09  int4_array 5.76  bytea_raw24 4.85  bytea_freq 4.89  pgtoken_raw 4.67  pgtoken_freq 4.88  oracle_mem 4.52
+    block 36/60 (client 0, 3600 queries): e2e p50 ms  text_pglz 7.59  text_lz4 7.15  text_lz4_batch 6.51  text_lz4_forced 7.12  int4_array 5.77  bytea_raw24 4.87  bytea_freq 4.92  pgtoken_raw 4.71  pgtoken_freq 4.90  oracle_mem 4.54
+    block 37/60 (client 0, 3700 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.14  text_lz4_batch 6.51  text_lz4_forced 7.12  int4_array 5.77  bytea_raw24 4.87  bytea_freq 4.94  pgtoken_raw 4.71  pgtoken_freq 4.89  oracle_mem 4.52
+    block 38/60 (client 0, 3800 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.78  bytea_raw24 4.88  bytea_freq 4.94  pgtoken_raw 4.74  pgtoken_freq 4.90  oracle_mem 4.53
+    block 39/60 (client 0, 3900 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.78  bytea_raw24 4.90  bytea_freq 4.94  pgtoken_raw 4.72  pgtoken_freq 4.91  oracle_mem 4.53
+    block 40/60 (client 0, 4000 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.79  bytea_raw24 4.91  bytea_freq 4.93  pgtoken_raw 4.71  pgtoken_freq 4.90  oracle_mem 4.54
+    block 41/60 (client 0, 4100 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.15  text_lz4_batch 6.51  text_lz4_forced 7.12  int4_array 5.80  bytea_raw24 4.93  bytea_freq 4.95  pgtoken_raw 4.74  pgtoken_freq 4.91  oracle_mem 4.55
+    block 42/60 (client 0, 4200 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.16  text_lz4_batch 6.50  text_lz4_forced 7.12  int4_array 5.80  bytea_raw24 4.95  bytea_freq 4.95  pgtoken_raw 4.75  pgtoken_freq 4.91  oracle_mem 4.55
+    block 43/60 (client 0, 4300 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.16  text_lz4_batch 6.51  text_lz4_forced 7.13  int4_array 5.80  bytea_raw24 4.95  bytea_freq 4.95  pgtoken_raw 4.75  pgtoken_freq 4.91  oracle_mem 4.56
+    block 44/60 (client 0, 4400 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.16  text_lz4_batch 6.51  text_lz4_forced 7.15  int4_array 5.81  bytea_raw24 4.96  bytea_freq 4.98  pgtoken_raw 4.77  pgtoken_freq 4.92  oracle_mem 4.56
+    block 45/60 (client 0, 4500 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.15  text_lz4_batch 6.50  text_lz4_forced 7.14  int4_array 5.81  bytea_raw24 4.96  bytea_freq 4.98  pgtoken_raw 4.77  pgtoken_freq 4.93  oracle_mem 4.56
+    block 46/60 (client 0, 4600 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.15  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.80  bytea_raw24 4.97  bytea_freq 4.97  pgtoken_raw 4.76  pgtoken_freq 4.92  oracle_mem 4.56
+    block 47/60 (client 0, 4700 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.15  text_lz4_batch 6.50  text_lz4_forced 7.14  int4_array 5.81  bytea_raw24 4.98  bytea_freq 4.98  pgtoken_raw 4.75  pgtoken_freq 4.91  oracle_mem 4.55
+    block 48/60 (client 0, 4800 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.15  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.80  bytea_raw24 4.97  bytea_freq 4.97  pgtoken_raw 4.76  pgtoken_freq 4.91  oracle_mem 4.54
+    block 49/60 (client 0, 4900 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.80  bytea_raw24 4.96  bytea_freq 4.97  pgtoken_raw 4.75  pgtoken_freq 4.92  oracle_mem 4.54
+    block 50/60 (client 0, 5000 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.14  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.80  bytea_raw24 4.97  bytea_freq 4.96  pgtoken_raw 4.75  pgtoken_freq 4.92  oracle_mem 4.55
+    block 51/60 (client 0, 5100 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.15  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.81  bytea_raw24 4.97  bytea_freq 4.97  pgtoken_raw 4.75  pgtoken_freq 4.92  oracle_mem 4.55
+    block 52/60 (client 0, 5200 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.16  text_lz4_batch 6.51  text_lz4_forced 7.13  int4_array 5.81  bytea_raw24 4.98  bytea_freq 4.98  pgtoken_raw 4.76  pgtoken_freq 4.93  oracle_mem 4.56
+    block 53/60 (client 0, 5300 queries): e2e p50 ms  text_pglz 7.58  text_lz4 7.16  text_lz4_batch 6.51  text_lz4_forced 7.15  int4_array 5.81  bytea_raw24 4.97  bytea_freq 4.97  pgtoken_raw 4.75  pgtoken_freq 4.94  oracle_mem 4.56
+    block 54/60 (client 0, 5400 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.15  text_lz4_batch 6.51  text_lz4_forced 7.16  int4_array 5.81  bytea_raw24 4.96  bytea_freq 4.96  pgtoken_raw 4.75  pgtoken_freq 4.93  oracle_mem 4.56
+    block 55/60 (client 0, 5500 queries): e2e p50 ms  text_pglz 7.57  text_lz4 7.15  text_lz4_batch 6.51  text_lz4_forced 7.15  int4_array 5.82  bytea_raw24 4.96  bytea_freq 4.96  pgtoken_raw 4.75  pgtoken_freq 4.94  oracle_mem 4.56
+    block 56/60 (client 0, 5600 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.14  text_lz4_batch 6.51  text_lz4_forced 7.16  int4_array 5.83  bytea_raw24 4.97  bytea_freq 4.95  pgtoken_raw 4.74  pgtoken_freq 4.93  oracle_mem 4.56
+    block 57/60 (client 0, 5700 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.15  text_lz4_batch 6.51  text_lz4_forced 7.15  int4_array 5.83  bytea_raw24 4.97  bytea_freq 4.96  pgtoken_raw 4.74  pgtoken_freq 4.93  oracle_mem 4.56
+    block 58/60 (client 0, 5800 queries): e2e p50 ms  text_pglz 7.56  text_lz4 7.14  text_lz4_batch 6.51  text_lz4_forced 7.14  int4_array 5.81  bytea_raw24 4.96  bytea_freq 4.96  pgtoken_raw 4.75  pgtoken_freq 4.93  oracle_mem 4.55
+    block 59/60 (client 0, 5900 queries): e2e p50 ms  text_pglz 7.55  text_lz4 7.12  text_lz4_batch 6.50  text_lz4_forced 7.13  int4_array 5.81  bytea_raw24 4.96  bytea_freq 4.95  pgtoken_raw 4.75  pgtoken_freq 4.93  oracle_mem 4.54
+    block 60/60 (client 0, 6000 queries): e2e p50 ms  text_pglz 7.54  text_lz4 7.12  text_lz4_batch 6.49  text_lz4_forced 7.13  int4_array 5.81  bytea_raw24 4.95  bytea_freq 4.95  pgtoken_raw 4.74  pgtoken_freq 4.93  oracle_mem 4.54
+
+k=50, 1 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        7.54    8.32    9.10      5.06       2.48    33%    4.13     1891    2445    0.93x      0.66x      84   0.64  0.64    2.79    4.82
+  text (lz4)                         7.12    8.03    8.78      4.98       2.10    30%    4.19     1877    2445    1.00x      0.69x      87   0.62  0.62    2.40    4.75
+  text (lz4), batch tokenize         6.49    7.27    7.89      4.96       1.52    23%    4.21     1877    2445    1.10x      0.76x      92   0.60  0.60    3.46    4.72
+  text (lz4, forced)                 7.13    7.94    8.62      4.98       2.09    30%    4.25     1877    2445    1.01x      0.70x      87   0.62  0.62    2.39    4.75
+  int4[]                             5.81    6.51    7.27      5.71       0.09     2%    4.18     1398    4116    1.23x      0.85x      98   0.58  0.58    0.47    5.50
+  bytea raw24                        4.95    5.69    6.47      4.73       0.20     4%    4.07     1540    1536    1.44x      1.00x     109   0.54  0.54    0.44    4.50
+  bytea freq (client codec, no ext.)     4.95    5.70    6.39      4.66       0.29     6%    4.06      886     882    1.44x      1.00x     109   0.54  0.54    0.48    4.44
+  pgtoken raw (raw24)                4.74    5.52    6.39      4.67       0.07     2%    4.01     1546    1542    1.50x      1.05x     111   0.53  0.53    0.30    4.45
+  pgtoken freq                       4.93    5.75    6.46      4.65       0.27     6%    4.03      886     882    1.44x      1.01x     109   0.54  0.54    0.47    4.41
+  oracle: IDs already in memory      4.54    5.30    6.03      4.38       0.15     4%    3.99        0       0    1.57x      1.10x     115   0.52  0.52    0.28    4.15
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 600/600 queries, median per-query speedup 1.44x [1.43, 1.46], ratio of p50s 1.44x
+  pgtoken freq vs bytea raw24: faster in 321/600 queries, median per-query speedup 1.01x [1.00, 1.01], ratio of p50s 1.01x
+  disk nvme0n1: 0 reads, 0 MB in 85 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.67 ms/0 reads, text_lz4 4.93 ms/0 reads, text_lz4_batch 4.60 ms/0 reads, text_lz4_forced 5.01 ms/0 reads, int4_array 4.81 ms/0 reads, bytea_raw24 4.77 ms/0 reads, bytea_freq 4.63 ms/0 reads, pgtoken_raw 4.64 ms/0 reads, pgtoken_freq 4.58 ms/0 reads, oracle_mem 4.10 ms/0 reads
+
+== k=50, clients=4: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/15 (client 0, 100 queries): e2e p50 ms  text_pglz 8.91  text_lz4 7.88  text_lz4_batch 7.25  text_lz4_forced 7.64  int4_array 6.30  bytea_raw24 5.47  bytea_freq 5.60  pgtoken_raw 5.21  pgtoken_freq 5.43  oracle_mem 5.06
+    block 2/15 (client 0, 200 queries): e2e p50 ms  text_pglz 8.57  text_lz4 8.28  text_lz4_batch 7.04  text_lz4_forced 7.90  int4_array 6.28  bytea_raw24 5.34  bytea_freq 5.48  pgtoken_raw 5.00  pgtoken_freq 5.35  oracle_mem 4.88
+    block 3/15 (client 0, 300 queries): e2e p50 ms  text_pglz 8.18  text_lz4 7.89  text_lz4_batch 7.42  text_lz4_forced 7.98  int4_array 6.35  bytea_raw24 5.45  bytea_freq 5.53  pgtoken_raw 5.09  pgtoken_freq 5.30  oracle_mem 4.81
+    block 4/15 (client 0, 400 queries): e2e p50 ms  text_pglz 7.83  text_lz4 7.42  text_lz4_batch 7.07  text_lz4_forced 7.93  int4_array 6.22  bytea_raw24 5.23  bytea_freq 5.29  pgtoken_raw 4.90  pgtoken_freq 5.09  oracle_mem 4.68
+    block 5/15 (client 0, 500 queries): e2e p50 ms  text_pglz 7.74  text_lz4 7.27  text_lz4_batch 6.99  text_lz4_forced 7.76  int4_array 6.21  bytea_raw24 5.17  bytea_freq 5.09  pgtoken_raw 4.85  pgtoken_freq 5.02  oracle_mem 4.54
+    block 6/15 (client 0, 600 queries): e2e p50 ms  text_pglz 7.78  text_lz4 7.34  text_lz4_batch 7.03  text_lz4_forced 7.85  int4_array 6.25  bytea_raw24 5.24  bytea_freq 5.20  pgtoken_raw 4.89  pgtoken_freq 5.06  oracle_mem 4.66
+    block 7/15 (client 0, 700 queries): e2e p50 ms  text_pglz 7.91  text_lz4 7.50  text_lz4_batch 7.10  text_lz4_forced 7.88  int4_array 6.32  bytea_raw24 5.38  bytea_freq 5.32  pgtoken_raw 5.00  pgtoken_freq 5.23  oracle_mem 4.74
+    block 8/15 (client 0, 800 queries): e2e p50 ms  text_pglz 7.99  text_lz4 7.65  text_lz4_batch 7.07  text_lz4_forced 7.83  int4_array 6.24  bytea_raw24 5.25  bytea_freq 5.28  pgtoken_raw 5.01  pgtoken_freq 5.21  oracle_mem 4.71
+    block 9/15 (client 0, 900 queries): e2e p50 ms  text_pglz 8.08  text_lz4 7.65  text_lz4_batch 7.10  text_lz4_forced 7.67  int4_array 6.25  bytea_raw24 5.29  bytea_freq 5.31  pgtoken_raw 5.00  pgtoken_freq 5.28  oracle_mem 4.77
+    block 10/15 (client 0, 1000 queries): e2e p50 ms  text_pglz 8.08  text_lz4 7.60  text_lz4_batch 7.04  text_lz4_forced 7.69  int4_array 6.24  bytea_raw24 5.26  bytea_freq 5.28  pgtoken_raw 4.98  pgtoken_freq 5.27  oracle_mem 4.82
+    block 11/15 (client 0, 1100 queries): e2e p50 ms  text_pglz 8.16  text_lz4 7.64  text_lz4_batch 7.10  text_lz4_forced 7.77  int4_array 6.24  bytea_raw24 5.29  bytea_freq 5.26  pgtoken_raw 4.99  pgtoken_freq 5.27  oracle_mem 4.82
+    block 12/15 (client 0, 1200 queries): e2e p50 ms  text_pglz 8.15  text_lz4 7.71  text_lz4_batch 7.13  text_lz4_forced 7.82  int4_array 6.24  bytea_raw24 5.29  bytea_freq 5.24  pgtoken_raw 4.99  pgtoken_freq 5.27  oracle_mem 4.81
+    block 13/15 (client 0, 1300 queries): e2e p50 ms  text_pglz 8.07  text_lz4 7.65  text_lz4_batch 7.20  text_lz4_forced 7.74  int4_array 6.22  bytea_raw24 5.25  bytea_freq 5.21  pgtoken_raw 4.96  pgtoken_freq 5.23  oracle_mem 4.77
+    block 14/15 (client 0, 1400 queries): e2e p50 ms  text_pglz 8.04  text_lz4 7.63  text_lz4_batch 7.17  text_lz4_forced 7.73  int4_array 6.21  bytea_raw24 5.27  bytea_freq 5.21  pgtoken_raw 4.96  pgtoken_freq 5.23  oracle_mem 4.75
+    block 15/15 (client 0, 1500 queries): e2e p50 ms  text_pglz 8.04  text_lz4 7.63  text_lz4_batch 7.19  text_lz4_forced 7.82  int4_array 6.23  bytea_raw24 5.31  bytea_freq 5.21  pgtoken_raw 5.00  pgtoken_freq 5.25  oracle_mem 4.81
+
+k=50, 4 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        7.98    9.00    9.99      5.47       2.49    31%     nan     1891    2445    0.94x      0.67x     473   0.95  0.95    2.81    5.21
+  text (lz4)                         7.61    8.56    9.79      5.39       2.10    28%     nan     1877    2445    1.00x      0.71x     497   0.95  0.95    2.41    5.11
+  text (lz4), batch tokenize         7.21    8.09    9.10      5.45       1.63    23%     nan     1877    2445    1.06x      0.75x     522   0.95  0.95    3.80    5.17
+  text (lz4, forced)                 7.81    8.70    9.70      5.42       2.33    30%     nan     1877    2445    0.98x      0.69x     483   0.95  0.95    2.63    5.14
+  int4[]                             6.22    7.11    7.74      6.11       0.09     2%     nan     1398    4116    1.21x      0.86x     605   0.95  0.95    0.51    5.87
+  bytea raw24                        5.35    6.16    6.77      5.11       0.21     4%     nan     1540    1536    1.41x      1.00x     705   0.95  0.95    0.44    4.86
+  bytea freq (client codec, no ext.)     5.28    6.10    6.73      4.98       0.28     5%     nan      886     882    1.41x      1.01x     707   0.95  0.95    0.47    4.72
+  pgtoken raw (raw24)                5.02    5.89    6.54      4.95       0.07     1%     nan     1546    1542    1.49x      1.06x     745   0.95  0.95    0.30    4.75
+  pgtoken freq                       5.28    6.11    6.71      4.97       0.27     5%     nan      886     882    1.42x      1.01x     710   0.95  0.95    0.47    4.71
+  oracle: IDs already in memory      4.81    5.63    6.17      4.63       0.16     3%     nan        0       0    1.55x      1.10x     769   0.94  0.94    0.29    4.40
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 600/600 queries, median per-query speedup 1.42x [1.41, 1.43], ratio of p50s 1.44x
+  pgtoken freq vs bytea raw24: faster in 376/600 queries, median per-query speedup 1.01x [1.01, 1.01], ratio of p50s 1.01x
+  disk nvme0n1: 1 reads, 0 MB in 16 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.66 ms/0 reads, text_lz4 4.90 ms/0 reads, text_lz4_batch 4.52 ms/0 reads, text_lz4_forced 4.65 ms/0 reads, int4_array 4.50 ms/0 reads, bytea_raw24 4.58 ms/0 reads, bytea_freq 4.51 ms/0 reads, pgtoken_raw 4.60 ms/0 reads, pgtoken_freq 4.59 ms/0 reads, oracle_mem 4.05 ms/0 reads
+
+== k=50, clients=8: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/8 (client 0, 100 queries): e2e p50 ms  text_pglz 9.62  text_lz4 8.35  text_lz4_batch 7.89  text_lz4_forced 7.84  int4_array 6.64  bytea_raw24 5.73  bytea_freq 5.64  pgtoken_raw 5.36  pgtoken_freq 5.63  oracle_mem 4.95
+    block 2/8 (client 0, 200 queries): e2e p50 ms  text_pglz 8.96  text_lz4 8.98  text_lz4_batch 7.75  text_lz4_forced 7.83  int4_array 6.38  bytea_raw24 5.45  bytea_freq 5.44  pgtoken_raw 5.21  pgtoken_freq 5.54  oracle_mem 5.34
+    block 3/8 (client 0, 300 queries): e2e p50 ms  text_pglz 8.53  text_lz4 8.71  text_lz4_batch 8.22  text_lz4_forced 8.13  int4_array 6.39  bytea_raw24 5.38  bytea_freq 5.44  pgtoken_raw 5.23  pgtoken_freq 5.54  oracle_mem 5.12
+    block 4/8 (client 0, 400 queries): e2e p50 ms  text_pglz 8.53  text_lz4 8.49  text_lz4_batch 8.00  text_lz4_forced 8.29  int4_array 6.36  bytea_raw24 5.33  bytea_freq 5.37  pgtoken_raw 5.19  pgtoken_freq 5.50  oracle_mem 4.99
+    block 5/8 (client 0, 500 queries): e2e p50 ms  text_pglz 8.49  text_lz4 8.49  text_lz4_batch 7.90  text_lz4_forced 8.30  int4_array 6.35  bytea_raw24 5.32  bytea_freq 5.34  pgtoken_raw 5.15  pgtoken_freq 5.42  oracle_mem 4.97
+    block 6/8 (client 0, 600 queries): e2e p50 ms  text_pglz 8.58  text_lz4 8.50  text_lz4_batch 7.93  text_lz4_forced 8.38  int4_array 6.33  bytea_raw24 5.38  bytea_freq 5.46  pgtoken_raw 5.15  pgtoken_freq 5.42  oracle_mem 4.97
+    block 7/8 (client 0, 700 queries): e2e p50 ms  text_pglz 8.53  text_lz4 8.51  text_lz4_batch 8.00  text_lz4_forced 8.35  int4_array 6.35  bytea_raw24 5.43  bytea_freq 5.47  pgtoken_raw 5.17  pgtoken_freq 5.42  oracle_mem 4.98
+    block 8/8 (client 0, 750 queries): e2e p50 ms  text_pglz 8.54  text_lz4 8.50  text_lz4_batch 7.94  text_lz4_forced 8.38  int4_array 6.36  bytea_raw24 5.43  bytea_freq 5.47  pgtoken_raw 5.21  pgtoken_freq 5.47  oracle_mem 5.00
+
+k=50, 8 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                        8.63    9.83   10.86      5.75       2.85    33%     nan     1891    2445    0.94x      0.64x     855   0.93  0.93    3.20    5.53
+  text (lz4)                         8.10    9.32   10.23      5.60       2.45    30%     nan     1877    2445    1.00x      0.68x     899   0.92  0.92    2.79    5.39
+  text (lz4), batch tokenize         7.92    9.23   11.22      5.77       2.14    27%     nan     1877    2445    1.02x      0.69x     922   0.93  0.93    4.41    5.46
+  text (lz4, forced)                 8.42    9.58   10.41      5.62       2.77    33%     nan     1877    2445    0.96x      0.65x     869   0.92  0.92    3.12    5.37
+  int4[]                             6.39    7.26    8.03      6.23       0.16     2%     nan     1398    4116    1.25x      0.85x    1148   0.93  0.93    0.58    6.06
+  bytea raw24                        5.45    6.32    7.29      5.15       0.31     5%     nan     1540    1536    1.47x      1.00x    1332   0.93  0.93    0.56    5.01
+  bytea freq (client codec, no ext.)     5.54    6.38    7.20      5.18       0.38     7%     nan      886     882    1.44x      0.99x    1305   0.92  0.92    0.60    4.94
+  pgtoken raw (raw24)                5.17    6.02    6.62      5.07       0.10     2%     nan     1546    1542    1.55x      1.05x    1440   0.94  0.94    0.35    4.92
+  pgtoken freq                       5.46    6.28    6.94      5.09       0.37     7%     nan      886     882    1.47x      1.00x    1346   0.93  0.93    0.59    4.87
+  oracle: IDs already in memory      4.96    5.86    8.04      4.73       0.23     5%     nan        0       0    1.61x      1.10x    1430   0.91  0.91    0.37    4.51
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 599/600 queries, median per-query speedup 1.47x [1.45, 1.48], ratio of p50s 1.48x
+  pgtoken freq vs bytea raw24: faster in 322/600 queries, median per-query speedup 1.00x [1.00, 1.01], ratio of p50s 1.00x
+  disk nvme0n1: 0 reads, 0 MB in 11 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.67 ms/0 reads, text_lz4 4.91 ms/0 reads, text_lz4_batch 4.60 ms/0 reads, text_lz4_forced 4.79 ms/0 reads, int4_array 4.64 ms/0 reads, bytea_raw24 4.63 ms/0 reads, bytea_freq 4.50 ms/0 reads, pgtoken_raw 4.52 ms/0 reads, pgtoken_freq 4.54 ms/0 reads, oracle_mem 4.14 ms/0 reads
+
+== k=50, clients=16: 600 queries per arm, blocks of 10, sweep off, warm
+    block 1/4 (client 0, 100 queries): e2e p50 ms  text_pglz 11.95  text_lz4 12.37  text_lz4_batch 12.81  text_lz4_forced 12.86  int4_array 14.06  bytea_raw24 9.17  bytea_freq 11.75  pgtoken_raw 8.99  pgtoken_freq 9.61  oracle_mem 8.71
+    block 2/4 (client 0, 200 queries): e2e p50 ms  text_pglz 11.95  text_lz4 12.81  text_lz4_batch 12.81  text_lz4_forced 12.86  int4_array 12.74  bytea_raw24 9.17  bytea_freq 10.32  pgtoken_raw 10.80  pgtoken_freq 10.41  oracle_mem 8.63
+    block 3/4 (client 0, 300 queries): e2e p50 ms  text_pglz 12.05  text_lz4 12.67  text_lz4_batch 12.95  text_lz4_forced 12.86  int4_array 12.74  bytea_raw24 9.97  bytea_freq 10.53  pgtoken_raw 10.09  pgtoken_freq 10.41  oracle_mem 9.23
+    block 4/4 (client 0, 380 queries): e2e p50 ms  text_pglz 12.17  text_lz4 12.37  text_lz4_batch 13.03  text_lz4_forced 12.65  int4_array 12.54  bytea_raw24 9.98  bytea_freq 10.28  pgtoken_raw 9.57  pgtoken_freq 10.20  oracle_mem 9.12
+
+k=50, 16 client(s), 1000000 rows, 600 queries per arm, tokenizer hf-o200k, cache sweep off, regime warm, layout split, data /data/c4
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                       12.27   17.49   24.89      9.25       2.98    25%     nan     1891    2445    0.95x      0.78x    1085   0.89  0.89    3.35    6.06
+  text (lz4)                        11.99   16.83   21.86      9.07       2.87    25%     nan     1877    2445    1.00x      0.80x    1144   0.90  0.90    3.24    5.81
+  text (lz4), batch tokenize        13.10   18.69   26.71      9.74       2.72    22%     nan     1877    2445    0.94x      0.75x     941   0.81  0.81    4.92    5.84
+  text (lz4, forced)                12.61   16.92   22.66      8.96       3.60    29%     nan     1877    2445    0.95x      0.78x    1096   0.89  0.89    3.92    5.77
+  int4[]                            12.34   16.67   22.65     12.18       0.16     1%     nan     1398    4116    1.03x      0.84x    1155   0.87  0.87    0.61    6.22
+  bytea raw24                        9.97   13.90   18.25      9.65       0.33     3%     nan     1540    1536    1.24x      1.00x    1378   0.87  0.87    0.60    5.19
+  bytea freq (client codec, no ext.)     9.95   13.68   18.30      9.51       0.43     4%     nan      886     882    1.27x      1.02x    1382   0.86  0.86    0.66    5.11
+  pgtoken raw (raw24)                9.70   14.03   19.13      9.59       0.10     1%     nan     1546    1542    1.28x      1.03x    1398   0.87  0.87    0.37    5.16
+  pgtoken freq                       9.85   13.76   18.67      9.41       0.43     4%     nan      886     882    1.28x      1.02x    1425   0.88  0.88    0.65    5.10
+  oracle: IDs already in memory      8.95   12.48   16.83      8.74       0.25     3%     nan        0       0    1.41x      1.12x    1532   0.86  0.86    0.38    4.65
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 447/600 queries, median per-query speedup 1.28x [1.24, 1.33], ratio of p50s 1.22x
+  pgtoken freq vs bytea raw24: faster in 315/600 queries, median per-query speedup 1.02x [0.99, 1.04], ratio of p50s 1.01x
+  disk nvme0n1: 0 reads, 0 MB in 11 s = 0 read IOPS, 0.0 MB/s, 0.0 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 7.76 ms/0 reads, text_lz4 4.98 ms/0 reads, text_lz4_batch 4.60 ms/0 reads, text_lz4_forced 4.85 ms/0 reads, int4_array 4.78 ms/0 reads, bytea_raw24 4.82 ms/0 reads, bytea_freq 4.84 ms/0 reads, pgtoken_raw 4.88 ms/0 reads, pgtoken_freq 4.82 ms/0 reads, oracle_mem 4.48 ms/0 reads
+
+k=100: best throughput (queries/s) with e2e p99 under a target, over [1, 4, 8, 16] clients (clients used in brackets)
+  arm                                       p99<10ms        p99<25ms        p99<50ms       p99<100ms
+  text (pglz)                                      -         606 (8)        805 (16)        805 (16)
+  text (lz4)                                       -         642 (8)        836 (16)        836 (16)
+  text (lz4), batch tokenize                  75 (1)         664 (8)        723 (16)        723 (16)
+  text (lz4, forced)                               -         639 (8)        821 (16)        821 (16)
+  int4[]                                     913 (8)         913 (8)        925 (16)        925 (16)
+  bytea raw24                               1184 (8)       1249 (16)       1249 (16)       1249 (16)
+  bytea freq (client codec, no ext.)        1172 (8)       1276 (16)       1276 (16)       1276 (16)
+  pgtoken raw (raw24)                       1264 (8)       1281 (16)       1281 (16)       1281 (16)
+  pgtoken freq                              1199 (8)       1244 (16)       1244 (16)       1244 (16)
+  oracle: IDs already in memory             1300 (8)       1436 (16)       1436 (16)       1436 (16)
+
+k=10: best throughput (queries/s) with e2e p99 under a target, over [1, 4, 8, 16] clients (clients used in brackets)
+  arm                                       p99<10ms        p99<25ms        p99<50ms       p99<100ms
+  text (pglz)                               1316 (8)       1412 (16)       1412 (16)       1412 (16)
+  text (lz4)                                1325 (8)       1393 (16)       1393 (16)       1393 (16)
+  text (lz4), batch tokenize                1314 (8)       1376 (16)       1376 (16)       1376 (16)
+  text (lz4, forced)                        1342 (8)       1442 (16)       1442 (16)       1442 (16)
+  int4[]                                    1493 (8)        1493 (8)        1493 (8)        1493 (8)
+  bytea raw24                               1536 (8)        1536 (8)        1536 (8)        1536 (8)
+  bytea freq (client codec, no ext.)        1528 (8)        1528 (8)        1528 (8)        1528 (8)
+  pgtoken raw (raw24)                       1541 (8)        1541 (8)        1541 (8)        1541 (8)
+  pgtoken freq                              1515 (8)       1528 (16)       1528 (16)       1528 (16)
+  oracle: IDs already in memory             1596 (8)        1596 (8)        1596 (8)        1596 (8)
+
+k=50: best throughput (queries/s) with e2e p99 under a target, over [1, 4, 8, 16] clients (clients used in brackets)
+  arm                                       p99<10ms        p99<25ms        p99<50ms       p99<100ms
+  text (pglz)                                473 (4)       1085 (16)       1085 (16)       1085 (16)
+  text (lz4)                                 497 (4)       1144 (16)       1144 (16)       1144 (16)
+  text (lz4), batch tokenize                 522 (4)         922 (8)        941 (16)        941 (16)
+  text (lz4, forced)                         483 (4)       1096 (16)       1096 (16)       1096 (16)
+  int4[]                                    1148 (8)       1155 (16)       1155 (16)       1155 (16)
+  bytea raw24                               1332 (8)       1378 (16)       1378 (16)       1378 (16)
+  bytea freq (client codec, no ext.)        1305 (8)       1382 (16)       1382 (16)       1382 (16)
+  pgtoken raw (raw24)                       1440 (8)        1440 (8)        1440 (8)        1440 (8)
+  pgtoken freq                              1346 (8)       1425 (16)       1425 (16)       1425 (16)
+  oracle: IDs already in memory             1430 (8)       1532 (16)       1532 (16)       1532 (16)
+
+wrote /pgtoken/paper/runs/20261122-013952-c4-warm/results.json and queries.jsonl

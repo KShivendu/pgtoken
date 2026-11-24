@@ -1,0 +1,23 @@
+{
+ "args": {
+  "n": 500,
+  "models": "qwen3-0.6b,smollm2-360m",
+  "batch": 16,
+  "max_new": 256,
+  "threads": 2,
+  "greedy": false,
+  "seed": 20261122,
+  "smoke": false,
+  "name": null
+ },
+ "git": "b87cccc-dirty",
+ "host": "ip-172-31-20-237",
+ "python": "3.12.10 (main, May 30 2025, 05:37:37) [Clang 20.1.4 ]",
+ "torch": "2.15.0+cpu",
+ "loadavg": [
+  1.0498046875,
+  0.44140625,
+  0.16357421875
+ ],
+ "prompts": "tatsu-lab/alpaca train, seeded sample"
+}

@@ -1,0 +1,12 @@
+wildchat: 114841 test messages (110044 distinct), 118636 train messages
+  loaded text (pglz)   wc_text: total 88.0 MB (heap 69.7, TOAST 15.6, pkey 2.6), value avg 656 B, p50 320 B
+  loaded text (lz4)    wc_lz4: total 92.7 MB (heap 68.7, TOAST 21.4, pkey 2.6), value avg 690 B, p50 320 B
+  loaded tokens raw24  wc_raw: total 79.8 MB (heap 50.7, TOAST 26.4, pkey 2.6), value avg 592 B, p50 222 B
+  loaded tokens freq   wc_freq: total 45.2 MB (heap 37.4, TOAST 5.1, pkey 2.6), value avg 320 B, p50 137 B
+  example row 0: 306 tokens, 1397 B UTF-8: 'Hey there! Are you familiar with reality shifting? So, I’m refining a foolproof method for reality s'
+  example row 57420: 8 tokens, 27 B UTF-8: '中国哪家眼科最厉害'
+SELECT DISTINCT body (hash)              text (pglz)   449.3 ms | text (lz4)   327.6 ms | tokens raw24   312.4 ms | tokens freq   273.5 ms
+GROUP BY body (hash aggregate)           text (pglz)   445.3 ms | text (lz4)   310.8 ms | tokens raw24   307.8 ms | tokens freq   265.2 ms
+self join a.body = b.body (hash join)    text (pglz)  1146.7 ms | text (lz4)   689.0 ms | tokens raw24   640.5 ms | tokens freq   528.1 ms
+WHERE body = <one value> (scan)          text (pglz)    30.0 ms | text (lz4)    29.4 ms | tokens raw24   613.7 ms | tokens freq    48.2 ms
+wrote paper/runs/20261122-183708-wildchat-pg-eqfix/equality-v0.1.0.json

@@ -14,3 +14,9 @@ docs/
 # Benchmark run logs.
 benchmarks/*_run.log
 bench_data/
+
+# Paper runs: per-value and per-query dumps are tens of MB and regenerable from the scripts.
+# Summaries, results.json and logs are kept.
+paper/runs/**/values_*.jsonl
+paper/runs/**/queries.jsonl
+paper/runs/smoke/

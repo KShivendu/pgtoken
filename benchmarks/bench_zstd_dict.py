@@ -12,6 +12,10 @@ dictionary is digested once, as a server-side cache would). freq and raw16 run t
 pgtoken_rs, the extension's own Rust codec, for reference. Ratio = UTF-8 bytes / stored bytes,
 including pgtoken's 12-byte header for freq and raw16 (zstd's frame header is in its own size).
 
+Training cost (--train-sizes): both methods are also trained on 1k, 5k and 15k windows of 512
+tokens, and the wall time is recorded. freq training is one counting pass plus a sort. zstd's
+dictionary trainer (COVER) searches the samples and grows faster than linearly.
+
 Usage:
     uv run python benchmarks/bench_zstd_dict.py
 """
@@ -56,6 +60,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--chunks", type=int, default=200)
     ap.add_argument("--dict-kb", type=int, default=112)
+    ap.add_argument("--train-sizes", default="1000,5000,15000",
+                    help="numbers of 512-token windows to time training on (empty = skip)")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "zstd_dict_results.json"))
     args = ap.parse_args()
     enc = tiktoken.get_encoding("r50k_base")
@@ -63,6 +69,20 @@ def main() -> int:
 
     for dom in ("prose", "code"):
         train = T.load_ids(f"{dom}_train")
+        timing = []
+        for n in [int(x) for x in args.train_sizes.split(",") if x]:
+            n = min(n, len(train) // 512)
+            win = [train[i:i + 512].astype("<u2").tobytes() for i in range(0, n * 512, 512)]
+            t0 = time.perf_counter()
+            rank_table(train[: n * 512])
+            t_freq = time.perf_counter() - t0
+            t0 = time.perf_counter()
+            zstd.train_dictionary(args.dict_kb * 1024, win)
+            t_zstd = time.perf_counter() - t0
+            mtok = n * 512 / 1e6
+            timing.append({"windows": n, "m_tokens": mtok, "freq_s": t_freq, "zstd_dict_s": t_zstd})
+            print(f"{dom} train on {n} windows ({mtok:.2f}M tokens): freq {t_freq * 1e3:.1f} ms, "
+                  f"zstd dict {t_zstd * 1e3:.0f} ms ({t_zstd / t_freq:.0f}x)", flush=True)
         samples = [train[i:i + 512].astype("<u2").tobytes() for i in range(0, min(len(train), 15000 * 512), 512)]
         zdict = zstd.train_dictionary(args.dict_kb * 1024, samples)
         tbl = rank_table(train[:2_000_000])
@@ -96,6 +116,7 @@ def main() -> int:
                    [best_of(lambda b=b: zc.compress(b)) for b in raw],
                    [best_of(lambda b=b: np.frombuffer(zd.decompress(b), "<u2")) for b in blobs])
         res[dom] = rows
+        res[f"{dom}_train_time"] = timing
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump({"config": vars(args), "results": res}, f, indent=1)

@@ -1,0 +1,25 @@
+# Overrides for the dedicated benchmark box (16 vCPU). Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.bench.yml ...
+# Server and client on disjoint cores, so client tokenizing never takes server CPU.
+# The client is privileged only so the cold regime can write /proc/sys/vm/drop_caches.
+services:
+  server:
+    cpuset: "${SERVER_CPUS:-0-7}"
+    pid: host   # so the client can read each backend's CPU time from /proc/<pid>/schedstat
+    shm_size: 24g
+    command: ["postgres", "-c", "shared_buffers=${PG_SHARED_BUFFERS:-24GB}",
+              "-c", "effective_cache_size=${PG_EFFECTIVE_CACHE:-48GB}",
+              "-c", "maintenance_work_mem=${PG_MAINT_MEM:-16GB}",
+              "-c", "max_parallel_maintenance_workers=7"]
+  client:
+    cpuset: "${CLIENT_CPUS:-8-15}"
+    pid: host
+    privileged: true
+    environment:
+      PGTOKEN_DATA: /data
+      SERVER_CPUS_RECORDED: "${SERVER_CPUS:-0-7}"
+    volumes:
+      - /data:/data
+      # Scripts mounted live, so a script fix needs no image rebuild (deps stay in the image).
+      - ./:/pgtoken/paper
+      - ../benchmarks:/pgtoken/benchmarks

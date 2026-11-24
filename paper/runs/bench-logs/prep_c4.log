@@ -1,0 +1,30 @@
+  shard 0: 356317 docs, total 316661 chunks, 76 s
+  shard 1: 356318 docs, total 632162 chunks, 372 s
+  shard 2: 356317 docs, total 949185 chunks, 475 s
+  shard 3: 356317 docs, total 1000000 chunks, 502 s
+{
+ "name": "c4",
+ "source": "allenai/c4 en train shards 0..3",
+ "dim": null,
+ "chunk_tokens": 512,
+ "rows": 1000000,
+ "tokens": {
+  "1": 512.0,
+  "10": 512.0,
+  "25": 512.0,
+  "50": 512.0,
+  "75": 512.0,
+  "90": 512.0,
+  "99": 512.0
+ },
+ "tokens_mean": 511.999558,
+ "text_bytes_mean": 2444.056498,
+ "text_bytes": {
+  "25": 2331.0,
+  "50": 2452.0,
+  "90": 2690.0
+ },
+ "built_s": 511.05840849876404,
+ "tokenizer": "hf-o200k /opt/o200k/Xenova--gpt-4o@7956d98f2a83b2751a98ea7136fdf7fe6cf54e69.tokenizer.json"
+}
+EXIT 0

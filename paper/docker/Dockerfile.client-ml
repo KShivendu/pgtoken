@@ -1,0 +1,9 @@
+# Client image + CPU PyTorch, transformers and model2vec, for paper/consumer_share.py only.
+# Kept separate so the storage benchmarks' image stays small and unchanged.
+#   docker build -f paper/docker/Dockerfile.client-ml -t pgtoken-paper-client-ml:0.1.0 paper/docker
+FROM pgtoken-paper-client:0.1.0
+RUN uv pip install --python /opt/venv/bin/python \
+      --index-url https://download.pytorch.org/whl/cpu torch==2.15.0 \
+ && uv pip install --python /opt/venv/bin/python transformers==5.24.0 model2vec==0.10.0 \
+      safetensors huggingface_hub
+ENV HF_HOME=/data/hf

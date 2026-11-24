@@ -1,0 +1,9 @@
+**/target
+**/.venv
+**/__pycache__
+.git
+bench_data
+docs
+benchmarks/fixture
+benchmarks/*.log
+paper/runs

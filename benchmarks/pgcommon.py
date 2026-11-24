@@ -10,6 +10,13 @@ choice is deliberate: the read path's cost is "a text column re-tokenizes on eve
 modern tokenizer does that in microseconds, not the hundreds of microseconds a cold tiktoken
 rank table shows. Benchmarking against the fast tokenizer is the honest test. Override with
 PGTOKEN_TOKENIZER=tiktoken-r50k or tiktoken-o200k to compare.
+
+`hf-o200k` is the o200k vocabulary in HF `tokenizers` (a tokenizer.json converted from tiktoken's
+o200k_base, see O200K_HF below). paper/check_o200k.py checks it ID for ID against tiktoken
+o200k_base and times both, so the paper's text arms use whichever is faster.
+
+Set PGTOKEN_DSN (a libpq connection string) to use any server, e.g. the paper's Docker one, instead
+of the local no-root PostgreSQL from setup_pg.sh.
 """
 
 from __future__ import annotations
@@ -112,16 +119,67 @@ def _hf(model: str, repo: str) -> Tokenizer:
     )
 
 
+# o200k as a HF tokenizer.json. Pinned to a revision so a reviewer gets the same file; the check
+# script (paper/check_o200k.py) verifies it ID for ID against tiktoken before any run uses it.
+# PGTOKEN_O200K_DIR holds local copies named `<owner>--<repo>@<revision>.tokenizer.json` (the
+# client Docker image bakes them in); otherwise the file is downloaded once into ~/.cache/pgtoken.
+O200K_HF = {
+    "Xenova/gpt-4o": "7956d98f2a83b2751a98ea7136fdf7fe6cf54e69",
+    "openai/gpt-oss-20b": "6cee5e81ee83917806bbde320786a8fb61efebee",
+}
+O200K_HF_DEFAULT = "Xenova/gpt-4o"
+
+
+def hf_tokenizer_json(repo: str = O200K_HF_DEFAULT) -> str:
+    """Path to the pinned tokenizer.json of `repo`, downloading it once if needed."""
+    rev = O200K_HF[repo]
+    fname = f"{repo.replace('/', '--')}@{rev}.tokenizer.json"
+    for d in (os.environ.get("PGTOKEN_O200K_DIR"), os.path.expanduser("~/.cache/pgtoken")):
+        if d and os.path.isfile(os.path.join(d, fname)):
+            return os.path.join(d, fname)
+    import urllib.request
+
+    d = os.path.expanduser("~/.cache/pgtoken")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, fname)
+    url = f"https://huggingface.co/{repo}/resolve/{rev}/tokenizer.json"
+    urllib.request.urlretrieve(url, path + ".part")
+    os.replace(path + ".part", path)
+    return path
+
+
+def _hf_file(path: str, label: str, n_vocab: int | None = None) -> Tokenizer:
+    from tokenizers import Tokenizer as HF
+
+    tok = HF.from_file(path)
+    if n_vocab is None:
+        with open(path, encoding="utf-8") as f:
+            spec = json.load(f)
+        ids = list(spec.get("model", {}).get("vocab", {}).values())
+        ids += [t["id"] for t in spec.get("added_tokens", [])]
+        n_vocab = max(ids) + 1
+    t = Tokenizer(
+        label,
+        lambda s: tok.encode(s, add_special_tokens=False).ids,
+        lambda ids: tok.decode(ids, skip_special_tokens=False),
+        n_vocab,
+    )
+    t.hf = tok  # the raw object, for encode_batch in the paper scripts
+    return t
+
+
 def _tiktoken(enc_name: str, label: str) -> Tokenizer:
     import tiktoken
 
     enc = tiktoken.get_encoding(enc_name)
-    return Tokenizer(
+    t = Tokenizer(
         label,
         lambda t: enc.encode(t, disallowed_special=()),
         lambda ids: enc.decode(ids),
         enc.n_vocab,
     )
+    t.tt = enc  # the raw object, for encode_to_numpy / batch in the paper scripts
+    return t
 
 
 @functools.lru_cache(maxsize=1)
@@ -133,8 +191,12 @@ def encoder() -> Tokenizer:
         return _tiktoken("r50k_base", "tiktoken-r50k")
     if TOKENIZER == "tiktoken-o200k":
         return _tiktoken("o200k_base", "tiktoken-o200k")
+    if TOKENIZER == "hf-o200k":
+        # 200019 = tiktoken o200k_base n_vocab, which is also the pgtoken o200k preset's size.
+        return _hf_file(hf_tokenizer_json(), "hf-o200k", n_vocab=200019)
     raise SystemExit(
-        f"unknown PGTOKEN_TOKENIZER={TOKENIZER!r}; use hf-gpt2, tiktoken-r50k or tiktoken-o200k"
+        f"unknown PGTOKEN_TOKENIZER={TOKENIZER!r}; "
+        "use hf-gpt2, hf-o200k, tiktoken-r50k or tiktoken-o200k"
     )
 
 
@@ -172,6 +234,9 @@ def pg_env() -> dict:
 
 
 def connect(**kwargs) -> psycopg.Connection:
+    dsn = os.environ.get("PGTOKEN_DSN")
+    if dsn:
+        return psycopg.connect(dsn, autocommit=True, **kwargs)
     env = pg_env()
     return psycopg.connect(
         host=env["PGHOST"],
@@ -206,6 +271,34 @@ def load_corpus(domain: str = "prose", n_docs: int | None = None) -> list[str]:
     # per-value: none of them can see across rows, so cycling the corpus does not advantage
     # the token-native side. It would matter for a zstd --train baseline.
     return [texts[i % len(texts)] for i in range(n_docs)]
+
+
+def o200k_chunks(domain: str = "prose", split: str = "test", chunk_tokens: int = 512):
+    """Real chunks of about `chunk_tokens` o200k tokens, as (texts, o200k id arrays).
+
+    The corpus is stored as r50k ids (token-storage). Decode the whole split to text, encode it
+    with tiktoken o200k_base, cut consecutive non-overlapping windows of `chunk_tokens` ids, and
+    decode each window back to text (dropping a split UTF-8 character at either edge). The ids
+    stored for a chunk are then `encode(text)` again, so every arm stores exactly the ids that
+    tokenizing its text gives: the text arms' tokenize step must reproduce them ID for ID, and a
+    token count can differ from `chunk_tokens` by a token or two at the window edges.
+
+    Uses the *test* split only: the o200k preset's frequency table was counted over the train
+    splits (scripts/build_o200k_preset.py), so test chunks are held out from it. NUL characters
+    are removed, since a PostgreSQL text column cannot store them.
+    """
+    o200k = _tiktoken("o200k_base", "tiktoken-o200k").tt
+    r50k = _tiktoken("r50k_base", "r50k").tt
+    stream = o200k.encode(r50k.decode(T.load_ids(f"{domain}_{split}").tolist()), disallowed_special=())
+    texts, ids = [], []
+    for s in range(0, len(stream) - chunk_tokens + 1, chunk_tokens):
+        text = o200k.decode_bytes(stream[s : s + chunk_tokens]).decode("utf-8", errors="ignore")
+        # PostgreSQL text cannot hold NUL. A handful of C4 chunks carry one; drop it so every
+        # arm stores the same characters (ids are re-encoded from the cleaned text below).
+        text = text.replace("\x00", "")
+        texts.append(text)
+        ids.append(np.asarray(o200k.encode(text, disallowed_special=()), dtype=np.uint32))
+    return texts, ids
 
 
 def apply_schema(conn: psycopg.Connection) -> None:

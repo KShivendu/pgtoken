@@ -1,0 +1,22 @@
+# PostgreSQL 16 + pgvector + the released pgtoken 0.1.0 package. Used by every paper benchmark.
+#
+#   docker build -f paper/docker/Dockerfile.server -t pgtoken-paper-server:0.1.0 paper/docker
+#
+# The image installs the .deb from the GitHub release, not a local build, so a reviewer runs
+# exactly the published binary. v0.1.0 (tag 04ca8c3) and the benchmarked commit differ only in
+# README and the release workflow, so the tag matches the code.
+FROM pgvector/pgvector:pg16
+
+ARG PGTOKEN_VERSION=0.1.0
+ARG PGTOKEN_DEB_SHA256=0b07a4b5473de807ac2ffc81a4fc970cb9dc7ddfde4b0afb8391a93bc2693bf0
+ADD --checksum=sha256:${PGTOKEN_DEB_SHA256} \
+    https://github.com/KShivendu/pgtoken/releases/download/v${PGTOKEN_VERSION}/postgresql-16-pgtoken_${PGTOKEN_VERSION}_amd64.deb \
+    /tmp/pgtoken.deb
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends /tmp/pgtoken.deb \
+ && rm -rf /var/lib/apt/lists/* /tmp/pgtoken.deb
+
+# One settings file for every arm. initdb writes postgresql.conf; the init script appends an
+# `include` of this file, so these values override the defaults and are visible in SHOW.
+COPY postgresql.paper.conf /etc/postgresql/postgresql.paper.conf
+COPY 10-paper-settings.sh /docker-entrypoint-initdb.d/10-paper-settings.sh

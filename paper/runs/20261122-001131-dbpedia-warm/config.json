@@ -1,0 +1,434 @@
+{
+ "args": {
+  "data": "/data/dbpedia",
+  "rows": 999000,
+  "dim": 384,
+  "layout": "split",
+  "tag": "dbp",
+  "k": [
+   100,
+   10,
+   50
+  ],
+  "clients": [
+   1,
+   4,
+   8,
+   16
+  ],
+  "queries": 600,
+  "warmup": 20,
+  "block": 10,
+  "ef_search": 100,
+  "tokenizer": "hf-o200k",
+  "arms": [
+   "text_pglz",
+   "text_lz4",
+   "text_lz4_batch",
+   "text_lz4_forced",
+   "int4_array",
+   "bytea_raw24",
+   "bytea_freq",
+   "pgtoken_raw",
+   "pgtoken_freq",
+   "oracle_mem"
+  ],
+  "sweep": "both",
+  "cold": false,
+  "disk": "nvme0n1",
+  "load_only": false,
+  "p99_targets": [
+   10,
+   25,
+   50,
+   100
+  ],
+  "seed": 20261122,
+  "no_reuse": false,
+  "smoke": false,
+  "name": "dbpedia-warm"
+ },
+ "settings": {
+  "server_version": "16.16 (Debian 16.16-1.pgdg12+1)",
+  "shared_buffers": "24GB",
+  "work_mem": "64MB",
+  "maintenance_work_mem": "16GB",
+  "max_connections": "100",
+  "synchronous_commit": "off",
+  "jit": "off",
+  "default_toast_compression": "pglz",
+  "max_parallel_workers_per_gather": "0",
+  "max_parallel_maintenance_workers": "7",
+  "effective_cache_size": "48GB",
+  "vector": "0.8.7",
+  "pgtoken": "0.1.0"
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+  "cores": 16,
+  "affinity": [
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15
+  ],
+  "mem_gb": 61.8,
+  "host": "pgtoken-bench",
+  "python": "3.12.16",
+  "loadavg": [
+   1.31298828125,
+   2.7294921875,
+   2.626953125
+  ],
+  "git": "b87cccc-dirty"
+ },
+ "data": {
+  "source": "KShivendu/dbpedia-entities-openai-1M@af9b8869cc2d8debbd254d77737865bb09a2067f (/data/dbpedia)",
+  "rows": 999000,
+  "dim": 1536,
+  "tokens": {
+   "1": 20.0,
+   "10": 39.0,
+   "25": 58.0,
+   "50": 84.0,
+   "75": 104.0,
+   "90": 118.0,
+   "99": 147.0
+  },
+  "tokens_mean": 81.9442022022022,
+  "meta": {
+   "name": "dbpedia",
+   "source": "KShivendu/dbpedia-entities-openai-1M@af9b8869cc2d8debbd254d77737865bb09a2067f",
+   "dim": 1536,
+   "queries": 1000,
+   "queries_from": "1000 entities held out at random (seed 20261122)",
+   "body": "title + '\\n' + text",
+   "rows": 999000,
+   "tokens": {
+    "1": 20.0,
+    "10": 39.0,
+    "25": 58.0,
+    "50": 84.0,
+    "75": 104.0,
+    "90": 118.0,
+    "99": 147.0
+   },
+   "tokens_mean": 81.9442022022022,
+   "text_bytes_mean": 348.20854754754754,
+   "text_bytes": {
+    "25": 245.0,
+    "50": 367.0,
+    "90": 496.0
+   },
+   "built_s": 576.5762815475464,
+   "machine": {
+    "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+    "cores": 16,
+    "affinity": [
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15
+    ],
+    "mem_gb": 61.8,
+    "host": "docker",
+    "python": "3.12.16",
+    "loadavg": [
+     4.76904296875,
+     1.97119140625,
+     0.85205078125
+    ],
+    "git": "b87cccc-dirty"
+   },
+   "tokenizer": "hf-o200k /opt/o200k/Xenova--gpt-4o@7956d98f2a83b2751a98ea7136fdf7fe6cf54e69.tokenizer.json"
+  }
+ },
+ "arms": [
+  {
+   "key": "text_pglz",
+   "label": "text (pglz)",
+   "table": "text_pglz",
+   "coltype": "text",
+   "client": "tokenize"
+  },
+  {
+   "key": "text_lz4",
+   "label": "text (lz4)",
+   "table": "text_lz4",
+   "coltype": "text COMPRESSION lz4",
+   "client": "tokenize"
+  },
+  {
+   "key": "text_lz4_batch",
+   "label": "text (lz4), batch tokenize",
+   "table": "text_lz4",
+   "coltype": "text COMPRESSION lz4",
+   "client": "tokenize_batch"
+  },
+  {
+   "key": "text_lz4_forced",
+   "label": "text (lz4, forced)",
+   "table": "text_lz4_forced",
+   "coltype": "text COMPRESSION lz4",
+   "client": "tokenize"
+  },
+  {
+   "key": "int4_array",
+   "label": "int4[]",
+   "table": "int4_array",
+   "coltype": "int4[]",
+   "client": "int4"
+  },
+  {
+   "key": "bytea_raw24",
+   "label": "bytea raw24",
+   "table": "bytea_raw24",
+   "coltype": "bytea",
+   "client": "raw24"
+  },
+  {
+   "key": "bytea_freq",
+   "label": "bytea freq (client codec, no ext.)",
+   "table": "bytea_freq",
+   "coltype": "bytea",
+   "client": "pgtoken"
+  },
+  {
+   "key": "pgtoken_raw",
+   "label": "pgtoken raw (raw24)",
+   "table": "pgtoken_raw",
+   "coltype": "pgtoken.paper_o200k_raw",
+   "client": "pgtoken"
+  },
+  {
+   "key": "pgtoken_freq",
+   "label": "pgtoken freq",
+   "table": "pgtoken_freq",
+   "coltype": "pgtoken.o200k",
+   "client": "pgtoken"
+  },
+  {
+   "key": "oracle_mem",
+   "label": "oracle: IDs already in memory",
+   "table": "oracle",
+   "coltype": "",
+   "client": "oracle"
+  }
+ ],
+ "load": {
+  "dbp_vec": {
+   "reused": true
+  },
+  "dbp_text_pglz": {
+   "reused": true
+  },
+  "dbp_text_lz4": {
+   "reused": true
+  },
+  "dbp_text_lz4_forced": {
+   "copy_s": 4.558689869000091,
+   "hnsw_build_s": 0.0,
+   "freq_lz4_rows": null
+  },
+  "dbp_int4_array": {
+   "copy_s": 6.376378542000111,
+   "hnsw_build_s": 0.0,
+   "freq_lz4_rows": null
+  },
+  "dbp_bytea_raw24": {
+   "copy_s": 5.977490476000185,
+   "hnsw_build_s": 0.0,
+   "freq_lz4_rows": null
+  },
+  "dbp_bytea_freq": {
+   "copy_s": 7.351307994000081,
+   "hnsw_build_s": 0.0,
+   "freq_lz4_rows": 801071
+  },
+  "dbp_pgtoken_raw": {
+   "copy_s": 5.1071403400001145,
+   "hnsw_build_s": 0.0,
+   "freq_lz4_rows": null
+  },
+  "dbp_pgtoken_freq": {
+   "copy_s": 7.295519006000177,
+   "hnsw_build_s": 0.0,
+   "freq_lz4_rows": 801071
+  }
+ },
+ "storage": {
+  "bytea_freq": {
+   "table": "dbp_bytea_freq",
+   "heap_bytes": 190644224,
+   "toast_bytes": 98304,
+   "index_bytes": 22462464,
+   "rows_per_page": 42.92712272258508,
+   "body_bytes_per_row": 152.5926956956957,
+   "toasted_values": 25
+  },
+  "bytea_raw24": {
+   "table": "dbp_bytea_raw24",
+   "heap_bytes": 290037760,
+   "toast_bytes": 114688,
+   "index_bytes": 22462464,
+   "rows_per_page": 28.216353622369724,
+   "body_bytes_per_row": 249.29284184184183,
+   "toasted_values": 29
+  },
+  "int4_array": {
+   "table": "dbp_int4_array",
+   "heap_bytes": 394592256,
+   "toast_bytes": 131072,
+   "index_bytes": 22462464,
+   "rows_per_page": 20.739910313901344,
+   "body_bytes_per_row": 351.3585955955956,
+   "toasted_values": 34
+  },
+  "oracle": {
+   "table": "dbp_vec",
+   "heap_bytes": 52297728,
+   "toast_bytes": 8183808000,
+   "index_bytes": 8206278656,
+   "rows_per_page": 156.48496240601503,
+   "emb_bytes_per_row": 6148.0,
+   "toasted_values": 999000
+  },
+  "pgtoken_freq": {
+   "table": "dbp_pgtoken_freq",
+   "heap_bytes": 190644224,
+   "toast_bytes": 98304,
+   "index_bytes": 22462464,
+   "rows_per_page": 42.92712272258508,
+   "body_bytes_per_row": 152.5926956956957,
+   "toasted_values": 25
+  },
+  "pgtoken_raw": {
+   "table": "dbp_pgtoken_raw",
+   "heap_bytes": 295288832,
+   "toast_bytes": 376832,
+   "index_bytes": 22462464,
+   "rows_per_page": 27.71458691671753,
+   "body_bytes_per_row": 254.54182182182183,
+   "toasted_values": 92
+  },
+  "text_lz4": {
+   "table": "dbp_text_lz4",
+   "heap_bytes": 396697600,
+   "toast_bytes": 122880,
+   "index_bytes": 22462464,
+   "rows_per_page": 20.62983995869902,
+   "body_bytes_per_row": 351.7873143143143,
+   "toasted_values": 32
+  },
+  "text_lz4_forced": {
+   "table": "dbp_text_lz4_forced",
+   "heap_bytes": 397221888,
+   "toast_bytes": 0,
+   "index_bytes": 22462464,
+   "rows_per_page": 20.602610901441565,
+   "body_bytes_per_row": 351.78744244244245,
+   "toasted_values": 0
+  },
+  "text_pglz": {
+   "table": "dbp_text_pglz",
+   "heap_bytes": 396697600,
+   "toast_bytes": 122880,
+   "index_bytes": 22462464,
+   "rows_per_page": 20.62983995869902,
+   "body_bytes_per_row": 351.7625075075075,
+   "toasted_values": 33
+  }
+ },
+ "single_table_probe": {
+  "text_lz4": {
+   "heap_bytes": 8912896,
+   "toast_bytes": 163840000,
+   "rows_per_page": 18.38235294117647,
+   "body_bytes_per_row": 375.37275,
+   "emb_bytes_per_row": 6148.0,
+   "toasted_values": 20000
+  },
+  "pgtoken_freq": {
+   "heap_bytes": 4718592,
+   "toast_bytes": 163840000,
+   "rows_per_page": 37.5234521575985,
+   "body_bytes_per_row": 159.3314,
+   "emb_bytes_per_row": 6148.0,
+   "toasted_values": 20000
+  }
+ },
+ "examples": [
+  {
+   "pct": 25,
+   "row": 37,
+   "tokens": 58,
+   "utf8_bytes": 287,
+   "text": "Appellate court\nAn appellate court, commonly called an appeals court, court of appeals (American English), appeal court (British English), court of second instance or second instance court, is any court of law that is empowered to hear an appeal of a trial court or other lower tribunal.",
+   "stored_bytes": {
+    "text_pglz": 291,
+    "text_lz4": 291,
+    "text_lz4_forced": 291,
+    "int4_array": 256,
+    "bytea_raw24": 178,
+    "bytea_freq": 107,
+    "pgtoken_raw": 183,
+    "pgtoken_freq": 107
+   }
+  },
+  {
+   "pct": 50,
+   "row": 270,
+   "tokens": 84,
+   "utf8_bytes": 414,
+   "text": "Area\nArea is the quantity that expresses the extent of a two-dimensional figure or shape, or planar lamina, in the plane. Surface area is its analog on the two-dimensional surface of a  three-dimensional object. Area can be understood as the amount of material with a given thickness that would be ne",
+   "stored_bytes": {
+    "text_pglz": 418,
+    "text_lz4": 418,
+    "text_lz4_forced": 418,
+    "int4_array": 360,
+    "bytea_raw24": 256,
+    "bytea_freq": 143,
+    "pgtoken_raw": 261,
+    "pgtoken_freq": 143
+   }
+  },
+  {
+   "pct": 90,
+   "row": 384,
+   "tokens": 118,
+   "utf8_bytes": 502,
+   "text": "Alemanni\nThe Alemanni (also Alamanni; Suebi \"Swabians\") were a confederation of  Germanic tribes on the upper Rhine river. First mentioned  by Cassius Dio in the context of the campaign of Caracalla of 213, the Alemanni captured the Agri Decumates in 260, and later expanded into present-day Alsace, ",
+   "stored_bytes": {
+    "text_pglz": 506,
+    "text_lz4": 506,
+    "text_lz4_forced": 506,
+    "int4_array": 496,
+    "bytea_raw24": 358,
+    "bytea_freq": 228,
+    "pgtoken_raw": 363,
+    "pgtoken_freq": 228
+   }
+  }
+ ],
+ "cpus": {
+  "client_affinity": [
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15
+  ],
+  "server_cpuset": "0-7"
+ }
+}

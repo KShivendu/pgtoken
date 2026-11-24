@@ -1,0 +1,416 @@
+{
+ "args": {
+  "data": "/data/c4",
+  "rows": 1000000,
+  "dim": 384,
+  "layout": "split",
+  "tag": "c4",
+  "k": [
+   100
+  ],
+  "clients": [
+   1,
+   4
+  ],
+  "queries": 100,
+  "warmup": 3,
+  "block": 10,
+  "ef_search": 100,
+  "tokenizer": "hf-o200k",
+  "arms": [
+   "text_pglz",
+   "text_lz4",
+   "text_lz4_batch",
+   "text_lz4_forced",
+   "int4_array",
+   "bytea_raw24",
+   "bytea_freq",
+   "pgtoken_raw",
+   "pgtoken_freq",
+   "oracle_mem"
+  ],
+  "sweep": "auto",
+  "cold": true,
+  "disk": "nvme0n1",
+  "load_only": false,
+  "p99_targets": [
+   10,
+   25,
+   50,
+   100
+  ],
+  "seed": 20261122,
+  "no_reuse": false,
+  "smoke": false,
+  "name": "c4-cold"
+ },
+ "settings": {
+  "server_version": "16.16 (Debian 16.16-1.pgdg12+1)",
+  "shared_buffers": "128MB",
+  "work_mem": "64MB",
+  "maintenance_work_mem": "16GB",
+  "max_connections": "100",
+  "synchronous_commit": "off",
+  "jit": "off",
+  "default_toast_compression": "pglz",
+  "max_parallel_workers_per_gather": "0",
+  "max_parallel_maintenance_workers": "7",
+  "effective_cache_size": "48GB",
+  "vector": "0.8.7",
+  "pgtoken": "0.1.0"
+ },
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+  "cores": 16,
+  "affinity": [
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15
+  ],
+  "mem_gb": 61.8,
+  "host": "pgtoken-bench",
+  "python": "3.12.16",
+  "loadavg": [
+   3.060546875,
+   2.296875,
+   3.619140625
+  ],
+  "git": "b87cccc-dirty"
+ },
+ "data": {
+  "source": "allenai/c4 en train shards 0..3 (/data/c4)",
+  "rows": 1000000,
+  "dim": 384,
+  "tokens": {
+   "1": 512.0,
+   "10": 512.0,
+   "25": 512.0,
+   "50": 512.0,
+   "75": 512.0,
+   "90": 512.0,
+   "99": 512.0
+  },
+  "tokens_mean": 511.999558,
+  "meta": {
+   "name": "c4",
+   "source": "allenai/c4 en train shards 0..3",
+   "dim": null,
+   "chunk_tokens": 512,
+   "rows": 1000000,
+   "tokens": {
+    "1": 512.0,
+    "10": 512.0,
+    "25": 512.0,
+    "50": 512.0,
+    "75": 512.0,
+    "90": 512.0,
+    "99": 512.0
+   },
+   "tokens_mean": 511.999558,
+   "text_bytes_mean": 2444.056498,
+   "text_bytes": {
+    "25": 2331.0,
+    "50": 2452.0,
+    "90": 2690.0
+   },
+   "built_s": 511.05840849876404,
+   "machine": {
+    "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+    "cores": 16,
+    "affinity": [
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15
+    ],
+    "mem_gb": 61.8,
+    "host": "docker",
+    "python": "3.12.16",
+    "loadavg": [
+     6.181640625,
+     5.666015625,
+     3.11279296875
+    ],
+    "git": "b87cccc-dirty"
+   },
+   "tokenizer": "hf-o200k /opt/o200k/Xenova--gpt-4o@7956d98f2a83b2751a98ea7136fdf7fe6cf54e69.tokenizer.json"
+  }
+ },
+ "arms": [
+  {
+   "key": "text_pglz",
+   "label": "text (pglz)",
+   "table": "text_pglz",
+   "coltype": "text",
+   "client": "tokenize"
+  },
+  {
+   "key": "text_lz4",
+   "label": "text (lz4)",
+   "table": "text_lz4",
+   "coltype": "text COMPRESSION lz4",
+   "client": "tokenize"
+  },
+  {
+   "key": "text_lz4_batch",
+   "label": "text (lz4), batch tokenize",
+   "table": "text_lz4",
+   "coltype": "text COMPRESSION lz4",
+   "client": "tokenize_batch"
+  },
+  {
+   "key": "text_lz4_forced",
+   "label": "text (lz4, forced)",
+   "table": "text_lz4_forced",
+   "coltype": "text COMPRESSION lz4",
+   "client": "tokenize"
+  },
+  {
+   "key": "int4_array",
+   "label": "int4[]",
+   "table": "int4_array",
+   "coltype": "int4[]",
+   "client": "int4"
+  },
+  {
+   "key": "bytea_raw24",
+   "label": "bytea raw24",
+   "table": "bytea_raw24",
+   "coltype": "bytea",
+   "client": "raw24"
+  },
+  {
+   "key": "bytea_freq",
+   "label": "bytea freq (client codec, no ext.)",
+   "table": "bytea_freq",
+   "coltype": "bytea",
+   "client": "pgtoken"
+  },
+  {
+   "key": "pgtoken_raw",
+   "label": "pgtoken raw (raw24)",
+   "table": "pgtoken_raw",
+   "coltype": "pgtoken.paper_o200k_raw",
+   "client": "pgtoken"
+  },
+  {
+   "key": "pgtoken_freq",
+   "label": "pgtoken freq",
+   "table": "pgtoken_freq",
+   "coltype": "pgtoken.o200k",
+   "client": "pgtoken"
+  },
+  {
+   "key": "oracle_mem",
+   "label": "oracle: IDs already in memory",
+   "table": "oracle",
+   "coltype": "",
+   "client": "oracle"
+  }
+ ],
+ "load": {
+  "c4_vec": {
+   "reused": true
+  },
+  "c4_text_pglz": {
+   "reused": true
+  },
+  "c4_text_lz4": {
+   "reused": true
+  },
+  "c4_text_lz4_forced": {
+   "reused": true
+  },
+  "c4_int4_array": {
+   "reused": true
+  },
+  "c4_bytea_raw24": {
+   "reused": true
+  },
+  "c4_bytea_freq": {
+   "reused": true
+  },
+  "c4_pgtoken_raw": {
+   "reused": true
+  },
+  "c4_pgtoken_freq": {
+   "reused": true
+  }
+ },
+ "storage": {
+  "bytea_freq": {
+   "table": "c4_bytea_freq",
+   "heap_bytes": 994574336,
+   "toast_bytes": 0,
+   "index_bytes": 22487040,
+   "rows_per_page": 8.23668950975224,
+   "body_bytes_per_row": 886.146653,
+   "toasted_values": 0
+  },
+  "bytea_raw24": {
+   "table": "c4_bytea_raw24",
+   "heap_bytes": 1638400000,
+   "toast_bytes": 0,
+   "index_bytes": 22487040,
+   "rows_per_page": 5.0,
+   "body_bytes_per_row": 1539.998674,
+   "toasted_values": 0
+  },
+  "int4_array": {
+   "table": "c4_int4_array",
+   "heap_bytes": 1525678080,
+   "toast_bytes": 90644480,
+   "index_bytes": 22487040,
+   "rows_per_page": 5.369415807560137,
+   "body_bytes_per_row": 1397.589722,
+   "toasted_values": 33193
+  },
+  "oracle": {
+   "table": "c4_vec",
+   "heap_bytes": 1638400000,
+   "toast_bytes": 0,
+   "index_bytes": 2070495232,
+   "rows_per_page": 5.0,
+   "emb_bytes_per_row": 1544.0,
+   "toasted_values": 0
+  },
+  "pgtoken_freq": {
+   "table": "c4_pgtoken_freq",
+   "heap_bytes": 994574336,
+   "toast_bytes": 0,
+   "index_bytes": 22487040,
+   "rows_per_page": 8.23668950975224,
+   "body_bytes_per_row": 886.146653,
+   "toasted_values": 0
+  },
+  "pgtoken_raw": {
+   "table": "c4_pgtoken_raw",
+   "heap_bytes": 1638400000,
+   "toast_bytes": 0,
+   "index_bytes": 22487040,
+   "rows_per_page": 5.0,
+   "body_bytes_per_row": 1545.998674,
+   "toasted_values": 0
+  },
+  "text_lz4": {
+   "table": "c4_text_lz4",
+   "heap_bytes": 1609564160,
+   "toast_bytes": 566591488,
+   "index_bytes": 22487040,
+   "rows_per_page": 5.08957654723127,
+   "body_bytes_per_row": 1876.576014,
+   "toasted_values": 207492
+  },
+  "text_lz4_forced": {
+   "table": "c4_text_lz4_forced",
+   "heap_bytes": 2051538944,
+   "toast_bytes": 0,
+   "index_bytes": 22487040,
+   "rows_per_page": 3.9930999233324815,
+   "body_bytes_per_row": 1877.405982,
+   "toasted_values": 0
+  },
+  "text_pglz": {
+   "table": "c4_text_pglz",
+   "heap_bytes": 1446510592,
+   "toast_bytes": 747298816,
+   "index_bytes": 22487040,
+   "rows_per_page": 5.66328379847771,
+   "body_bytes_per_row": 1891.476797,
+   "toasted_values": 273667
+  }
+ },
+ "single_table_probe": {
+  "text_lz4": {
+   "heap_bytes": 33030144,
+   "toast_bytes": 42164224,
+   "rows_per_page": 4.9603174603174605,
+   "body_bytes_per_row": 1865.9686,
+   "emb_bytes_per_row": 1543.8058,
+   "toasted_values": 19996
+  },
+  "pgtoken_freq": {
+   "heap_bytes": 20447232,
+   "toast_bytes": 32735232,
+   "rows_per_page": 8.012820512820513,
+   "body_bytes_per_row": 886.9283,
+   "emb_bytes_per_row": 1540.0042,
+   "toasted_values": 19979
+  }
+ },
+ "examples": [
+  {
+   "pct": 25,
+   "row": 0,
+   "tokens": 512,
+   "utf8_bytes": 2313,
+   "text": "Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. Thursday, September 22nd join World Class BBQ Champion, Tony Balay from Lonestar Smoke Rangers. He will be teaching a beginner level class fo",
+   "stored_bytes": {
+    "text_pglz": 1694,
+    "text_lz4": 1818,
+    "text_lz4_forced": 1818,
+    "int4_array": 1449,
+    "bytea_raw24": 1540,
+    "bytea_freq": 897,
+    "pgtoken_raw": 1546,
+    "pgtoken_freq": 897
+   }
+  },
+  {
+   "pct": 50,
+   "row": 0,
+   "tokens": 512,
+   "utf8_bytes": 2313,
+   "text": "Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. Thursday, September 22nd join World Class BBQ Champion, Tony Balay from Lonestar Smoke Rangers. He will be teaching a beginner level class fo",
+   "stored_bytes": {
+    "text_pglz": 1694,
+    "text_lz4": 1818,
+    "text_lz4_forced": 1818,
+    "int4_array": 1449,
+    "bytea_raw24": 1540,
+    "bytea_freq": 897,
+    "pgtoken_raw": 1546,
+    "pgtoken_freq": 897
+   }
+  },
+  {
+   "pct": 90,
+   "row": 0,
+   "tokens": 512,
+   "utf8_bytes": 2313,
+   "text": "Beginners BBQ Class Taking Place in Missoula!\nDo you want to get better at making delicious BBQ? You will have the opportunity, put this on your calendar now. Thursday, September 22nd join World Class BBQ Champion, Tony Balay from Lonestar Smoke Rangers. He will be teaching a beginner level class fo",
+   "stored_bytes": {
+    "text_pglz": 1694,
+    "text_lz4": 1818,
+    "text_lz4_forced": 1818,
+    "int4_array": 1449,
+    "bytea_raw24": 1540,
+    "bytea_freq": 897,
+    "pgtoken_raw": 1546,
+    "pgtoken_freq": 897
+   }
+  }
+ ],
+ "cpus": {
+  "client_affinity": [
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15
+  ],
+  "server_cpuset": "0-7"
+ }
+}

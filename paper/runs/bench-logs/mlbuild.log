@@ -1,0 +1,86 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.client-ml
+#1 transferring dockerfile: 616B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/pgtoken-paper-client:0.1.0
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/2] FROM docker.io/library/pgtoken-paper-client:0.1.0@sha256:7aabd5782cc0af045da4ef3d70542aca936bbdbd63513d55e2eee191c70126bb
+#4 resolve docker.io/library/pgtoken-paper-client:0.1.0@sha256:7aabd5782cc0af045da4ef3d70542aca936bbdbd63513d55e2eee191c70126bb 0.0s done
+#4 DONE 0.1s
+
+#5 [2/2] RUN uv pip install --python /opt/venv/bin/python       --index-url https://download.pytorch.org/whl/cpu torch==2.15.0  && uv pip install --python /opt/venv/bin/python transformers==5.24.0 model2vec==0.10.0       safetensors huggingface_hub
+#5 0.429 Using Python 3.12.16 environment at: /opt/venv
+#5 0.818 Resolved 10 packages in 304ms
+#5 0.842 Downloading setuptools (1.2MiB)
+#5 0.842 Downloading networkx (2.0MiB)
+#5 0.842 Downloading sympy (6.0MiB)
+#5 0.845 Downloading torch (199.8MiB)
+#5 1.120  Downloading setuptools
+#5 1.153  Downloading networkx
+#5 1.562  Downloading sympy
+#5 5.657  Downloading torch
+#5 5.658 Prepared 7 packages in 4.83s
+#5 6.797 Installed 7 packages in 1.13s
+#5 6.798  + jinja2==3.1.6
+#5 6.798  + markupsafe==3.0.3
+#5 6.798  + mpmath==1.3.0
+#5 6.798  + networkx==3.7
+#5 6.798  + setuptools==78.1.0
+#5 6.798  + sympy==1.14.0
+#5 6.798  + torch==2.15.0+cpu
+#5 6.818 Using Python 3.12.16 environment at: /opt/venv
+#5 7.927 Resolved 36 packages in 1.07s
+#5 7.944 Downloading pydantic-core (2.2MiB)
+#5 7.945 Downloading transformers (12.9MiB)
+#5 7.945 Downloading pygments (1.2MiB)
+#5 7.953 Downloading tokenizers (3.2MiB)
+#5 8.069  Downloading pydantic-core
+#5 8.073  Downloading tokenizers
+#5 8.153  Downloading pygments
+#5 8.683  Downloading transformers
+#5 8.683 Prepared 17 packages in 752ms
+#5 8.687 Uninstalled 1 package in 3ms
+#5 8.864 Installed 17 packages in 177ms
+#5 8.864  + annotated-doc==0.0.7
+#5 8.864  + annotated-types==0.8.0
+#5 8.864  + cloudpickle==3.1.3
+#5 8.864  + joblib==1.6.0
+#5 8.864  + markdown-it-py==4.3.0
+#5 8.864  + mdurl==0.1.2
+#5 8.864  + model2vec==0.10.0
+#5 8.864  + pydantic==2.14.4
+#5 8.864  + pydantic-core==2.50.5
+#5 8.864  + pygments==2.21.0
+#5 8.864  + rich==15.0.0
+#5 8.864  + safetensors==0.9.0rc1
+#5 8.864  + shellingham==1.5.4
+#5 8.864  - tokenizers==1.0.0rc2
+#5 8.864  + tokenizers==0.23.3
+#5 8.864  + transformers==5.24.0
+#5 8.864  + typer==0.29.2
+#5 8.864  + typing-inspection==0.4.5
+#5 DONE 22.9s
+
+#6 exporting to image
+#6 exporting layers
+#6 exporting layers 121.1s done
+#6 exporting manifest sha256:9188604de24e437d24c95317413fcd6a62ed4a39a88bb24052752cb2ad04a21a 0.1s done
+#6 exporting config sha256:bedcfcfc7ed7eca659c1694ce1111e3c7a191e8cf2bf25ec93fc5d6e59e54544
+#6 exporting config sha256:bedcfcfc7ed7eca659c1694ce1111e3c7a191e8cf2bf25ec93fc5d6e59e54544 1.5s done
+#6 exporting attestation manifest sha256:9cb88b728d0b40768d41998e2f1ab87ce19adf8113f7f326108ed535801be16f
+#6 exporting attestation manifest sha256:9cb88b728d0b40768d41998e2f1ab87ce19adf8113f7f326108ed535801be16f 0.8s done
+#6 exporting manifest list sha256:f5bf767f5e877aa2d015a08081f9e337943b70d297ffd4441b8888cc110c527b
+#6 exporting manifest list sha256:f5bf767f5e877aa2d015a08081f9e337943b70d297ffd4441b8888cc110c527b 0.7s done
+#6 naming to docker.io/library/pgtoken-paper-client-ml:0.1.0
+#6 naming to docker.io/library/pgtoken-paper-client-ml:0.1.0 0.0s done
+#6 unpacking to docker.io/library/pgtoken-paper-client-ml:0.1.0
+#6 unpacking to docker.io/library/pgtoken-paper-client-ml:0.1.0 15.7s done
+#6 DONE 140.3s
+EXIT 0

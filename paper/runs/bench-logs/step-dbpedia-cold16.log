@@ -1,0 +1,76 @@
+ Container pgtoken-paper-server-1  Recreate
+ Container pgtoken-paper-server-1  Recreated
+ Container pgtoken-paper-server-1  Starting
+ Container pgtoken-paper-server-1  Started
+128MB
+run dir: /pgtoken/paper/runs/20261122-010737-dbpedia-cold16
+tokenizer for the text arms: hf-o200k (no check_o200k.py result found; defaulting)
+data: KShivendu/dbpedia-entities-openai-1M@af9b8869cc2d8debbd254d77737865bb09a2067f (/data/dbpedia); 999000 rows, dim 1536; o200k tokens per row p1 20, p10 39, p25 58, p50 84, p75 104, p90 118, p99 147, mean 81.9
+server: {'server_version': '16.16 (Debian 16.16-1.pgdg12+1)', 'shared_buffers': '128MB', 'work_mem': '64MB', 'maintenance_work_mem': '16GB', 'max_connections': '100', 'synchronous_commit': 'off', 'jit': 'off', 'default_toast_compression': 'pglz', 'max_parallel_workers_per_gather': '0', 'max_parallel_maintenance_workers': '7', 'effective_cache_size': '48GB', 'vector': '0.8.7', 'pgtoken': '0.1.0'}
+  vocabularies: {'o200k': 65280, 'paper_o200k_raw': 65281}; info {'o200k': (65280, 200019, 'freq', 3, 77463, '743afb3cae0eac236f9bece91973ebe3038539b557ac3dcc955bb0d9a1de42af', 309864, 200000, '5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7', 2197790, 'o200k'), 'paper_o200k_raw': (65281, 200019, 'raw', 3, None, None, None, 200000, '5c216d2c1a8df59564750fca6813223854b294ffa4f296e3f40a400668e14de7', 2197790, 'o200k')}
+  dbp_vec: reusing (999000 rows)
+  dbp_text_pglz: reusing (999000 rows)
+  dbp_text_lz4: reusing (999000 rows)
+  dbp_text_lz4_forced: reusing (999000 rows)
+  dbp_int4_array: reusing (999000 rows)
+  dbp_bytea_raw24: reusing (999000 rows)
+  dbp_bytea_freq: reusing (999000 rows)
+  dbp_pgtoken_raw: reusing (999000 rows)
+  dbp_pgtoken_freq: reusing (999000 rows)
+  storage bytea_freq: table dbp_bytea_freq, heap_bytes 190644224, toast_bytes 98304, index_bytes 22462464, rows_per_page 42.9, body_bytes_per_row 152.6, toasted_values 25
+  storage bytea_raw24: table dbp_bytea_raw24, heap_bytes 290037760, toast_bytes 114688, index_bytes 22462464, rows_per_page 28.2, body_bytes_per_row 249.3, toasted_values 29
+  storage int4_array: table dbp_int4_array, heap_bytes 394592256, toast_bytes 131072, index_bytes 22462464, rows_per_page 20.7, body_bytes_per_row 351.4, toasted_values 34
+  storage oracle: table dbp_vec, heap_bytes 52297728, toast_bytes 8183808000, index_bytes 8206278656, rows_per_page 156.5, emb_bytes_per_row 6148.0, toasted_values 999000
+  storage pgtoken_freq: table dbp_pgtoken_freq, heap_bytes 190644224, toast_bytes 98304, index_bytes 22462464, rows_per_page 42.9, body_bytes_per_row 152.6, toasted_values 25
+  storage pgtoken_raw: table dbp_pgtoken_raw, heap_bytes 295288832, toast_bytes 376832, index_bytes 22462464, rows_per_page 27.7, body_bytes_per_row 254.5, toasted_values 92
+  storage text_lz4: table dbp_text_lz4, heap_bytes 396697600, toast_bytes 122880, index_bytes 22462464, rows_per_page 20.6, body_bytes_per_row 351.8, toasted_values 32
+  storage text_lz4_forced: table dbp_text_lz4_forced, heap_bytes 397221888, toast_bytes 0, index_bytes 22462464, rows_per_page 20.6, body_bytes_per_row 351.8, toasted_values 0
+  storage text_pglz: table dbp_text_pglz, heap_bytes 396697600, toast_bytes 122880, index_bytes 22462464, rows_per_page 20.6, body_bytes_per_row 351.8, toasted_values 33
+  if emb and body shared one table (text_lz4, first 20000 rows): heap_bytes 8912896, toast_bytes 163840000, rows_per_page 18.4, body_bytes_per_row 375.4, emb_bytes_per_row 6148.0, toasted_values 20000
+  if emb and body shared one table (pgtoken_freq, first 20000 rows): heap_bytes 4718592, toast_bytes 163840000, rows_per_page 37.5, body_bytes_per_row 159.3, emb_bytes_per_row 6148.0, toasted_values 20000
+  example p25 row 37: 58 tokens, 287 B UTF-8, stored {'text_pglz': 291, 'text_lz4': 291, 'text_lz4_forced': 291, 'int4_array': 256, 'bytea_raw24': 178, 'bytea_freq': 107, 'pgtoken_raw': 183, 'pgtoken_freq': 107}: 'Appellate court\nAn appellate court, commonly called an appeals court, court of appeals (American English), appeal court (British English), court of second insta'
+  example p50 row 270: 84 tokens, 414 B UTF-8, stored {'text_pglz': 418, 'text_lz4': 418, 'text_lz4_forced': 418, 'int4_array': 360, 'bytea_raw24': 256, 'bytea_freq': 143, 'pgtoken_raw': 261, 'pgtoken_freq': 143}: 'Area\nArea is the quantity that expresses the extent of a two-dimensional figure or shape, or planar lamina, in the plane. Surface area is its analog on the two-'
+  example p90 row 384: 118 tokens, 502 B UTF-8, stored {'text_pglz': 506, 'text_lz4': 506, 'text_lz4_forced': 506, 'int4_array': 496, 'bytea_raw24': 358, 'bytea_freq': 228, 'pgtoken_raw': 363, 'pgtoken_freq': 228}: 'Alemanni\nThe Alemanni (also Alamanni; Suebi "Swabians") were a confederation of  Germanic tribes on the upper Rhine river. First mentioned  by Cassius Dio in th'
+
+== k=100, clients=16: 160 queries per arm, blocks of 10, sweep off, COLD
+    block 1/1 (client 0, 100 queries): e2e p50 ms  text_pglz 341.30  text_lz4 315.69  text_lz4_batch 350.06  text_lz4_forced 315.53  int4_array 356.07  bytea_raw24 292.62  bytea_freq 276.06  pgtoken_raw 302.96  pgtoken_freq 266.01  oracle_mem 5.94
+
+k=100, 16 client(s), 999000 rows, 160 queries per arm, tokenizer hf-o200k, cache sweep off, regime COLD, layout split, data /data/dbpedia
+  arm                             e2e p50     p90     p99 fetch p50 decode p50 decode ann p50 stored B  wire B x vs lz4 x vs raw24     qps Little  busy cli CPU srv CPU
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  text (pglz)                      452.62  897.10 9459.64    451.31       1.39     0%     nan      352     335    0.95x      0.92x       2   0.09  0.09    1.99   11.24
+  text (lz4)                       407.80  739.11  989.47    406.91       0.86     0%     nan      352     335    1.00x      0.97x       2   0.06  0.06    1.40   10.00
+  text (lz4), batch tokenize       437.84  776.34 5865.62    437.04       1.01     0%     nan      352     335    1.01x      0.97x       2   0.07  0.07    2.57   11.02
+  text (lz4, forced)               428.16  707.93  906.80    427.27       0.90     0%     nan      352     335    0.98x      0.95x       2   0.06  0.06    1.43   10.21
+  int4[]                           466.51  845.55 7018.12    466.34       0.18     0%     nan      351     656    0.98x      0.92x       2   0.08  0.08    0.90   11.27
+  bytea raw24                      403.16  721.82 1292.25    402.92       0.23     0%     nan      249     238    1.03x      1.00x       2   0.06  0.06    0.71    9.84
+  bytea freq (client codec, no ext.)   367.66  815.70 5919.96    367.41       0.23     0%     nan      153     144    1.13x      1.08x       2   0.06  0.06    0.65   10.03
+  pgtoken raw (raw24)              397.42  728.39 2962.89    397.30       0.12     0%     nan      255     244    1.05x      1.01x       2   0.06  0.06    0.60   10.19
+  pgtoken freq                     352.44  788.57 5902.94    352.24       0.23     0%     nan      153     144    1.10x      1.09x       2   0.07  0.07    0.65   10.10
+  oracle: IDs already in memory      6.00    9.63   17.65      5.87       0.14     2%     nan        0       0   66.11x     66.26x       2   0.00  0.00    0.34    5.20
+  check: every arm returned exactly the loaded ids for every fetched row
+  ms; 'decode' = decode p50 share of e2e (per query); 'x vs' = median per-query speedup (>1 = faster than that baseline); Little = throughput x mean e2e / clients, busy = time inside queries / (clients x wall); both should be ~1.00 at >1 client (at 1 client the cache sweep and the ANN-only query are uncounted time); cli/srv CPU = p50 CPU ms per query in the client process (all threads) and in its PostgreSQL backend
+  pgtoken freq vs text (lz4): faster in 123/160 queries, median per-query speedup 1.10x [1.06, 1.16], ratio of p50s 1.16x
+  pgtoken freq vs bytea raw24: faster in 111/160 queries, median per-query speedup 1.09x [1.03, 1.15], ratio of p50s 1.14x
+  disk nvme0n1: 2608939 reads, 23042 MB in 872 s = 2992 read IOPS, 26.4 MB/s, 1630.6 reads per query (gp3 baseline: 3000 IOPS, 125 MB/s)
+  EXPLAIN (server, ANN + row visits, no detoast): text_pglz 1402.73 ms/1845 reads, text_lz4 1423.46 ms/1753 reads, text_lz4_batch 1393.33 ms/1746 reads, text_lz4_forced 1400.69 ms/1752 reads, int4_array 1385.20 ms/1755 reads, bytea_raw24 1449.89 ms/1748 reads, bytea_freq 1277.59 ms/1748 reads, pgtoken_raw 1483.92 ms/1748 reads, pgtoken_freq 1400.11 ms/1748 reads, oracle_mem 1298.82 ms/1642 reads
+
+k=100: best throughput (queries/s) with e2e p99 under a target, over [16] clients (clients used in brackets)
+  arm                                       p99<10ms        p99<25ms        p99<50ms       p99<100ms
+  text (pglz)                                      -               -               -               -
+  text (lz4)                                       -               -               -               -
+  text (lz4), batch tokenize                       -               -               -               -
+  text (lz4, forced)                               -               -               -               -
+  int4[]                                           -               -               -               -
+  bytea raw24                                      -               -               -               -
+  bytea freq (client codec, no ext.)               -               -               -               -
+  pgtoken raw (raw24)                              -               -               -               -
+  pgtoken freq                                     -               -               -               -
+  oracle: IDs already in memory                    -          2 (16)          2 (16)          2 (16)
+
+wrote /pgtoken/paper/runs/20261122-010737-dbpedia-cold16/results.json and queries.jsonl
+ Container pgtoken-paper-server-1  Recreate
+ Container pgtoken-paper-server-1  Recreated
+ Container pgtoken-paper-server-1  Starting
+ Container pgtoken-paper-server-1  Started
+24GB
