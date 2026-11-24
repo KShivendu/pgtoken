@@ -1,0 +1,3 @@
+-- pgtoken 0.1.1 -> 0.1.2. No catalog changes: 0.1.2 only changes the C code behind
+-- `pgtoken.tokens_eq` and `pgtoken.tokens_ne` (same symbols), so `ALTER EXTENSION pgtoken UPDATE`
+-- has nothing to run here.
