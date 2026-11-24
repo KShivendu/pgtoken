@@ -181,6 +181,35 @@ impl Header {
     /// this function came off disk or off the wire, and silently reinterpreting it would hand
     /// back plausible-looking wrong IDs.
     pub fn parse(buf: &[u8]) -> Result<(Header, &[u8]), HeaderError> {
+        let (header, len) = Header::parse_prefix(buf)?;
+        let (codec, vocabulary_id, n_tokens) =
+            (header.codec, header.vocabulary_id, header.n_tokens);
+        let used = len - FIXED_LEN;
+
+        // `freq` cannot decode without its ranking, so a zero id is a broken value. The converse
+        // is deliberately allowed: a `raw` value names the vocabulary it belongs to even though
+        // the codec itself needs nothing from it.
+        if codec.needs_table() && vocabulary_id == 0 {
+            return Err(HeaderError::MissingTable(codec));
+        }
+
+        let payload = &buf[FIXED_LEN + used..];
+        Header::check_payload(codec, n_tokens, payload)?;
+        Ok((
+            Header {
+                codec,
+                vocabulary_id,
+                n_tokens,
+            },
+            payload,
+        ))
+    }
+
+    /// Read only the header from the first bytes of a value, and return it with its length in
+    /// bytes. Nothing about the payload is checked, so `buf` may be just the first
+    /// [`MAX_HEADER_LEN`] bytes. Equality uses this to rule out a pair of values from their
+    /// headers without fetching a long value from TOAST.
+    pub fn parse_prefix(buf: &[u8]) -> Result<(Header, usize), HeaderError> {
         let Some(&tag) = buf.first() else {
             return Err(HeaderError::TooShort(0));
         };
@@ -198,15 +227,19 @@ impl Header {
         if n_tokens > MAX_TOKENS {
             return Err(HeaderError::TooManyTokens(n_tokens));
         }
+        Ok((
+            Header {
+                codec,
+                vocabulary_id,
+                n_tokens,
+            },
+            FIXED_LEN + used,
+        ))
+    }
 
-        // `freq` cannot decode without its ranking, so a zero id is a broken value. The converse
-        // is deliberately allowed: a `raw` value names the vocabulary it belongs to even though
-        // the codec itself needs nothing from it.
-        if codec.needs_table() && vocabulary_id == 0 {
-            return Err(HeaderError::MissingTable(codec));
-        }
-
-        let payload = &buf[FIXED_LEN + used..];
+    /// The payload checks of [`Header::parse`]: raw payloads are exactly `count * width` bytes,
+    /// and `freq` / `freq_lz4` payloads are in the range their count allows.
+    fn check_payload(codec: Codec, n_tokens: u32, payload: &[u8]) -> Result<(), HeaderError> {
         match codec.width() {
             Some(width) => {
                 let want = n_tokens as usize * width;
@@ -237,14 +270,7 @@ impl Header {
                 }
             }
         }
-        Ok((
-            Header {
-                codec,
-                vocabulary_id,
-                n_tokens,
-            },
-            payload,
-        ))
+        Ok(())
     }
 }
 

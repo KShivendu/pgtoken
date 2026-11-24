@@ -23,7 +23,7 @@ compiled extension on the server, which hosted services such as RDS or Supabase 
 <sub>Background: [blog](https://www.kshivendu.dev/blog/token-storage) ·
 [paper](https://arxiv.org/abs/2608.02376)</sub>
 
-> Early days. Version 0.1.0, PostgreSQL 14 to 18, Linux. The API may still change.
+> Early days. Version 0.1.1, PostgreSQL 14 to 18, Linux. The API may still change.
 
 ## Install
 
@@ -31,8 +31,8 @@ compiled extension on the server, which hosted services such as RDS or Supabase 
 the [latest release](https://github.com/KShivendu/pgtoken/releases/latest). No Rust needed:
 
 ```sh
-curl -LO https://github.com/KShivendu/pgtoken/releases/download/v0.1.0/postgresql-16-pgtoken_0.1.0_amd64.deb
-sudo apt install ./postgresql-16-pgtoken_0.1.0_amd64.deb
+curl -LO https://github.com/KShivendu/pgtoken/releases/download/v0.1.1/postgresql-16-pgtoken_0.1.1_amd64.deb
+sudo apt install ./postgresql-16-pgtoken_0.1.1_amd64.deb
 ```
 
 There is one package for each PostgreSQL version from 14 to 18, for `amd64` and `arm64`.

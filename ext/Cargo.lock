@@ -1148,7 +1148,7 @@ dependencies = [
 
 [[package]]
 name = "pgtoken"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fancy-regex",
  "pgrx",
@@ -1160,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "pgtoken-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lz4_flex",
  "sha2 0.10.9",

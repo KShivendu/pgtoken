@@ -143,6 +143,31 @@ pub fn canonical(value: &[u8]) -> Result<Cow<'_, [u8]>, ValueError> {
     Ok(Cow::Owned(out))
 }
 
+/// Settle [`same`] from the two headers and the two values' full lengths alone, when they allow
+/// it: `Some(false)` when the values cannot hold the same tokens, `None` when the bytes must be
+/// compared. Never `Some(true)`. Agrees with [`same`] by construction: values of different lengths
+/// are different bytes, and different bytes are only equal when one side is `freq_lz4` and the
+/// headers agree on vocabulary, codec family and token count.
+///
+/// This is what lets `=` skip a long value without detoasting it, the way PostgreSQL's text
+/// equality compares lengths first. The headers come from [`Header::parse_prefix`], so only the
+/// first bytes of each value are read.
+pub fn settle_by_header(a: &Header, a_len: usize, b: &Header, b_len: usize) -> Option<bool> {
+    if a_len == b_len {
+        return None;
+    }
+    if a.vocabulary_id != b.vocabulary_id
+        || a.n_tokens != b.n_tokens
+        || a.codec.family() != b.codec.family()
+    {
+        return Some(false);
+    }
+    if a.codec != Codec::FreqLz4 && b.codec != Codec::FreqLz4 {
+        return Some(false);
+    }
+    None
+}
+
 /// Whether two stored values hold the same tokens under the same vocabulary. Identical bytes
 /// answer at once; a `freq_lz4` value is decompressed only when the bytes differ and the
 /// headers agree on vocabulary, codec family and token count.
@@ -483,6 +508,45 @@ mod tests {
         );
         assert_eq!(decode(&v, Some(&t)).unwrap(), ids);
         assert_eq!(describe(&v).unwrap().0.n_tokens, ids.len() as u32);
+    }
+
+    #[test]
+    fn settling_by_header_never_contradicts_same() {
+        // Every pair from a pool of values: equal tokens in several byte forms (plain freq,
+        // freq_lz4, an all-literal lz4 block), other token lists, other vocabularies and the raw
+        // codecs. Whenever the headers settle a pair, `same` must agree, reading only a prefix.
+        let t = table();
+        let ids = repetitive();
+        let ours = encode(&ids, Codec::Freq, 1, Some(&t)).unwrap();
+        let plain = canonical(&ours).unwrap().into_owned();
+        let mut pool = vec![ours.clone(), plain];
+        pool.push(encode(&ids[1..], Codec::Freq, 1, Some(&t)).unwrap());
+        pool.push(encode(&ids, Codec::Freq, 2, Some(&t)).unwrap());
+        pool.push(encode(&[3, 1, 2], Codec::Freq, 1, Some(&t)).unwrap());
+        pool.push(encode(&[3, 1, 2, 2], Codec::Freq, 1, Some(&t)).unwrap());
+        pool.push(encode(&[3, 1, 2], Codec::Raw24, 1, None).unwrap());
+        pool.push(encode(&[3, 1, 2, 2], Codec::Raw24, 1, None).unwrap());
+        pool.push(encode(&[3, 1, 2], Codec::Raw16, 1, None).unwrap());
+        let mut settled = 0;
+        for a in &pool {
+            for b in &pool {
+                let (ha, _) = Header::parse_prefix(&a[..a.len().min(MAX_HEADER_LEN)]).unwrap();
+                let (hb, _) = Header::parse_prefix(&b[..b.len().min(MAX_HEADER_LEN)]).unwrap();
+                if let Some(v) = settle_by_header(&ha, a.len(), &hb, b.len()) {
+                    settled += 1;
+                    assert_eq!(v, same(a, b).unwrap(), "{a:?} vs {b:?}");
+                }
+            }
+        }
+        assert!(
+            settled > pool.len(),
+            "the shortcut should settle most unequal pairs"
+        );
+        // Equal tokens in two byte forms of different lengths are left to the full compare.
+        let (h1, _) = Header::parse_prefix(&ours).unwrap();
+        let plain = canonical(&ours).unwrap();
+        let (h2, _) = Header::parse_prefix(&plain).unwrap();
+        assert_eq!(settle_by_header(&h1, ours.len(), &h2, plain.len()), None);
     }
 
     #[test]

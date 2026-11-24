@@ -476,6 +476,10 @@ struct ResolvedConstant {
     /// The resolved side's vocabulary id and codec, which together pick the encoding.
     target: (u16, u8),
     resolved: Vec<u8>,
+    /// Per argument of this call site, whether its declared type carries a typmod. A value of
+    /// such a column or domain is always resolved (the typmod coercion or `RECEIVE`'s check ran
+    /// before it was stored). `None` until first computed.
+    args_resolved: Option<[bool; 2]>,
 }
 
 /// Compare two values, resolving an unresolved one against the other's vocabulary first.
@@ -740,14 +744,171 @@ fn tokenize(text: &str, vocabulary: &str) -> Vec<i32> {
 // ORDER BY on purpose: the freq codec remaps ids to frequency rank before packing, so byte order
 // says nothing about the ids or the text. Sort on pgtoken.text(body) when you want alphabetical.
 
-#[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_eq_impl(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
-    tokens_equal(a, b, fcinfo)
+//
+// `=` and `<>` are hand-written rather than `#[pg_extern]`, because a `&[u8]` argument is detoasted
+// in full before the function runs. Like PostgreSQL's `texteq`, they first compare the two values'
+// raw sizes, which needs no detoasting. When the sizes differ, the first bytes of each value (its
+// header: vocabulary, codec, token count) usually settle the answer, so a long value that cannot
+// match is never fetched from TOAST. Only an undecided pair is detoasted and compared in full.
+// `WHERE body = <value>` over WildChat messages went from 564 ms (raw24) and 51 ms (freq) to
+// within a few ms of text's 29 ms. The C symbols keep pgrx's `_wrapper` names, so catalogs
+// created by earlier builds point at these unchanged.
+
+#[no_mangle]
+pub extern "C" fn pg_finfo_tokens_eq_impl_wrapper() -> &'static pg_sys::Pg_finfo_record {
+    const V1: pg_sys::Pg_finfo_record = pg_sys::Pg_finfo_record { api_version: 1 };
+    &V1
 }
 
-#[pg_extern(immutable, parallel_safe, strict)]
-fn tokens_ne_impl(a: &[u8], b: &[u8], fcinfo: pg_sys::FunctionCallInfo) -> bool {
-    !tokens_equal(a, b, fcinfo)
+#[no_mangle]
+pub extern "C" fn pg_finfo_tokens_ne_impl_wrapper() -> &'static pg_sys::Pg_finfo_record {
+    const V1: pg_sys::Pg_finfo_record = pg_sys::Pg_finfo_record { api_version: 1 };
+    &V1
+}
+
+/// # Safety
+/// Called by PostgreSQL as `pgtoken.tokens_eq(tokens, tokens)`, declared STRICT.
+#[no_mangle]
+#[pg_guard]
+pub unsafe extern "C-unwind" fn tokens_eq_impl_wrapper(
+    fcinfo: pg_sys::FunctionCallInfo,
+) -> pg_sys::Datum {
+    pg_sys::Datum::from(tokens_equal_datums(fcinfo))
+}
+
+/// # Safety
+/// Called by PostgreSQL as `pgtoken.tokens_ne(tokens, tokens)`, declared STRICT.
+#[no_mangle]
+#[pg_guard]
+pub unsafe extern "C-unwind" fn tokens_ne_impl_wrapper(
+    fcinfo: pg_sys::FunctionCallInfo,
+) -> pg_sys::Datum {
+    pg_sys::Datum::from(!tokens_equal_datums(fcinfo))
+}
+
+/// [`tokens_equal`] on the call's two arguments, deciding from sizes and headers first.
+unsafe fn tokens_equal_datums(fcinfo: pg_sys::FunctionCallInfo) -> bool {
+    let (Some(da), Some(db)) = (
+        pgrx::pg_getarg_datum(fcinfo, 0),
+        pgrx::pg_getarg_datum(fcinfo, 1),
+    ) else {
+        bail("tokens equality called with a NULL argument");
+    };
+    if let Some(answer) = settle_without_detoast(da, db, fcinfo) {
+        return answer;
+    }
+    tokens_equal(detoasted(da), detoasted(db), fcinfo)
+}
+
+/// `Some(false)` when two values cannot hold the same tokens, judged from their raw sizes and
+/// the headers of the values held in line; `None` when they must be compared in full.
+///
+/// Reading even the first bytes of a value stored out of line costs a TOAST index lookup, which
+/// is most of what a full detoast costs for a value of a few kB. So a header is read only from
+/// a side held in line. When the other side is out of line, its size alone often settles the
+/// pair: a value equal to a resolved `raw` value has identical bytes, so the same size; and no
+/// value equal to a plain `freq` value is larger than it, since `freq_lz4` is written only when
+/// strictly smaller. That needs the out-of-line side to be resolved, which its column's typmod
+/// guarantees. Otherwise both headers are read.
+unsafe fn settle_without_detoast(
+    da: pg_sys::Datum,
+    db: pg_sys::Datum,
+    fcinfo: pg_sys::FunctionCallInfo,
+) -> Option<bool> {
+    let len_a = pg_sys::toast_raw_datum_size(da);
+    let len_b = pg_sys::toast_raw_datum_size(db);
+    if len_a == len_b {
+        return None;
+    }
+    let out_a = pgrx::varlena::varatt_is_1b_e(da.cast_mut_ptr::<pg_sys::varlena>());
+    let out_b = pgrx::varlena::varatt_is_1b_e(db.cast_mut_ptr::<pg_sys::varlena>());
+    if out_a != out_b {
+        let (inline, len_in, other, len_other, other_arg) = if out_a {
+            (db, len_b, da, len_a, 0)
+        } else {
+            (da, len_a, db, len_b, 1)
+        };
+        let h = header_of(inline)?;
+        if h.vocabulary_id == UNRESOLVED {
+            return None;
+        }
+        if args_resolved(fcinfo)[other_arg] {
+            match h.codec {
+                Codec::Raw8 | Codec::Raw16 | Codec::Raw24 => return Some(false),
+                Codec::Freq if len_other > len_in => return Some(false),
+                _ => {}
+            }
+        }
+        let ho = header_of(other)?;
+        if ho.vocabulary_id == UNRESOLVED {
+            return None;
+        }
+        return value::settle_by_header(&h, len_in, &ho, len_other);
+    }
+    let ha = header_of(da)?;
+    let hb = header_of(db)?;
+    // An unresolved literal is re-encoded against the other side first; leave it to that path.
+    if ha.vocabulary_id == UNRESOLVED || hb.vocabulary_id == UNRESOLVED {
+        return None;
+    }
+    value::settle_by_header(&ha, len_a, &hb, len_b)
+}
+
+/// Whether each argument of this call is known to be resolved: its expression's declared type
+/// (a column or a domain) carries a typmod. Computed once per call site and kept in `fn_extra`.
+unsafe fn args_resolved(fcinfo: pg_sys::FunctionCallInfo) -> [bool; 2] {
+    if fcinfo.is_null() || (*fcinfo).flinfo.is_null() {
+        return [false, false];
+    }
+    let mut cache = pgrx::pg_func_extra(fcinfo, ResolvedConstant::default);
+    if let Some(known) = cache.args_resolved {
+        return known;
+    }
+    let known = declared_resolved((*(*fcinfo).flinfo).fn_expr);
+    cache.args_resolved = Some(known);
+    known
+}
+
+unsafe fn declared_resolved(expr: *mut pg_sys::Node) -> [bool; 2] {
+    if expr.is_null() {
+        return [false, false];
+    }
+    let args = match (*expr).type_ {
+        pg_sys::NodeTag::T_OpExpr
+        | pg_sys::NodeTag::T_DistinctExpr
+        | pg_sys::NodeTag::T_NullIfExpr => (*expr.cast::<pg_sys::OpExpr>()).args,
+        pg_sys::NodeTag::T_FuncExpr => (*expr.cast::<pg_sys::FuncExpr>()).args,
+        _ => return [false, false],
+    };
+    let args = pgrx::PgList::<pg_sys::Node>::from_pg(args);
+    if args.len() != 2 {
+        return [false, false];
+    }
+    let typed = |n: Option<*mut pg_sys::Node>| n.is_some_and(|n| declared_typmod(n) >= 0);
+    [typed(args.get_ptr(0)), typed(args.get_ptr(1))]
+}
+
+/// The header of a value, from at most its first `MAX_HEADER_LEN` bytes. `None` if those bytes
+/// are not a valid header; the full compare then reports the error.
+unsafe fn header_of(d: pg_sys::Datum) -> Option<pgtoken_core::header::Header> {
+    let n = pgtoken_core::header::MAX_HEADER_LEN as i32;
+    let v = pg_sys::pg_detoast_datum_slice(d.cast_mut_ptr::<pg_sys::varlena>(), 0, n);
+    let bytes = std::slice::from_raw_parts(
+        pgrx::varlena::vardata_any(v).cast::<u8>(),
+        pgrx::varlena::varsize_any_exhdr(v),
+    );
+    pgtoken_core::header::Header::parse_prefix(bytes)
+        .ok()
+        .map(|(h, _)| h)
+}
+
+/// A value's bytes, detoasted (and decompressed) in full, valid for the rest of the call.
+unsafe fn detoasted<'a>(d: pg_sys::Datum) -> &'a [u8] {
+    let v = pg_sys::pg_detoast_datum_packed(d.cast_mut_ptr::<pg_sys::varlena>());
+    std::slice::from_raw_parts(
+        pgrx::varlena::vardata_any(v).cast::<u8>(),
+        pgrx::varlena::varsize_any_exhdr(v),
+    )
 }
 
 /// Hash the canonical bytes so equal values land in the same bucket. FNV-1a, 32-bit:
@@ -1094,13 +1255,7 @@ CREATE OPERATOR CLASS pgtoken.tokens_hash_ops DEFAULT FOR TYPE pgtoken.tokens US
     FUNCTION 2 pgtoken.tokens_hash_extended(pgtoken.tokens, bigint);
 "#,
     name = "tokens_equality",
-    requires = [
-        "tokens_type",
-        tokens_eq_impl,
-        tokens_ne_impl,
-        tokens_hash_impl,
-        tokens_hash_extended_impl,
-    ],
+    requires = ["tokens_type", tokens_hash_impl, tokens_hash_extended_impl,],
 );
 
 #[cfg(any(test, feature = "pg_test"))]
@@ -1139,6 +1294,56 @@ mod tests {
              END $cast$",
         )
         .expect("bytea cast");
+    }
+
+    #[pg_test]
+    fn equality_on_toasted_values_matches_and_skips() {
+        // Long values live out of line in TOAST; `=` settles most unequal pairs from sizes and
+        // headers, and must still find the equal ones, toasted or not.
+        vocab("eqt", 300);
+        Spi::run("SET search_path TO pgtoken, tokens, public").expect("search_path");
+        Spi::run("CREATE TABLE eqt_t (id int, body pgtoken.eqt)").expect("create table");
+        // Out of line and uncompressed, so the long values really are TOAST pointers.
+        Spi::run("ALTER TABLE eqt_t ALTER COLUMN body SET STORAGE EXTERNAL").expect("storage");
+        Spi::run(
+            "INSERT INTO eqt_t SELECT 1, ('{' || string_agg((i % 299)::text, ',') || '}') \
+             FROM generate_series(1, 4000) i",
+        )
+        .expect("insert long");
+        Spi::run("INSERT INTO eqt_t SELECT 2, body FROM eqt_t WHERE id = 1").expect("copy long");
+        Spi::run(
+            "INSERT INTO eqt_t SELECT 3, ('{' || string_agg((i % 299)::text, ',') || '}') \
+             FROM generate_series(1, 3999) i",
+        )
+        .expect("insert one shorter");
+        Spi::run("INSERT INTO eqt_t VALUES (4, '{1,2,3}'), (5, '{1,2,3}')").expect("insert short");
+        let pairs = |q: &str| Spi::get_one::<i64>(q).expect("query").unwrap();
+        // equal pairs: (1,2) both long, (4,5) both short; every row equals itself
+        assert_eq!(
+            pairs("SELECT count(*) FROM eqt_t a, eqt_t b WHERE a.body = b.body AND a.id < b.id"),
+            2
+        );
+        assert_eq!(
+            pairs("SELECT count(*) FROM eqt_t a, eqt_t b WHERE a.body <> b.body AND a.id < b.id"),
+            8
+        );
+        assert_eq!(
+            pairs("SELECT count(*) FROM eqt_t WHERE body = '{1,2,3}'"),
+            2
+        );
+        // An out-of-line row against an in-line value and the other way round.
+        assert_eq!(
+            pairs("SELECT count(*) FROM eqt_t WHERE body = (SELECT body FROM eqt_t WHERE id = 4)"),
+            2
+        );
+        assert_eq!(
+            pairs("SELECT count(*) FROM eqt_t WHERE body = (SELECT body FROM eqt_t WHERE id = 1)"),
+            2
+        );
+        assert_eq!(
+            pairs("SELECT count(*) FROM eqt_t WHERE body <> (SELECT body FROM eqt_t WHERE id = 3)"),
+            4
+        );
     }
 
     #[pg_test]
