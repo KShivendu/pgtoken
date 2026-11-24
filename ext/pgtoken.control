@@ -1,5 +1,5 @@
 comment = 'Token-native storage: store text as BPE token IDs'
-default_version = '0.1.0'
+default_version = '0.1.1'
 module_pathname = '$libdir/pgtoken'
 relocatable = false
 superuser = true
