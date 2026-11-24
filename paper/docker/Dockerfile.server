@@ -1,14 +1,13 @@
-# PostgreSQL 16 + pgvector + the released pgtoken 0.1.0 package. Used by every paper benchmark.
+# PostgreSQL 16 + pgvector + the released pgtoken 0.1.1 package. Used by every paper benchmark.
 #
-#   docker build -f paper/docker/Dockerfile.server -t pgtoken-paper-server:0.1.0 paper/docker
+#   docker build -f paper/docker/Dockerfile.server -t pgtoken-paper-server:0.1.1 paper/docker
 #
 # The image installs the .deb from the GitHub release, not a local build, so a reviewer runs
-# exactly the published binary. v0.1.0 (tag 04ca8c3) and the benchmarked commit differ only in
-# README and the release workflow, so the tag matches the code.
+# exactly the published binary (tag v0.1.1, commit b3a13ff).
 FROM pgvector/pgvector:pg16
 
-ARG PGTOKEN_VERSION=0.1.0
-ARG PGTOKEN_DEB_SHA256=0b07a4b5473de807ac2ffc81a4fc970cb9dc7ddfde4b0afb8391a93bc2693bf0
+ARG PGTOKEN_VERSION=0.1.1
+ARG PGTOKEN_DEB_SHA256=6519b20934af2cc374fe6b25d6200fe360f273d6a7850664ff219ca6e99b360b
 ADD --checksum=sha256:${PGTOKEN_DEB_SHA256} \
     https://github.com/KShivendu/pgtoken/releases/download/v${PGTOKEN_VERSION}/postgresql-16-pgtoken_${PGTOKEN_VERSION}_amd64.deb \
     /tmp/pgtoken.deb

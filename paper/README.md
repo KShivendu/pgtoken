@@ -13,8 +13,8 @@ config, PostgreSQL settings, git SHA and machine, the summary JSON and a per-que
 
 Two Docker images, built by `docker compose`:
 
-- `pgtoken-paper-server:0.1.0`: `pgvector/pgvector:pg16` plus the released
-  `postgresql-16-pgtoken_0.1.0_amd64.deb` (checksum pinned), with the settings in
+- `pgtoken-paper-server:0.1.1`: `pgvector/pgvector:pg16` plus the released
+  `postgresql-16-pgtoken_0.1.1_amd64.deb` (checksum pinned), with the settings in
   `docker/postgresql.paper.conf` applied identically to every arm.
 - `pgtoken-paper-client:0.1.0`: Python 3.12, uv, Rust 1.88 (to build `pgtoken_rs` from `py/`),
   tiktoken and HF `tokenizers`, with the tokenizer files baked in at pinned revisions.
